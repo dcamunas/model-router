@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ._fmt import money, table
-from .catalog import PRICES_AS_OF, lattice, parse_cell
+from .catalog import MODELS, MODELS_ENV, PRICES_AS_OF, available_models, lattice, parse_cell
 from .classify import Classification, classify_llm, classify_rules
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
@@ -275,8 +275,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         checks.append((exists, f"perfil de Claude: {profile} (via {source})" + ("" if exists else " NO EXISTE")))
     except ClientUnavailable as exc:
         checks.append((False, str(exc)))
-    hook_bin = Path(sys.prefix) / "bin" / "router-hook"  # the venv, not the interpreter it links to
-    checks.append((hook_bin.exists(), f"binario del hook: {hook_bin}" + ("" if hook_bin.exists() else " falta (uv sync)")))
+    from .install import hook_binary
+
+    hook_bin = hook_binary()
+    missing = "no encontrado (instala el paquete: uv tool install ... o uv sync)"
+    checks.append((hook_bin is not None, f"binario del hook: {hook_bin or missing}"))
+    try:
+        avail = available_models()
+        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if len(avail) < len(MODELS) else "catalogo")
+        checks.append((True, f"modelos disponibles: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
+    except ValueError as exc:
+        checks.append((False, f"modelos disponibles: {exc} (revisa {MODELS_ENV} o `router install --models`)"))
     if profile is not None and profile.is_dir():
         settings = profile / "settings.json"
         try:
@@ -297,7 +306,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                             return Path(h["command"]).exists()
                 return False
 
-            fix = " (falta: python3 claude-code/install.py)"
+            fix = " (falta: router install)"
             pre, start = wired("PreToolUse", "Agent"), wired("SessionStart")
             checks.append((pre, f"hook PreToolUse(Agent) en {settings}" + ("" if pre else fix)))
             checks.append((start, f"hook SessionStart en {settings}" + ("" if start else fix)))
@@ -342,7 +351,17 @@ def cmd_cells(args: argparse.Namespace) -> int:
     print(table(["celda", "tier", "capacidad*", "coste ref.", "$/M in", "$/M out"], rows))
     print(f"\n* capacidad supuesta (catalog.py), no medida · coste ref. = 2.000 tokens in, 1.500 out a effort high"
           f" · precios {PRICES_AS_OF}")
+    off = [MODELS[m].short for m in MODELS if m not in available_models()]
+    if off:
+        print(f"fuera de esta instalacion: {', '.join(off)} ({MODELS_ENV} o `router install --models`)")
     return 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    from .install import install
+
+    return install(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill, link=args.link,
+                   profile_dir=args.profile_dir, models=args.models, uninstall=args.cmd == "uninstall")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -394,6 +413,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sc = sub.add_parser("cells", help="la reticula de celdas con su coste y capacidad supuesta")
     sc.set_defaults(func=cmd_cells)
+
+    from .install import default_settings
+
+    for name, help_ in (("install", "activa el router en un perfil de Claude Code (hooks + skill)"),
+                        ("uninstall", "quita los hooks y la skill del perfil")):
+        si = sub.add_parser(name, help=help_)
+        si.add_argument("--settings", type=Path, default=default_settings(),
+                        help="settings.json a tocar (por defecto el del perfil: $CLAUDE_CONFIG_DIR o ~/.claude)")
+        si.add_argument("--skills-dir", type=Path, help="carpeta de skills (por defecto, junto al settings)")
+        si.add_argument("--no-skill", action="store_true", help="solo hooks, sin la skill")
+        si.add_argument("--link", action="store_true", help="enlaza la skill en vez de copiarla (desarrollo)")
+        si.add_argument("--profile-dir", type=Path,
+                        help="perfil de Claude que usara `router run` (por defecto, el del settings si es un perfil)")
+        si.add_argument("--models", help="modelos que puede elegir esta instalacion, p. ej. haiku,sonnet,opus; all = todos")
+        si.set_defaults(func=cmd_install)
     return p
 
 

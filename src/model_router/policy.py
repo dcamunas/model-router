@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from .catalog import Cell, ladder, lattice, parse_cell, step_up
+from .catalog import Cell, ladder, lattice, nearest_available, parse_cell, step_up
 from .task import Task
 
 if TYPE_CHECKING:
@@ -89,15 +89,24 @@ class Policy:
         min_gain: float = 0.08,
     ) -> None:
         self.cells = cells or lattice()
+        self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
         self.start_table = start_table or START
         self.feedback = feedback
         self.min_gain = min_gain
+
+    def _available(self, cell: Cell, rationale: list[str]) -> Cell:
+        """The table may name a model this installation does not have: fall back to the nearest one."""
+        near = nearest_available(cell, self.models)
+        if near != cell:
+            rationale.append(f"{cell.spec.short} no disponible: {cell} -> {near}")
+        return near
 
     def plan(self, task: Task) -> Plan:
         kind = task.kind if task.kind in self.start_table else "unknown"
         risk = task.risk
         start = parse_cell(self.start_table[kind][risk])
         rationale = [f"tabla {kind} x {risk} -> {start}"]
+        start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
         est_input = (len(task.prompt) + len(task.system or "")) // 4 + 50
         out_tokens = min(1500, task.max_tokens)
@@ -110,7 +119,7 @@ class Policy:
                 start = suggested
         floor = FLOOR.get(risk)
         if floor:
-            floor_cell = parse_cell(floor)
+            floor_cell = self._available(parse_cell(floor), [])
             if start.capability < floor_cell.capability:
                 rationale.append(f"suelo de riesgo {risk}: {start} -> {floor_cell}")
                 start = floor_cell

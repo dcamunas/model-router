@@ -82,3 +82,17 @@ def test_invalid_task_values_are_rejected():
         Task(prompt="x", risk="huge")
     with pytest.raises(ValueError):
         Task(prompt="   ")
+
+
+def test_policy_falls_back_when_the_table_names_a_missing_model(monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
+    policy = Policy()
+    plan = policy.plan(Task(prompt="x", kind="analysis", risk="critical"))  # table says fable/low
+    assert plan.start.label == "opus/medium"  # fable/low -> opus/low, then the critical floor lifts it
+    assert any("fable no disponible: fable/low -> opus/low" in r for r in plan.rationale)
+    assert any("suelo de riesgo critical" in r for r in plan.rationale)
+    assert all(c.spec.short != "fable" for c in plan.ladder)
+    assert policy.verifier_for(plan.start, "full").spec.short != "fable"
+    plan = policy.plan(Task(prompt="x", kind="code", risk="critical"))  # floor opus/medium still applies
+    assert plan.start.capability >= parse_cell("opus/medium").capability
+    assert all(c.spec.short != "fable" for c in plan.ladder)

@@ -108,3 +108,12 @@ def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp
     assert updated["model"] == "opus" and "cross" not in record
     updated, record = decide({"prompt": "Revisa este script SQL antes de producción"}, chat_model="opus")
     assert updated["model"] == "opus" and updated["effort"] == "medium" and "cross" not in record
+
+
+def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
+    updated, record = decide({"prompt": "Analiza el diseño crítico de la migración de pagos"})
+    assert updated["model"] == "opus" and record["cell"] == "opus/medium"  # fable/low degraded, then the floor
+    updated, record = decide({"prompt": "Revisa este diseño crítico de la migración de pagos"}, chat_model="opus")
+    assert updated["model"] == "opus" and "cross" not in record  # no other model can take the cross-check

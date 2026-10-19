@@ -1,6 +1,6 @@
 ---
 name: router
-description: Verificar y escalar por riesgo el trabajo de subagentes usando el router de modelos de ~/code/personal/model-router. El hook ya elige modelo y effort solo; usa esta skill cuando David pida «usa el router», «verifica esto», «hazlo barato pero verificado», o cuando una subtarea sea de riesgo alto o crítico y haya que verificarla con un segundo subagente.
+description: Verificar y escalar por riesgo el trabajo de subagentes usando el router de modelos (`router` en la línea de comandos). El hook ya elige modelo y effort solo; usa esta skill cuando el usuario pida «usa el router», «verifica esto», «hazlo barato pero verificado», o cuando una subtarea sea de riesgo alto o crítico y haya que verificarla con un segundo subagente.
 ---
 
 # Router de modelos dentro de Claude Code
@@ -22,12 +22,12 @@ router run --file brief.md --check-json nombre,fecha,importe   # checker program
 router run "..." --json                                       # respuesta + intentos en JSON
 ```
 
-Si `router` no está en el PATH: `~/code/personal/model-router/.venv/bin/router`. Usa la cuenta
-de David (perfil fijado en `~/.model-router/config.json`), sin API key. Si falla, `router doctor`.
+Usa la cuenta de Claude del perfil fijado en `~/.model-router/config.json` (lo escribe `router
+install`), sin API key. Si `router` no está en el PATH o algo falla, `router doctor` lo dice.
 
 ## Cuándo intervenir tú
 
-- No pongas `model` en el Agent salvo que David lo pida o la tarea sea de riesgo alto. Si lo pones,
+- No pongas `model` en el Agent salvo que el usuario lo pida o la tarea sea de riesgo alto. Si lo pones,
   el hook lo respeta.
 - Los agentes definidos en `.claude/agents/*.md` no pasan por el hook: su frontmatter manda.
 - Riesgo alto o crítico (producción, dinero, clientes, borrados, legal): pide el plan y sigue su
@@ -66,7 +66,7 @@ modelo. Cuando el diseño lo hayas hecho tú y toque producción, dinero, client
    es crítico, con el brief, el diseño completo y la petición de `passed / reason / issues`.
 2. El hook lo clasifica como review/critical y lo manda a un modelo distinto del tuyo (chat en
    Opus → fable/low). Verás «cruce con el chat» en el aviso.
-3. Si falla, corrige el diseño y repite una vez; si vuelve a fallar, cuéntaselo a David antes de
+3. Si falla, corrige el diseño y repite una vez; si vuelve a fallar, cuéntaselo al usuario antes de
    ejecutar nada.
 
 ## Reglas

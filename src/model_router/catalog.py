@@ -18,8 +18,11 @@ with real verdicts:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass
+
+from .paths import read_config
 
 PRICES_AS_OF = "2026-10-06"
 
@@ -59,6 +62,7 @@ MODELS: dict[str, ModelSpec] = {
     "claude-fable-5-1": ModelSpec("claude-fable-5-1", "fable", 3, 10.00, 50.00, 0.25, 12.50, "high", True),
 }
 SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
+MODELS_ENV = "MODEL_ROUTER_MODELS"
 
 
 @dataclass(frozen=True)
@@ -108,6 +112,29 @@ def resolve_model(name: str) -> str:
     if name in SHORT_TO_ID:
         return SHORT_TO_ID[name]
     raise ValueError(f"unknown model {name!r}; known: {', '.join(SHORT_TO_ID)}")
+
+
+def parse_models(text: str | Iterable[str]) -> list[str]:
+    """'haiku,sonnet,opus' (short names or ids, any order) -> model ids in catalogue order.
+    Raises ValueError on an unknown name, so a typo never silently changes the lattice."""
+    names = [n.strip() for n in text.split(",")] if isinstance(text, str) else [str(n).strip() for n in text]
+    ids = {resolve_model(n) for n in names if n}
+    if not ids:
+        raise ValueError("empty model list")
+    return [m for m in MODELS if m in ids]
+
+
+def available_models() -> list[str]:
+    """The models this installation may route to, in catalogue order. The MODEL_ROUTER_MODELS
+    variable wins, then `models` in config.json (written by `router install --models`), else every
+    model in the catalogue. Use it when a plan or an account lacks a model (no Fable, say)."""
+    raw = os.environ.get(MODELS_ENV)
+    if raw:
+        return parse_models(raw)
+    configured = read_config().get("models")
+    if configured:
+        return parse_models(configured)
+    return list(MODELS)
 
 
 @dataclass(frozen=True)
@@ -164,9 +191,21 @@ def parse_cell(text: str) -> Cell:
 
 
 def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None = None) -> list[Cell]:
-    """Every cell, cheapest first on the reference request."""
-    cells = [Cell(m, e) for m in (models or MODELS) for e in (efforts or EFFORTS)]
+    """Every cell of the available models (or of `models`), cheapest first on the reference request."""
+    cells = [Cell(m, e) for m in (models or available_models()) for e in (efforts or EFFORTS)]
     return sorted(cells, key=lambda c: (c.expected_cost(), c.capability))
+
+
+def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
+    """`cell` itself when its model is available; otherwise the same effort on the most capable
+    available model below it (or the least capable one above it when nothing is below). The ladder
+    then escalates from there as usual."""
+    avail = [resolve_model(m) for m in (models or available_models())]
+    if cell.model in avail:
+        return cell
+    specs = sorted((MODELS[m] for m in avail), key=lambda spec: spec.tier)
+    below = [spec for spec in specs if spec.tier < cell.tier]
+    return Cell((below[-1] if below else specs[0]).id, cell.effort)
 
 
 def step_up(current: Cell, cells: Iterable[Cell], min_gain: float = 0.08, tie: float = 0.10) -> Cell | None:

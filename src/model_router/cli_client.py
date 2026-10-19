@@ -43,7 +43,7 @@ NOT_LOGGED_IN = "not logged in"
 
 def resolve_profile() -> tuple[Path, str]:
     """The Claude profile directory for the cli backend and where it came from: the
-    ROUTER_CLAUDE_CONFIG_DIR variable, then `config.json` (written by claude-code/install.py), then the
+    ROUTER_CLAUDE_CONFIG_DIR variable, then `config.json` (written by `router install`), then the
     ambient CLAUDE_CONFIG_DIR. Nothing else: the router must never land on another profile by accident."""
     value = os.environ.get(CONFIG_DIR_ENV)
     if value:
@@ -55,7 +55,7 @@ def resolve_profile() -> tuple[Path, str]:
     if value:
         return Path(value).expanduser(), "CLAUDE_CONFIG_DIR"
     raise ClientUnavailable(
-        f"perfil de Claude sin fijar: ejecuta claude-code/install.py en el perfil que debe usar el router o exporta "
+        f"perfil de Claude sin fijar: ejecuta `router install` en el perfil que debe usar el router o exporta "
         f"{CONFIG_DIR_ENV}, por ejemplo ~/.claude-personal"
     )
 

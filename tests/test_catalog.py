@@ -1,3 +1,5 @@
+import pytest
+
 from model_router.catalog import MODELS, Cell, Usage, cost_usd, ladder, lattice, parse_cell, step_down, step_up
 
 
@@ -55,3 +57,26 @@ def test_step_down_gives_up_little_capability_for_a_real_saving():
     cells = lattice()
     assert step_down(parse_cell("opus/medium"), cells) == parse_cell("opus/low")
     assert step_down(parse_cell("haiku/low"), cells) is None
+
+
+def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
+    from model_router.catalog import MODELS_ENV, available_models, nearest_available, parse_models
+    from model_router.paths import write_config
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv(MODELS_ENV, raising=False)
+    assert available_models() == list(MODELS)
+    write_config(models=["opus", "haiku"])
+    assert available_models() == ["claude-haiku-5-5", "claude-opus-5-5"]  # catalogue order, not config order
+    monkeypatch.setenv(MODELS_ENV, "sonnet, claude-opus-5-5")
+    assert available_models() == ["claude-sonnet-5-5", "claude-opus-5-5"]
+    assert [c.label for c in lattice()][-1] == "opus/max"
+    monkeypatch.setenv(MODELS_ENV, "sonet")
+    with pytest.raises(ValueError):
+        available_models()
+    with pytest.raises(ValueError):
+        parse_models("")
+    # nearest: same effort on the best model below; the first one above when nothing is below
+    assert nearest_available(parse_cell("fable/low"), ["haiku", "sonnet", "opus"]).label == "opus/low"
+    assert nearest_available(parse_cell("haiku/medium"), ["sonnet", "opus"]).label == "sonnet/medium"
+    assert nearest_available(parse_cell("opus/high"), ["opus"]).label == "opus/high"
