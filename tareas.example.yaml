@@ -1,5 +1,6 @@
-# Ejemplo para `router bench tareas.example.yaml --strategies "router,fable/low,opus/high"`.
-# Tareas inventadas, sin datos reales. Cada una con un checker programático cuando se puede.
+# Example for `router bench tareas.example.yaml --strategies "router,fable/low,opus/high"`.
+# Made-up tasks, no real data; each one has a programmatic checker where possible. Prompts are in Spanish.
+# Ejemplo para el mismo comando: tareas inventadas, sin datos reales, con checker programático cuando se puede.
 tasks:
   - id: fechas-01
     kind: code

@@ -1,7 +1,7 @@
 [project]
 name = "model-router"
 version = "0.2.0"
-description = "Router de modelos Claude: modelo + effort por tarea, verificación por riesgo, escalado y coste por tarea resuelta"
+description = "Model router for Claude: model + effort per task, verification by risk, escalation and cost per solved task / Router de modelos Claude: modelo + effort por tarea, verificación por riesgo, escalado y coste por tarea resuelta"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

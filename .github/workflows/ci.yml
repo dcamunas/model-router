@@ -19,12 +19,12 @@ jobs:
       - run: uv run pytest -q
       - run: uv run pyright
       - run: uv build
-      - name: la skill viaja dentro del wheel
+      - name: the skill ships inside the wheel
         run: unzip -l dist/*.whl | grep -q 'model_router/claude_code/router/SKILL.md'
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: el plugin y el marketplace validan con la CLI de Claude Code
+      - name: plugin and marketplace manifests validate with the Claude Code CLI
         run: |
           npm install -g @anthropic-ai/claude-code
           claude plugin validate . --strict
