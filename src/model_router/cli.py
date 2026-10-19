@@ -42,7 +42,8 @@ def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True) -> N
     p.add_argument("--verify", choices=VERIFY_MODES, help="force the verification mode")
     p.add_argument("--budget", type=float, help="spending cap in USD for the task")
     p.add_argument("--max-attempts", type=int, help="maximum attempts")
-    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="api backend only; the cli backend manages it itself")
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
+                   help="api backend only; the cli backend manages it itself")
     p.add_argument("--system", help="file with the worker's system prompt")
     p.add_argument("--check-regex", help="the answer must match this regex (programmatic checker)")
     p.add_argument("--check-json",
