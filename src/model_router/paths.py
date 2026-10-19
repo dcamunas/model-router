@@ -1,5 +1,6 @@
 """Where the router keeps its state: ~/.model-router (MODEL_ROUTER_HOME moves it). `config.json`
-holds the few things decided at install time, today only the Claude profile for the cli backend."""
+holds the few things decided at install time, today only the Claude profile for the cli backend.
+"""
 
 from __future__ import annotations
 

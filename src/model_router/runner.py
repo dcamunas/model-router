@@ -1,6 +1,7 @@
 """The loop: plan, attempt, verify, escalate, stop on budget. Every attempt is recorded with its real
 usage and cost so the ledger can report cost per solved task, which is the only number that
-decides whether a cheaper cell was actually cheaper."""
+decides whether a cheaper cell was actually cheaper.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .catalog import Cell, Usage, cost_usd
-from .client import ClaudeClient, ClientUnavailable
+from .client import ClaudeClient, ClientUnavailableError
 from .policy import Policy, PolicyProtocol
 from .task import Task
 from .verify import Verifier
@@ -130,7 +131,7 @@ class Router:
             ledger = Ledger(None)
         self.ledger = ledger
 
-    def run(self, task: Task) -> TaskResult:
+    def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
         plan = self.policy.plan(task)
         est_input = (len(task.prompt) + len(task.system or "")) // 4 + 50
         attempts: list[Attempt] = []
@@ -151,7 +152,7 @@ class Router:
                 completion = self.client.complete(
                     cell, prompt=task.prompt, system=task.system, max_tokens=max_tokens, output_format=task.output_schema
                 )
-            except ClientUnavailable as exc:
+            except ClientUnavailableError as exc:
                 attempts.append(Attempt(n, cell, Usage(), 0.0, 0.0, "error", cell.model, None, False, None, "error", str(exc)))
                 status = "error"
                 break

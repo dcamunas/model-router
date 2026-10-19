@@ -253,10 +253,10 @@ def _hook_decisions(path: Path) -> list[list[Any]]:
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
+def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checklist of independent checks
     """Is everything in place? claude binary, profile, hooks, skill, state; --live makes one Haiku call."""
     from .cli_client import CliClient, resolve_profile
-    from .client import ClientUnavailable
+    from .client import ClientUnavailableError
 
     checks: list[tuple[bool, str]] = []
     claude = shutil.which("claude")
@@ -273,7 +273,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         profile, source = resolve_profile()
         exists = profile.is_dir()
         checks.append((exists, f"perfil de Claude: {profile} (via {source})" + ("" if exists else " NO EXISTE")))
-    except ClientUnavailable as exc:
+    except ClientUnavailableError as exc:
         checks.append((False, str(exc)))
     from .install import hook_binary
 
@@ -324,7 +324,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                                                       system="Responde solo lo pedido.")
             summary = f"{c.model} respondio {c.text.strip()[:20]!r} en {c.seconds:.1f}s, {c.usage.total} tokens"
             checks.append((True, f"llamada real: {summary}"))
-        except ClientUnavailable as exc:
+        except ClientUnavailableError as exc:
             checks.append((False, f"llamada real: {exc}"))
     for ok_, text in checks:
         print(("ok     " if ok_ else "FALLO  ") + text)
@@ -346,7 +346,7 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_cells(args: argparse.Namespace) -> int:
+def cmd_cells(_args: argparse.Namespace) -> int:
     rows = [[c.label, c.tier, f"{c.capability:.2f}", money(c.expected_cost()), c.spec.input, c.spec.output] for c in lattice()]
     print(table(["celda", "tier", "capacidad*", "coste ref.", "$/M in", "$/M out"], rows))
     print(f"\n* capacidad supuesta (catalog.py), no medida · coste ref. = 2.000 tokens in, 1.500 out a effort high"

@@ -3,7 +3,8 @@ Idempotent. Adds two hooks (PreToolUse on Agent, SessionStart) that run the `rou
 installed next to this interpreter, copies the `router` skill into the profile's skills directory
 (or links it with --link, for development), and records in ~/.model-router/config.json the profile
 that `router run` will use and, with --models, the models this installation may route to.
-Existing settings are preserved; previous router entries are replaced."""
+Existing settings are preserved; previous router entries are replaced.
+"""
 
 from __future__ import annotations
 
@@ -26,8 +27,9 @@ def default_settings() -> Path:
 
 
 def hook_binary() -> Path | None:
-    """The `router-hook` executable of the environment running `router`: a project venv or a
-    `uv tool` environment. Falls back to PATH, so a plain `pip install --user` also works."""
+    """Locate the `router-hook` executable of the environment running `router`: a project venv or a
+    `uv tool` environment. Falls back to PATH, so a plain `pip install --user` also works.
+    """
     for sub, name in (("bin", MARK), ("Scripts", MARK + ".exe")):
         candidate = Path(sys.prefix) / sub / name
         if candidate.exists():
@@ -98,7 +100,8 @@ def update_skill(skills_dir: Path, *, uninstall: bool, link: bool = False) -> No
 
 def remember(profile: Path | None, models: str | None) -> None:
     """Record in config.json the Claude profile for `router run` and, with `models`, the models this
-    installation may route to ('all' removes the restriction)."""
+    installation may route to ('all' removes the restriction).
+    """
     cfg = read_config()
     if profile is not None:
         cfg["claude_config_dir"] = str(profile)

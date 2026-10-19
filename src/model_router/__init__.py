@@ -1,5 +1,6 @@
 """model-router: picks a Claude model and effort per task, verifies by risk, escalates on failure,
-and keeps the ledger that says what each solved task really cost."""
+and keeps the ledger that says what each solved task really cost.
+"""
 
 from .catalog import MODELS, Cell, Usage, cost_usd, lattice, parse_cell
 from .feedback import FeedbackStore

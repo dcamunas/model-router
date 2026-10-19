@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from model_router.catalog import Usage, parse_cell
-from model_router.client import ClientUnavailable
+from model_router.client import ClientUnavailableError
 from model_router.feedback import FeedbackStore
 from model_router.ledger import Ledger, summarize
 from model_router.policy import LadderPolicy, Policy
@@ -84,7 +84,7 @@ def test_truncated_answer_is_retried_once_on_the_same_cell_with_more_room():
 def test_api_unavailable_is_recorded_and_not_escalated():
     class Down:
         def complete(self, cell, **kw):
-            raise ClientUnavailable("rate limited")
+            raise ClientUnavailableError("rate limited")
 
     result = Router(Down()).run(Task(prompt="x", kind="chat", risk="low"))
     assert result.status == "error" and len(result.attempts) == 1 and result.attempts[0].cost_usd == 0

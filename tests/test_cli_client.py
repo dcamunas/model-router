@@ -5,7 +5,7 @@ import pytest
 
 from model_router.catalog import parse_cell
 from model_router.cli_client import CliClient, resolve_config_dir
-from model_router.client import ClientUnavailable
+from model_router.client import ClientUnavailableError
 from model_router.verify import Verdict
 
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
@@ -65,9 +65,9 @@ def test_structured_output_becomes_the_parsed_model(fake):
 
 def test_errors_become_client_unavailable(fake):
     client, _ = fake
-    with pytest.raises(ClientUnavailable, match="sesion iniciada"):
+    with pytest.raises(ClientUnavailableError, match="sesion iniciada"):
         client.complete(parse_cell("haiku/low"), prompt="LOGOUT")
-    with pytest.raises(ClientUnavailable, match="sin JSON"):
+    with pytest.raises(ClientUnavailableError, match="sin JSON"):
         client.complete(parse_cell("haiku/low"), prompt="GARBAGE")
 
 
@@ -78,7 +78,7 @@ def test_profile_must_be_explicit(monkeypatch, tmp_path):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("ROUTER_CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    with pytest.raises(ClientUnavailable, match="ROUTER_CLAUDE_CONFIG_DIR"):
+    with pytest.raises(ClientUnavailableError, match="ROUTER_CLAUDE_CONFIG_DIR"):
         resolve_config_dir()
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "ambient"))
     assert resolve_profile() == (tmp_path / "ambient", "CLAUDE_CONFIG_DIR")
@@ -86,5 +86,5 @@ def test_profile_must_be_explicit(monkeypatch, tmp_path):
     assert resolve_profile()[0] == tmp_path / "installed"  # config.json beats the ambient variable
     monkeypatch.setenv("ROUTER_CLAUDE_CONFIG_DIR", str(tmp_path))
     assert resolve_config_dir() == tmp_path
-    with pytest.raises(ClientUnavailable, match="no encuentro"):
+    with pytest.raises(ClientUnavailableError, match="no encuentro"):
         CliClient(binary="claude-no-existe")

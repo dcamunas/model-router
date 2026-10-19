@@ -1,5 +1,6 @@
 """Append-only record of every task the router ran, and the summary that turns it into cost per
-solved task. Human overrides of a verdict are appended as their own records, never rewritten."""
+solved task. Human overrides of a verdict are appended as their own records, never rewritten.
+"""
 
 from __future__ import annotations
 

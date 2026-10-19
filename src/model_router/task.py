@@ -1,6 +1,7 @@
 """What the router receives: a task with its kind, its risk and, when one exists, a programmatic
 checker. A checker is the cheapest and most trustworthy verification there is, so give one whenever
-the output can be checked by code (tests pass, JSON validates, a regex matches)."""
+the output can be checked by code (tests pass, JSON validates, a regex matches).
+"""
 
 from __future__ import annotations
 

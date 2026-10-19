@@ -4,7 +4,8 @@ first-attempt evidence moves a kind's start cell up (too many failures) or, when
 down (nearly everything passes, try the next cheaper cell on a fraction of tasks).
 
 Verdicts come from checkers and judges, so this store is only as good as the verification. Human
-overrides through the ledger correct it."""
+overrides through the ledger correct it.
+"""
 
 from __future__ import annotations
 
@@ -59,7 +60,8 @@ class FeedbackStore:
     ) -> tuple[Cell, str | None]:
         """`break_even` is the first-attempt pass rate below which starting on `default` costs more
         than starting one step up: (cost of default + its verification) / (cost of the next cell +
-        its verification). Without it the flat `demote_below` applies."""
+        its verification). Without it the flat `demote_below` applies.
+        """
         n, rate = self.first_attempt_stats(kind, default)
         if n < self.min_n or rate is None:
             return default, None
@@ -76,7 +78,7 @@ class FeedbackStore:
         return default, None
 
     def apply_override(self, kind: str, cell_label: str, passed: bool, *, first: bool) -> None:
-        """A human says the recorded verdict was wrong: move one count from pass to fail or back."""
+        """Apply a human correction of a recorded verdict: move one count from pass to fail or back."""
         b = self._bucket(kind, parse_cell(cell_label))
         delta = 1 if passed else -1
         b["pass"] = max(0, min(b["n"], b["pass"] + delta))

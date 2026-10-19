@@ -1,6 +1,7 @@
 """Routing policy: which cell starts a task, how it escalates, how it is verified and what it may
 spend. Everything is a table you can read and edit; the feedback store nudges the start cell once
-it has seen enough verdicts for a kind."""
+it has seen enough verdicts for a kind.
+"""
 
 from __future__ import annotations
 
@@ -66,7 +67,8 @@ def _judge_cost(cell: Cell) -> float:
 def choose_verifier(worker: Cell, mode: str, cells: list[Cell]) -> Cell | None:
     """light: the cheapest cell at least as capable as the worker (may be the worker's own cell, in
     a fresh context). full: the cheapest cell clearly more capable AND on another model, so the
-    check is a blind cross-check; when no other model qualifies, a fresh context on the same model."""
+    check is a blind cross-check; when no other model qualifies, a fresh context on the same model.
+    """
     if mode == "none":
         return None
     if mode == "light":
@@ -95,7 +97,7 @@ class Policy:
         self.min_gain = min_gain
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
-        """The table may name a model this installation does not have: fall back to the nearest one."""
+        """Replace a cell whose model this installation does not have with the nearest available one."""
         near = nearest_available(cell, self.models)
         if near != cell:
             rationale.append(f"{cell.spec.short} no disponible: {cell} -> {near}")
@@ -135,7 +137,7 @@ class Policy:
         return choose_verifier(worker, mode, self.cells)
 
     def attempt_cost(self, cell: Cell, verify: str, est_input: int, out_tokens: int) -> float:
-        """Expected cost of one attempt on `cell` including its verification call."""
+        """Return the expected cost of one attempt on `cell` including its verification call."""
         cost = cell.expected_cost(est_input, out_tokens)
         judge = self.verifier_for(cell, verify)
         if judge is not None:
@@ -144,7 +146,8 @@ class Policy:
 
     def break_even(self, start: Cell, verify: str, est_input: int, out_tokens: int) -> float | None:
         """First-attempt pass rate below which starting on `start` is dearer than starting one step up:
-        c1 + (1 - p) * c2 < c2  <=>  p > c1 / c2, each cost including verification."""
+        c1 + (1 - p) * c2 < c2  <=>  p > c1 / c2, each cost including verification.
+        """
         up = step_up(start, self.cells, min_gain=self.min_gain)
         if up is None:
             return None

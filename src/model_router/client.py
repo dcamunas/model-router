@@ -1,6 +1,7 @@
 """The one place that talks to the Claude API. Everything else sees a `ClaudeClient` that takes a
 cell and a prompt and returns a `Completion` with real usage, so tests and the simulator can swap
-in a fake."""
+in a fake.
+"""
 
 from __future__ import annotations
 
@@ -42,8 +43,11 @@ class ClaudeClient(Protocol):
     ) -> Completion: ...
 
 
-class ClientUnavailable(RuntimeError):
+class ClientUnavailableError(RuntimeError):
     """The API could not serve the request after the SDK's own retries (rate limit, 5xx, network)."""
+
+
+ClientUnavailable = ClientUnavailableError  # name used up to 0.1.0
 
 
 class LiveClient:
@@ -99,12 +103,12 @@ class LiveClient:
             else:
                 msg = api.create(**kwargs)
         except a.RateLimitError as exc:
-            raise ClientUnavailable(f"rate limited: {exc}") from exc
+            raise ClientUnavailableError(f"rate limited: {exc}") from exc
         except a.APIConnectionError as exc:
-            raise ClientUnavailable(f"connection: {exc}") from exc
+            raise ClientUnavailableError(f"connection: {exc}") from exc
         except a.APIStatusError as exc:
             if exc.status_code >= 500:
-                raise ClientUnavailable(f"server {exc.status_code}: {exc}") from exc
+                raise ClientUnavailableError(f"server {exc.status_code}: {exc}") from exc
             raise
         return to_completion(msg, time.monotonic() - t0)
 

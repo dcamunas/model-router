@@ -4,7 +4,8 @@ What it shows is how the router's economics move with verifier accuracy, task di
 hard tail, and it exercises the real Router, Policy and Verifier code paths end to end.
 
 The worker's answer carries its own ground truth (`SIM|task|cell|ok`), so a programmatic checker is
-perfect and a judge is wrong with the configured false-pass / false-fail rates."""
+perfect and a judge is wrong with the configured false-pass / false-fail rates.
+"""
 
 from __future__ import annotations
 
@@ -105,13 +106,17 @@ def sim_checker(answer: str) -> CheckResult:
 class SimClient:
     """Implements ClaudeClient. Worker prompts are task ids; judge prompts contain the answer mark."""
 
-    def __init__(self, tasks: list[SimTask], seed: int, judge_error: dict[str, tuple[float, float]] | None = None):
+    def __init__(self, tasks: list[SimTask], seed: int, judge_error: dict[str, tuple[float, float]] | None = None) -> None:
         self.tasks = {t.id: t for t in tasks}
         self.seed = seed
         self.judge_error = judge_error or JUDGE_ERROR
 
-    def complete(self, cell: Cell, *, prompt: str, system: str | None = None,
-                 max_tokens: int = NON_STREAMING_MAX_TOKENS, output_format: type | None = None) -> Completion:
+    def complete(
+        self, cell: Cell, *, prompt: str,
+        system: str | None = None,  # noqa: ARG002 - client protocol signature, unused by the simulation
+        max_tokens: int = NON_STREAMING_MAX_TOKENS,  # noqa: ARG002 - same
+        output_format: type | None = None,
+    ) -> Completion:
         if output_format is Verdict:
             return self._judge(cell, prompt)
         task = self.tasks[prompt]

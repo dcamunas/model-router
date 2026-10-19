@@ -56,7 +56,8 @@ SESSION_CONTEXT = (
 
 def main_model(transcript_path: str | None) -> str | None:
     """Short name of the model serving the main chat, from the last non-sidechain assistant entry of
-    the session transcript; None when there is no transcript or it cannot be read."""
+    the session transcript; None when there is no transcript or it cannot be read.
+    """
     if not transcript_path:
         return None
     try:
@@ -83,8 +84,9 @@ def main_model(transcript_path: str | None) -> str | None:
 
 
 def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """What the hook would change for one Agent call: (updated input or None, decision record).
-    `chat_model` is the short name of the model serving the main chat, for the cross-check rule."""
+    """Compute what the hook would change for one Agent call: (updated input or None, decision record).
+    `chat_model` is the short name of the model serving the main chat, for the cross-check rule.
+    """
     subagent = str(tool_input.get("subagent_type") or "")
     if subagent not in ROUTED_SUBAGENTS:
         return None, {"skipped": f"subagent_type={subagent}"}
@@ -131,7 +133,7 @@ def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
 
 
 def handle(event: dict[str, Any]) -> dict[str, Any] | None:
-    """The JSON the hook prints for this event, or None for silence."""
+    """Return the JSON the hook prints for this event, or None for silence."""
     name = event.get("hook_event_name")
     if name == "SessionStart":
         return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}

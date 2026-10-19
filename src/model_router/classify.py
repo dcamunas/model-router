@@ -1,5 +1,6 @@
 """Guess a task's kind and risk when the caller does not say. Rules first (free, deterministic,
-bilingual es/en); an optional Haiku call for free text the rules cannot place."""
+bilingual es/en); an optional Haiku call for free text the rules cannot place.
+"""
 
 from __future__ import annotations
 

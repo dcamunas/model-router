@@ -24,9 +24,10 @@ class Reply:
 
 class FakeClient:
     """`script` maps a cell label (or "*") to replies for worker calls; `judge` does the same for
-    structured verifier calls. Replies are consumed in order and the last one repeats."""
+    structured verifier calls. Replies are consumed in order and the last one repeats.
+    """
 
-    def __init__(self, script: dict[str, list[Reply]] | None = None, judge: dict[str, list[Reply]] | None = None):
+    def __init__(self, script: dict[str, list[Reply]] | None = None, judge: dict[str, list[Reply]] | None = None) -> None:
         self.script = {k: list(v) for k, v in (script or {}).items()}
         self.judge = {k: list(v) for k, v in (judge or {}).items()}
         self.calls: list[dict[str, Any]] = []

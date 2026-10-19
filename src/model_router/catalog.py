@@ -116,7 +116,8 @@ def resolve_model(name: str) -> str:
 
 def parse_models(text: str | Iterable[str]) -> list[str]:
     """'haiku,sonnet,opus' (short names or ids, any order) -> model ids in catalogue order.
-    Raises ValueError on an unknown name, so a typo never silently changes the lattice."""
+    Raises ValueError on an unknown name, so a typo never silently changes the lattice.
+    """
     names = [n.strip() for n in text.split(",")] if isinstance(text, str) else [str(n).strip() for n in text]
     ids = {resolve_model(n) for n in names if n}
     if not ids:
@@ -125,9 +126,10 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
 
 
 def available_models() -> list[str]:
-    """The models this installation may route to, in catalogue order. The MODEL_ROUTER_MODELS
+    """Return the models this installation may route to, in catalogue order. The MODEL_ROUTER_MODELS
     variable wins, then `models` in config.json (written by `router install --models`), else every
-    model in the catalogue. Use it when a plan or an account lacks a model (no Fable, say)."""
+    model in the catalogue. Use it when a plan or an account lacks a model (no Fable, say).
+    """
     raw = os.environ.get(MODELS_ENV)
     if raw:
         return parse_models(raw)
@@ -170,7 +172,7 @@ class Cell:
         return round(CAPABILITY_TIER[self.spec.short] + CAPABILITY_EFFORT[self.effort], 4)
 
     def claude_code(self) -> dict[str, str]:
-        """The `model` and `effort` values Claude Code's Agent tool and agent frontmatter accept."""
+        """Return the `model` and `effort` values Claude Code's Agent tool and agent frontmatter accept."""
         return {"model": self.spec.short, "effort": self.effort}
 
     def expected_cost(
@@ -199,7 +201,8 @@ def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None =
 def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
     """`cell` itself when its model is available; otherwise the same effort on the most capable
     available model below it (or the least capable one above it when nothing is below). The ladder
-    then escalates from there as usual."""
+    then escalates from there as usual.
+    """
     avail = [resolve_model(m) for m in (models or available_models())]
     if cell.model in avail:
         return cell
@@ -209,9 +212,10 @@ def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
 
 
 def step_up(current: Cell, cells: Iterable[Cell], min_gain: float = 0.08, tie: float = 0.10) -> Cell | None:
-    """The cheapest cell at least `min_gain` more capable than `current`. Cells whose expected cost
+    """Return the cheapest cell at least `min_gain` more capable than `current`. Cells whose expected cost
     is within `tie` of that cheapest one compete on capability, so a frontier model at low effort
-    wins over a lower tier at max effort when they cost about the same."""
+    wins over a lower tier at max effort when they cost about the same.
+    """
     cands = [c for c in cells if c.capability >= current.capability + min_gain - 1e-9]
     if not cands:
         return None
@@ -221,8 +225,9 @@ def step_up(current: Cell, cells: Iterable[Cell], min_gain: float = 0.08, tie: f
 
 
 def step_down(current: Cell, cells: Iterable[Cell], max_loss: float = 0.08, min_saving: float = 0.20) -> Cell | None:
-    """The most capable cell that gives up at most `max_loss` capability and saves at least
-    `min_saving` of the expected cost. Used only for exploration by the feedback store."""
+    """Return the most capable cell that gives up at most `max_loss` capability and saves at least
+    `min_saving` of the expected cost. Used only for exploration by the feedback store.
+    """
     cands = [
         c
         for c in cells
