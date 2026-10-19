@@ -82,7 +82,7 @@ def regex_checker(pattern: str, flags: int = re.IGNORECASE | re.DOTALL) -> Check
 
     def check(answer: str) -> CheckResult:
         ok = rx.search(answer) is not None
-        return CheckResult(ok, f"casa con /{pattern}/" if ok else f"no casa con /{pattern}/")
+        return CheckResult(ok, f"matches /{pattern}/" if ok else f"does not match /{pattern}/")
 
     return check
 
@@ -93,7 +93,7 @@ def contains_checker(*needles: str, all_of: bool = True) -> Checker:
         hits = [n for n in needles if n.lower() in answer.lower()]
         ok = len(hits) == len(needles) if all_of else bool(hits)
         missing = [n for n in needles if n not in hits]
-        return CheckResult(ok, "todas presentes" if ok else f"faltan: {', '.join(missing)}")
+        return CheckResult(ok, "all present" if ok else f"missing: {', '.join(missing)}")
 
     return check
 
@@ -113,14 +113,14 @@ def json_checker(required_keys: tuple[str, ...] = ()) -> Checker:
         try:
             data = _json_payload(answer)
         except json.JSONDecodeError as exc:
-            return CheckResult(False, f"JSON inválido: {exc.msg}")
+            return CheckResult(False, f"invalid JSON: {exc.msg}")
         if required_keys:
             if not isinstance(data, dict):
-                return CheckResult(False, "el JSON no es un objeto")
+                return CheckResult(False, "JSON is not an object")
             missing = [k for k in required_keys if k not in data]
             if missing:
-                return CheckResult(False, f"faltan claves: {', '.join(missing)}")
-        return CheckResult(True, "JSON válido")
+                return CheckResult(False, f"missing keys: {', '.join(missing)}")
+        return CheckResult(True, "valid JSON")
 
     return check
 
@@ -131,9 +131,9 @@ def pydantic_checker(model: type[BaseModel]) -> Checker:
         try:
             model.model_validate(_json_payload(answer))
         except json.JSONDecodeError as exc:
-            return CheckResult(False, f"JSON inválido: {exc.msg}")
+            return CheckResult(False, f"invalid JSON: {exc.msg}")
         except ValidationError as exc:
-            return CheckResult(False, f"esquema: {exc.errors()[0]['msg']}")
-        return CheckResult(True, f"{model.__name__} válido")
+            return CheckResult(False, f"schema: {exc.errors()[0]['msg']}")
+        return CheckResult(True, f"valid {model.__name__}")
 
     return check

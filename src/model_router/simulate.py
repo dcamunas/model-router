@@ -152,13 +152,13 @@ def default_strategies() -> dict[str, PolicyProtocol]:
     and without feedback.
     """
     return {
-        "J fable/xhigh": LadderPolicy([parse_cell("fable/xhigh")]),
-        "M opus/high": LadderPolicy([parse_cell("opus/high")]),
-        "S sonnet/high": LadderPolicy([parse_cell("sonnet/high")]),
-        "F fable/low": LadderPolicy([parse_cell("fable/low")]),
-        "S>O rerun": LadderPolicy([parse_cell("sonnet/medium"), parse_cell("opus/high")], verify="light"),
-        "G router": Policy(),
-        "G+fb router": Policy(feedback=FeedbackStore(min_n=10)),
+        "fable/xhigh": LadderPolicy([parse_cell("fable/xhigh")]),
+        "opus/high": LadderPolicy([parse_cell("opus/high")]),
+        "sonnet/high": LadderPolicy([parse_cell("sonnet/high")]),
+        "fable/low": LadderPolicy([parse_cell("fable/low")]),
+        "sonnet>opus": LadderPolicy([parse_cell("sonnet/medium"), parse_cell("opus/high")], verify="light"),
+        "router": Policy(),
+        "router+feedback": Policy(feedback=FeedbackStore(min_n=10)),
     }
 
 
@@ -245,26 +245,26 @@ def format_report(tasks: list[SimTask], reports: list[StrategyReport], seed: int
         kinds[t.kind] = kinds.get(t.kind, 0) + 1
         risks[t.risk] = risks.get(t.risk, 0) + 1
     head = [
-        f"SIMULACIÓN · {len(tasks)} tareas · semilla {seed} · precios reales, capacidades supuestas (catalog.py)",
-        "tipos: " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())),
-        "riesgos: " + ", ".join(
+        f"SIMULATION · {len(tasks)} tasks · seed {seed} · real prices, assumed capabilities (catalog.py)",
+        "kinds: " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())),
+        "risks: " + ", ".join(
             f"{k} {v}" for k, v in sorted(risks.items(), key=lambda kv: ["low", "medium", "high", "critical"].index(kv[0]))
         ),
-        f"juez: falso OK light {JUDGE_ERROR['light'][0]:.0%} / full {JUDGE_ERROR['full'][0]:.0%}; "
-        f"falso KO light {JUDGE_ERROR['light'][1]:.0%} / full {JUDGE_ERROR['full'][1]:.0%}",
+        f"judge: false pass light {JUDGE_ERROR['light'][0]:.0%} / full {JUDGE_ERROR['full'][0]:.0%}; "
+        f"false fail light {JUDGE_ERROR['light'][1]:.0%} / full {JUDGE_ERROR['full'][1]:.0%}",
         "",
     ]
-    tbl = table(["estrategia", "resueltas", "falsos OK", "reintentos", "tokens", "coste", "verif.", "$/resuelta",
-                 f"vs {base.name.split()[0]}", "cola 10%"], rows)
+    tbl = table(["strategy", "solved", "false passes", "retries", "tokens", "cost", "verif.", "$/solved",
+                 f"vs {base.name}", "tail 10%"], rows)
     foot = [
         "",
-        "resueltas = verdad del simulador; falsos OK = la estrategia dio por buena una respuesta mala;",
-        "cola 10% = parte del coste que se llevan las 10% tareas más difíciles.",
+        "solved = the simulator's ground truth; false passes = the strategy accepted a wrong answer;",
+        "tail 10% = share of the cost spent on the 10% hardest tasks.",
     ]
     out = head + [tbl] + foot
     if detail:
         out.append("")
-        out.append("detalle por estrategia (aquí 'resueltas' = aceptadas por la estrategia; la tabla de arriba usa la verdad)")
+        out.append("detail per strategy (here 'solved' = accepted by the strategy; the table above uses the ground truth)")
         for r in reports:
             out += ["", f"== {r.name} ==", summarize(r.ledger.tasks()).text()]
     return "\n".join(out)

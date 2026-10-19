@@ -1,7 +1,5 @@
 # model-router
 
-Documentación en español: [README.es.md](README.es.md).
-
 A model router for Claude: given a task, it picks a model and an effort level, runs the task,
 verifies the answer according to the risk, escalates when the answer fails, and writes down what
 every solved task cost. You can use it from the command line, as a Python library and inside Claude
@@ -10,10 +8,6 @@ Code, where a hook picks model and effort for every subagent launched without on
 Status: experimental. The capability of each cell is a stated assumption, not a measurement; the
 ledger and the feedback store exist to replace those assumptions with real verdicts (see
 "Assumptions").
-
-A note for English readers: the command line, the hook notices and the skill speak Spanish. The
-router was written for a Spanish-speaking team. The code, the comments and the docstrings are in
-English, and the classification rules understand prompts in both languages.
 
 The idea comes from a reel by @donimas ("router picks model + effort · verify by risk"). Four
 things are different here, and each one has its reason in the table.
@@ -60,7 +54,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.2.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.3.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -71,7 +65,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.2.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.3.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -109,17 +103,15 @@ without it, your Claude Code account (see "Without an API key"). `plan`, `bench 
 
 ## Usage
 
-The CLI answers in Spanish; the prompts can be in either language.
-
 ```bash
 # What the router would do with a task, at no cost
 router plan "Review this SQL migration script before it goes to production"
-#   clasificación: review / high  (regla 'review'; riesgo: palabra de riesgo alto)
-#   inicio: opus/medium  -> Claude Code {'model': 'opus', 'effort': 'medium'}
-#     - tabla review x high -> opus/medium
-#     - escalera: opus/medium -> fable/low -> fable/xhigh
-#     - verificación light (riesgo high); presupuesto $2.00; máx. 4 intentos
-#   verificador (light): opus/medium
+#   classification: review / high  (rule 'review'; risk: high-risk keyword)
+#   start: opus/medium  -> Claude Code {'model': 'opus', 'effort': 'medium'}
+#     - table review x high -> opus/medium
+#     - ladder: opus/medium -> fable/low -> fable/xhigh
+#     - verification light (risk high); budget $2.00; max 4 attempts
+#   verifier (light): opus/medium
 
 # Only model/effort, for the frontmatter of a Claude Code agent
 router plan "classify these tickets" --claude-code
@@ -143,7 +135,7 @@ router stats
 router feedback <task_id> --ko --note "the judge accepted a badly parsed date"
 ```
 
-Format of `tasks.yaml` for the real bench (a full example, in Spanish, in `tareas.example.yaml`):
+Format of `tasks.yaml` for the real bench (full example in `tasks.example.yaml`):
 
 ```yaml
 tasks:
@@ -225,8 +217,8 @@ print(result.answer)
 
 ## How it decides
 
-1. Kind and risk. You pass them or rules infer them (Spanish and English); `--classify-llm` uses
-   Haiku.
+1. Kind and risk. You pass them or rules infer them (the rules know English and Spanish prompts);
+   `--classify-llm` uses Haiku.
 2. Start cell. The `START` table in `policy.py` (kind × risk). With 10 or more verdicts for that
    kind, the feedback store moves it up when its first-attempt pass rate falls below the break-even
    `c1 / c2` (the cost of an attempt on that cell, verification included, over the cost of the next
@@ -284,8 +276,8 @@ uv run pyright                # types
 ```
 
 GitHub Actions runs the same on every push, checks that the skill ships inside the wheel and
-validates the plugin with the Claude Code CLI. Code, comments and docstrings in English;
-documentation in English and Spanish; everything the user sees at the command line, in Spanish.
+validates the plugin with the Claude Code CLI. Everything in the repository is in English: code,
+documentation and what the command line prints.
 
 ## Licence
 

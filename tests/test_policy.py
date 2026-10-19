@@ -23,7 +23,7 @@ def test_risk_floor_overrides_feedback_exploration():
         store.record("code", parse_cell("opus/high"), True)
     plan = Policy(feedback=store).plan(Task(prompt="x", kind="code", risk="critical"))
     assert plan.start.capability >= parse_cell("opus/medium").capability
-    assert any("suelo" in r for r in plan.rationale) or plan.start.label == "opus/high"
+    assert any("floor" in r for r in plan.rationale) or plan.start.label == "opus/high"
 
 
 def test_task_overrides_budget_attempts_and_verify():
@@ -55,7 +55,7 @@ def test_feedback_demotes_below_the_break_even(tmp_path):
     for passed in (True, False, False, False):  # 25 % first-attempt pass rate, below the ~40 % break-even
         store.record("code", parse_cell("opus/low"), passed)
     plan = Policy(feedback=store).plan(Task(prompt="x", kind="code", risk="medium"))
-    assert plan.start.label == "fable/low" and any("umbral" in r for r in plan.rationale)
+    assert plan.start.label == "fable/low" and any("threshold" in r for r in plan.rationale)
 
 
 def test_light_verifier_is_cheapest_cell_at_least_as_capable():
@@ -91,8 +91,8 @@ def test_policy_falls_back_when_the_table_names_a_missing_model(monkeypatch):
     policy = Policy()
     plan = policy.plan(Task(prompt="x", kind="analysis", risk="critical"))  # table says fable/low
     assert plan.start.label == "opus/medium"  # fable/low -> opus/low, then the critical floor lifts it
-    assert any("fable no disponible: fable/low -> opus/low" in r for r in plan.rationale)
-    assert any("suelo de riesgo critical" in r for r in plan.rationale)
+    assert any("fable not available: fable/low -> opus/low" in r for r in plan.rationale)
+    assert any("risk floor critical" in r for r in plan.rationale)
     assert all(c.spec.short != "fable" for c in plan.ladder)
     full = policy.verifier_for(plan.start, "full")
     assert full is not None and full.spec.short != "fable"

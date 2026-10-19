@@ -178,7 +178,7 @@ class Router:
                            completion.request_id, refused=False, verdict=None, verdict_source="", reason="")
             if completion.refused:
                 attempts.append(replace(base, refused=True, verdict_source="refusal",
-                                        reason=f"rechazada ({completion.refusal_category or 'sin categoría'})"))
+                                        reason=f"refused ({completion.refusal_category or 'no category'})"))
                 if sum(a.refused for a in attempts) >= 2:
                     status = "refused"
                     break
@@ -187,7 +187,7 @@ class Router:
             if completion.stop_reason == "max_tokens" and not truncated_retry and max_tokens * 2 <= cell.spec.max_output:
                 truncated_retry = True
                 attempts.append(replace(base, verdict_source="truncated",
-                                        reason=f"cortada en max_tokens={max_tokens}; se repite con {max_tokens * 2}"))
+                                        reason=f"cut at max_tokens={max_tokens}; retrying with {max_tokens * 2}"))
                 max_tokens *= 2
                 continue
             verdict = self.verifier.verify(task, completion.text, plan.verify, cell)

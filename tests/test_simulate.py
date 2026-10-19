@@ -10,16 +10,16 @@ def test_simulation_is_deterministic_and_covers_all_strategies():
     assert key(reports_a) == key(reports_b)
     assert [r.name for r in reports_a] == list(default_strategies())
     text = format_report(tasks_a, reports_a, 7)
-    assert "G router" in text and "$/resuelta" in text
+    assert "router" in text and "$/solved" in text
 
 
 def test_frontier_solves_at_least_as_much_as_sonnet_and_costs_more():
     _, reports = run_simulation(80, seed=3)
     by = {r.name: r for r in reports}
-    assert by["J fable/xhigh"].solved >= by["S sonnet/high"].solved
-    assert by["J fable/xhigh"].total_cost > by["S sonnet/high"].total_cost
-    assert by["G router"].retries > 0
-    assert by["G router"].verify_cost > 0
+    assert by["fable/xhigh"].solved >= by["sonnet/high"].solved
+    assert by["fable/xhigh"].total_cost > by["sonnet/high"].total_cost
+    assert by["router"].retries > 0
+    assert by["router"].verify_cost > 0
 
 
 def test_pass_probability_moves_with_capability_and_difficulty():

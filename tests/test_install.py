@@ -37,7 +37,7 @@ def test_install_writes_hooks_copies_skill_and_remembers_profile_and_models(home
     cfg = json.loads((home / "state" / "config.json").read_text())
     assert cfg == {"claude_config_dir": str(profile.resolve()), "models": ["haiku", "opus"]}
     out = capsys.readouterr().out
-    assert "modelos disponibles: haiku, opus" in out
+    assert "available models: haiku, opus" in out
 
 
 def test_install_is_idempotent_and_uninstall_removes_hooks_and_skill_but_keeps_config(home):
@@ -68,11 +68,11 @@ def test_a_bad_model_or_a_foreign_skill_stops_the_install_before_anything_is_wri
     assert not settings.exists()
     foreign = profile / "skills" / "router"
     foreign.mkdir(parents=True)
-    (foreign / "SKILL.md").write_text("---\nname: otra\n---\n")
-    with pytest.raises(SystemExit, match="no es la skill del router"):
+    (foreign / "SKILL.md").write_text("---\nname: other\n---\n")
+    with pytest.raises(SystemExit, match="not the router skill"):
         install(settings, profile_dir=profile)
     assert not settings.exists() and (foreign / "SKILL.md").exists()
-    with pytest.raises(SystemExit, match="no es la skill del router"):
+    with pytest.raises(SystemExit, match="not the router skill"):
         uninstall(settings)
     assert (foreign / "SKILL.md").exists()
 

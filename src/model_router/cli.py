@@ -1,6 +1,5 @@
 """`router` on the command line: plan (no API), run (live), bench (simulated or a file of real tasks),
-stats, feedback, doctor, cells, install and uninstall. Everything a user sees here is Spanish; the
-README documents each command.
+stats, feedback, doctor, cells, config, install and uninstall. The README documents each command.
 """
 
 from __future__ import annotations
@@ -36,18 +35,19 @@ PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once insta
 
 def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True) -> None:
     if with_prompt:
-        p.add_argument("prompt", nargs="?", help="la tarea; o usa --file")
-        p.add_argument("--file", "-f", help="fichero con la tarea")
-    p.add_argument("--kind", "-k", choices=KINDS, help="tipo de tarea (si falta, se infiere por reglas)")
-    p.add_argument("--risk", "-r", choices=RISKS, help="riesgo de equivocarse (si falta, se infiere)")
-    p.add_argument("--verify", choices=VERIFY_MODES, help="fuerza el modo de verificación")
-    p.add_argument("--budget", type=float, help="tope en USD para la tarea")
-    p.add_argument("--max-attempts", type=int, help="intentos máximos")
-    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="solo backend api; el cli lo gestiona solo")
-    p.add_argument("--system", help="fichero con el system prompt del trabajador")
-    p.add_argument("--check-regex", help="la respuesta debe casar con esta regex (checker programático)")
-    p.add_argument("--check-json", help="la respuesta debe ser JSON con estas claves (coma-separadas; vacío = solo JSON válido)")
-    p.add_argument("--classify-llm", action="store_true", help="clasifica con Haiku en vez de con reglas")
+        p.add_argument("prompt", nargs="?", help="the task; or use --file")
+        p.add_argument("--file", "-f", help="file with the task")
+    p.add_argument("--kind", "-k", choices=KINDS, help="task kind (inferred by rules when missing)")
+    p.add_argument("--risk", "-r", choices=RISKS, help="how bad a wrong answer is (inferred when missing)")
+    p.add_argument("--verify", choices=VERIFY_MODES, help="force the verification mode")
+    p.add_argument("--budget", type=float, help="spending cap in USD for the task")
+    p.add_argument("--max-attempts", type=int, help="maximum attempts")
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="api backend only; the cli backend manages it itself")
+    p.add_argument("--system", help="file with the worker's system prompt")
+    p.add_argument("--check-regex", help="the answer must match this regex (programmatic checker)")
+    p.add_argument("--check-json",
+                   help="the answer must be JSON with these comma-separated keys (empty = any valid JSON)")
+    p.add_argument("--classify-llm", action="store_true", help="classify with Haiku instead of rules")
 
 
 def _prompt_from(args: argparse.Namespace) -> str:
@@ -57,7 +57,7 @@ def _prompt_from(args: argparse.Namespace) -> str:
         return args.prompt
     if not sys.stdin.isatty():
         return sys.stdin.read()
-    raise SystemExit("falta la tarea: pásala como argumento, con --file o por stdin")
+    raise SystemExit("no task given: pass it as an argument, with --file or on stdin")
 
 
 def _task_from(
@@ -89,35 +89,36 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         print(f"model: {cc['model']}\neffort: {cc['effort']}")
         return 0
     if cls is not None:
-        print(f"clasificación: {cls.kind} / {cls.risk}  ({cls.reason})")
-    print(f"inicio: {plan.start}  -> Claude Code {plan.start.claude_code()}")
+        print(f"classification: {cls.kind} / {cls.risk}  ({cls.reason})")
+    print(f"start: {plan.start}  -> Claude Code {plan.start.claude_code()}")
     for line in plan.rationale:
         print("  - " + line)
     verifier = policy.verifier_for(plan.start, plan.verify)
     if verifier is not None:
-        print(f"verificador ({plan.verify}): {verifier}")
+        print(f"verifier ({plan.verify}): {verifier}")
     first = plan.start.expected_cost(task.estimated_input_tokens, task.planned_output_tokens)
-    print(f"coste estimado del primer intento: {money(first)}"
-          f"  (precios {PRICES_AS_OF})")
+    print(f"estimated cost of the first attempt: {money(first)}"
+          f"  (prices {PRICES_AS_OF})")
     return 0
 
 
 def _attempts_table(result: TaskResult) -> str:
     rows = []
     for a in result.attempts:
-        verdict = "-" if a.verdict is None else ("OK" if a.verdict else "KO")
+        verdict = "-" if a.verdict is None else ("pass" if a.verdict else "fail")
         served = a.served_model if a.fallback_ran else ""
         rows.append([a.n, a.cell.label, served, a.stop_reason, f"{a.usage.input_tokens:,}/{a.usage.output_tokens:,}",
                      money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + a.verifier.label if a.verifier else ''})",
                      money(a.verify_cost_usd), a.reason[:REASON_COLUMN_CHARS]])
-    return table(["#", "celda", "fallback", "stop", "tok in/out", "coste", "veredicto", "verif.", "motivo"], rows)
+    return table(["#", "cell", "fallback", "stop", "tok in/out", "cost", "verdict", "verif.", "reason"], rows)
 
 
 def _add_backend_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--backend", choices=("auto", "api", "cli"), default="auto",
-                   help="api = SDK con ANTHROPIC_API_KEY; cli = `claude -p` con tu cuenta; auto = api si hay clave, si no cli")
-    p.add_argument("--claude-config-dir", help=f"perfil de Claude para el backend cli (si falta: {CONFIG_DIR_ENV})")
-    p.add_argument("--no-fallbacks", action="store_true", help="backend api: sin fallbacks de refusal en el servidor")
+                   help="api = SDK with ANTHROPIC_API_KEY; cli = `claude -p` with your account; "
+                        "auto = api when there is a key, else cli")
+    p.add_argument("--claude-config-dir", help=f"Claude profile for the cli backend (default: {CONFIG_DIR_ENV})")
+    p.add_argument("--no-fallbacks", action="store_true", help="api backend: no server-side refusal fallbacks")
 
 
 def _live_client(args: argparse.Namespace) -> ClaudeClient:
@@ -147,12 +148,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(result.answer)
     print()
     if cls is not None:
-        print(f"clasificación: {cls.kind} / {cls.risk}  ({cls.reason})")
+        print(f"classification: {cls.kind} / {cls.risk}  ({cls.reason})")
     print(_attempts_table(result))
-    print(f"estado {result.status} · coste {money(result.total_cost_usd)} (verificación {money(result.verify_cost_usd)})"
-          f" · reintentos {result.retries} · id {task.id}")
+    print(f"status {result.status} · cost {money(result.total_cost_usd)} (verification {money(result.verify_cost_usd)})"
+          f" · retries {result.retries} · id {task.id}")
     if not result.solved:
-        print("la última respuesta no pasó la verificación; revisa antes de usarla", file=sys.stderr)
+        print("the last answer did not pass verification; review it before using it", file=sys.stderr)
     return 0 if result.solved else 1
 
 
@@ -166,7 +167,7 @@ def _load_specs(path: Path) -> list[dict[str, Any]]:
         data = json.loads(text)
     specs = data["tasks"] if isinstance(data, dict) else data
     if not isinstance(specs, list) or not specs:
-        raise SystemExit(f"{path}: se esperaba una lista de tareas")
+        raise SystemExit(f"{path}: expected a list of tasks")
     return specs
 
 
@@ -210,12 +211,12 @@ def _cmd_bench(args: argparse.Namespace) -> int:
             first = plan.start.expected_cost(t.estimated_input_tokens, t.planned_output_tokens)
             estimate += first * (1.0 if len(plan.ladder) == 1 else ESCALATION_COST_FACTOR)
             estimate += JUDGE_COST_ESTIMATE_USD.get(plan.verify, 0.0)
-    print(f"{len(tasks)} tareas x {len(strategies)} estrategias · estimación {money(estimate)} "
-          "(orientativa, puede quedarse corta)")
+    print(f"{len(tasks)} tasks x {len(strategies)} strategies · estimate {money(estimate)} "
+          "(a rough one; it may fall short)")
     if not args.yes:
-        answer = input("¿Lanzar llamadas reales? [s/N] ").strip().lower()
-        if answer not in ("s", "si", "sí", "y", "yes"):
-            print("cancelado")
+        answer = input("Make real calls? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("cancelled")
             return 1
     client = _live_client(args)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -227,7 +228,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
                 print(f"  [{name}] {t.id} {res.status} {money(res.total_cost_usd)} via {res.final_cell}")
         print(f"\n== {name} ==")
         print(summarize(ledger.tasks()).text())
-        print(f"registro: {ledger.path}\n")
+        print(f"ledger: {ledger.path}\n")
     return 0
 
 
@@ -235,20 +236,20 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     ledger = Ledger(Path(args.ledger) if args.ledger else home() / "ledger.jsonl")
     records = ledger.tasks()
     if ledger.corrupt:
-        print(f"aviso: {ledger.corrupt} líneas ilegibles en {ledger.path}, no se cuentan", file=sys.stderr)
+        print(f"warning: {ledger.corrupt} unreadable lines in {ledger.path}, not counted", file=sys.stderr)
     if not records:
-        print(f"sin tareas en {ledger.path}")
+        print(f"no tasks in {ledger.path}")
     else:
         print(summarize(records).text())
     feedback = FeedbackStore(home() / "feedback.json")
     rows = feedback.rows()
     if rows:
-        print("\nfeedback (acierto a la primera / total por tipo y celda)")
-        print(table(["tipo", "celda", "n 1er", "acierto 1er", "n total", "acierto total"], rows))
+        print("\nfeedback (first-attempt / total pass rate per kind and cell)")
+        print(table(["kind", "cell", "n first", "pass first", "n total", "pass total"], rows))
     hook_rows = _hook_decisions(home() / "hook.jsonl")
     if hook_rows:
-        print("\ndecisiones del hook de Claude Code (subagentes enrutados)")
-        print(table(["celda", "tipo", "riesgo", "veces"], hook_rows))
+        print("\nClaude Code hook decisions (routed subagents)")
+        print(table(["cell", "kind", "risk", "times"], hook_rows))
     return 0
 
 
@@ -276,14 +277,14 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
     try:
         data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
     except ValueError:
-        return [(False, f"{settings} no es JSON válido: Claude Code ignora todo el fichero")]
+        return [(False, f"{settings} is not valid JSON: Claude Code ignores the whole file")]
     checks: list[tuple[bool, str]] = []
     if (data.get("enabledPlugins") or {}).get(PLUGIN_ID):
-        checks.append((True, f"plugin {PLUGIN_ID} activo en {settings}: hooks y skill vienen del plugin"))
+        checks.append((True, f"plugin {PLUGIN_ID} enabled in {settings}: hooks and skill come from the plugin"))
         venv_hook = profile / "plugins" / "data" / PLUGIN_ID.replace("@", "-") / "venv" / "bin" / "router-hook"
         ready = venv_hook.exists()
-        note = "" if ready else " (se crea al abrir una sesión; necesita uv)"
-        checks.append((ready, f"entorno del plugin: {venv_hook}{note}"))
+        note = "" if ready else " (built when a session starts; needs uv)"
+        checks.append((ready, f"plugin environment: {venv_hook}{note}"))
     else:
         hooks = data.get("hooks", {})
 
@@ -296,16 +297,16 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
                         return Path(h["command"]).exists()
             return False
 
-        fix = " (falta: el plugin o router install)"
+        fix = " (missing: the plugin or router install)"
         pre, start = wired("PreToolUse", "Agent"), wired("SessionStart")
-        checks.append((pre, f"hook PreToolUse(Agent) en {settings}" + ("" if pre else fix)))
-        checks.append((start, f"hook SessionStart en {settings}" + ("" if start else fix)))
+        checks.append((pre, f"hook PreToolUse(Agent) in {settings}" + ("" if pre else fix)))
+        checks.append((start, f"hook SessionStart in {settings}" + ("" if start else fix)))
         link = profile / "skills" / "router"
         checks.append((link.is_dir(), f"skill router: {link}" + ("" if link.is_dir() else fix)))
-    model = str(data.get("model", "por defecto"))
+    model = str(data.get("model", "default"))
     model_id = SHORT_TO_ID.get(model, model)  # settings may name the model by its short name
     effort = (data.get("modelSettings") or {}).get(model_id, {}).get("effortLevel")
-    checks.append((True, f"chat principal: model {model}" + (f", effort {effort}" if effort else "")))
+    checks.append((True, f"main chat: model {model}" + (f", effort {effort}" if effort else "")))
     return checks
 
 
@@ -322,44 +323,44 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
             version = subprocess.run([claude, "--version"], capture_output=True, text=True, timeout=20, check=False).stdout
         except (OSError, subprocess.SubprocessError) as exc:
             version = f"? ({exc})"
-        checks.append((True, f"claude en PATH: {claude} ({version.strip()})"))
+        checks.append((True, f"claude on PATH: {claude} ({version.strip()})"))
     else:
-        checks.append((False, "claude no está en PATH: instala Claude Code o usa --backend api con ANTHROPIC_API_KEY"))
+        checks.append((False, "claude is not on the PATH: install Claude Code or use --backend api with ANTHROPIC_API_KEY"))
     profile: Path | None = None
     try:
         profile, source = resolve_profile()
         exists = profile.is_dir()
-        checks.append((exists, f"perfil de Claude: {profile} (via {source})" + ("" if exists else " NO EXISTE")))
+        checks.append((exists, f"Claude profile: {profile} (via {source})" + ("" if exists else " DOES NOT EXIST")))
     except ClientUnavailableError as exc:
         checks.append((False, str(exc)))
     from .install import hook_binary
 
     hook_bin = hook_binary()
-    missing = "no encontrado (instala el paquete: uv tool install ... o uv sync)"
-    checks.append((hook_bin is not None, f"binario del hook: {hook_bin or missing}"))
+    missing = "not found (install the package: uv tool install ... or uv sync)"
+    checks.append((hook_bin is not None, f"hook binary: {hook_bin or missing}"))
     try:
         avail = available_models()
-        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if len(avail) < len(MODELS) else "catálogo")
-        checks.append((True, f"modelos disponibles: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
+        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if len(avail) < len(MODELS) else "catalogue")
+        checks.append((True, f"available models: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
     except UnknownModelError as exc:
-        checks.append((False, f"modelos disponibles: {exc.name!r} no existe (revisa {MODELS_ENV} o `router install --models`)"))
+        checks.append((False, f"available models: {exc.name!r} does not exist (check {MODELS_ENV} or `router install --models`)"))
     except ValueError:
-        checks.append((False, f"modelos disponibles: lista vacía (revisa {MODELS_ENV} o `router install --models`)"))
+        checks.append((False, f"available models: empty list (check {MODELS_ENV} or `router install --models`)"))
     if profile is not None and profile.is_dir():
         checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
-    checks.append((True, f"estado en {home()}: {ledger_n} tareas en el registro, {hook_n} decisiones del hook"))
+    checks.append((True, f"state in {home()}: {ledger_n} tasks in the ledger, {hook_n} hook decisions"))
     if args.live and claude and profile is not None:
         try:
-            c = CliClient(config_dir=profile).complete(parse_cell("haiku/low"), prompt="Responde solo OK.",
-                                                      system="Responde solo lo pedido.")
-            summary = f"{c.model} respondió {c.text.strip()[:20]!r} en {c.seconds:.1f}s, {c.usage.total} tokens"
-            checks.append((True, f"llamada real: {summary}"))
+            c = CliClient(config_dir=profile).complete(parse_cell("haiku/low"), prompt="Answer only OK.",
+                                                      system="Answer only what is asked.")
+            summary = f"{c.model} answered {c.text.strip()[:20]!r} in {c.seconds:.1f}s, {c.usage.total} tokens"
+            checks.append((True, f"live call: {summary}"))
         except ClientUnavailableError as exc:
-            checks.append((False, f"llamada real: {exc}"))
+            checks.append((False, f"live call: {exc}"))
     for ok_, text in checks:
-        print(("ok     " if ok_ else "FALLO  ") + text)
+        print(("ok     " if ok_ else "FAIL   ") + text)
     return 0 if all(ok_ for ok_, _ in checks) else 1
 
 
@@ -367,25 +368,25 @@ def _cmd_feedback(args: argparse.Namespace) -> int:
     ledger = Ledger(home() / "ledger.jsonl")
     record = ledger.find(args.task_id)
     if record is None:
-        raise SystemExit(f"no hay tarea {args.task_id} en {ledger.path}")
+        raise SystemExit(f"no task {args.task_id} in {ledger.path}")
     passed = bool(args.ok)
     ledger.override(args.task_id, passed, note=args.note or "")
     if record.get("final_cell"):
         feedback = FeedbackStore(home() / "feedback.json")
         feedback.apply_override(record["kind"], record["final_cell"], passed, first=len(record["attempts"]) == 1)
         feedback.save()
-    print(f"{args.task_id}: marcada como {'OK' if passed else 'KO'}")
+    print(f"{args.task_id}: marked as {'pass' if passed else 'fail'}")
     return 0
 
 
 def _cmd_cells(_args: argparse.Namespace) -> int:
     rows = [[c.label, c.tier, f"{c.capability:.2f}", money(c.expected_cost()), c.spec.input, c.spec.output] for c in lattice()]
-    print(table(["celda", "tier", "capacidad*", "coste ref.", "$/M in", "$/M out"], rows))
-    print(f"\n* capacidad supuesta (catalog.py), no medida · coste ref. = 2.000 tokens in, 1.500 out a effort high"
-          f" · precios {PRICES_AS_OF}")
+    print(table(["cell", "tier", "capability*", "ref. cost", "$/M in", "$/M out"], rows))
+    print(f"\n* assumed capability (catalog.py), not measured · ref. cost = 2,000 tokens in, 1,500 out at effort high"
+          f" · prices {PRICES_AS_OF}")
     off = [MODELS[m].short for m in MODELS if m not in available_models()]
     if off:
-        print(f"fuera de esta instalación: {', '.join(off)} ({MODELS_ENV} o `router install --models`)")
+        print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router install --models`)")
     return 0
 
 
@@ -407,9 +408,9 @@ def _cmd_config(args: argparse.Namespace) -> int:
 
     if args.models is None and args.profile_dir is None:
         cfg = read_config()
-        print(f"perfil para `router run`: {cfg.get('claude_config_dir') or 'sin fijar'}")
-        print(f"modelos disponibles: {', '.join(cfg.get('models') or [m.short for m in MODELS.values()])}")
-        print(f"(en {config_path()})")
+        print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
+        print(f"available models: {', '.join(cfg.get('models') or [m.short for m in MODELS.values()])}")
+        print(f"(in {config_path()})")
         return 0
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
@@ -421,77 +422,77 @@ def _add_profile_args(p: argparse.ArgumentParser) -> None:
     from .install import default_settings
 
     p.add_argument("--settings", type=Path, default=default_settings(),
-                   help="settings.json a tocar (por defecto el del perfil: $CLAUDE_CONFIG_DIR o ~/.claude)")
-    p.add_argument("--skills-dir", type=Path, help="carpeta de skills (por defecto, junto al settings)")
-    p.add_argument("--no-skill", action="store_true", help="solo hooks, sin la skill")
+                   help="settings.json to edit (default: the profile's, $CLAUDE_CONFIG_DIR or ~/.claude)")
+    p.add_argument("--skills-dir", type=Path, help="skills directory (default: next to the settings file)")
+    p.add_argument("--no-skill", action="store_true", help="hooks only, no skill")
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the `router` argument parser; each subcommand sets `func` to its handler."""
     p = argparse.ArgumentParser(
         prog="router",
-        description="Router de modelos Claude: elige modelo + effort, verifica por riesgo, escala si falla y lleva la cuenta.",
+        description="Claude model router: picks model + effort, verifies by risk, escalates on failure and keeps the ledger.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("plan", help="qué haría el router con esta tarea (sin llamar a la API)")
+    sp = sub.add_parser("plan", help="what the router would do with this task (no API call)")
     _add_task_args(sp)
-    sp.add_argument("--claude-code", action="store_true", help="imprime solo model/effort para un agente de Claude Code")
+    sp.add_argument("--claude-code", action="store_true", help="print only model/effort, for a Claude Code agent")
     sp.set_defaults(func=_cmd_plan)
 
-    sr = sub.add_parser("run", help="ejecuta la tarea con el router (llamadas reales)")
+    sr = sub.add_parser("run", help="run the task through the router (real calls)")
     _add_task_args(sr)
     _add_backend_args(sr)
-    sr.add_argument("--json", action="store_true", help="salida JSON con la respuesta y los intentos")
+    sr.add_argument("--json", action="store_true", help="JSON output with the answer and the attempts")
     sr.set_defaults(func=_cmd_run)
 
-    sb = sub.add_parser("bench", help="compara estrategias: simulación offline o fichero de tareas reales")
-    sb.add_argument("file", nargs="?", help="YAML/JSON con tareas (sin fichero: simulación)")
-    sb.add_argument("--simulate", action="store_true", help="fuerza la simulación")
-    sb.add_argument("--tasks", type=int, default=60, help="tareas simuladas")
-    sb.add_argument("--seed", type=int, default=1, help="semilla de la simulación (1 por defecto)")
-    sb.add_argument("--detail", action="store_true", help="simulación: desglose por celda y tipo de cada estrategia")
+    sb = sub.add_parser("bench", help="compare strategies: offline simulation or a file of real tasks")
+    sb.add_argument("file", nargs="?", help="YAML/JSON with tasks (no file: simulation)")
+    sb.add_argument("--simulate", action="store_true", help="force the simulation")
+    sb.add_argument("--tasks", type=int, default=60, help="simulated tasks")
+    sb.add_argument("--seed", type=int, default=1, help="simulation seed (default 1)")
+    sb.add_argument("--detail", action="store_true", help="simulation: breakdown by cell and kind for each strategy")
     sb.add_argument("--strategies", default="router",
-                    help='p. ej. "router,fable/xhigh,opus/high,sonnet/medium>opus/high"')
-    sb.add_argument("--yes", "-y", action="store_true", help="no pedir confirmación antes de gastar")
-    sb.add_argument("--jobs", "-j", type=int, default=3, help="tareas en paralelo (3 por defecto)")
+                    help='e.g. "router,fable/xhigh,opus/high,sonnet/medium>opus/high"')
+    sb.add_argument("--yes", "-y", action="store_true", help="do not ask before spending")
+    sb.add_argument("--jobs", "-j", type=int, default=3, help="tasks in parallel (default 3)")
     _add_backend_args(sb)
     sb.set_defaults(func=_cmd_bench)
 
-    ss = sub.add_parser("stats", help="resumen del registro y del feedback")
-    ss.add_argument("--ledger", help="otro fichero de registro")
+    ss = sub.add_parser("stats", help="summary of the ledger and the feedback store")
+    ss.add_argument("--ledger", help="another ledger file")
     ss.set_defaults(func=_cmd_stats)
 
-    sf = sub.add_parser("feedback", help="corrige a mano el veredicto de una tarea")
-    sf.add_argument("task_id", help="id de la tarea, el que imprime `router run` y lista `router stats`")
+    sf = sub.add_parser("feedback", help="correct a task's verdict by hand")
+    sf.add_argument("task_id", help="the task id that `router run` prints and `router stats` lists")
     g = sf.add_mutually_exclusive_group(required=True)
-    g.add_argument("--ok", action="store_true", help="la respuesta era buena")
-    g.add_argument("--ko", action="store_true", help="la respuesta era mala")
-    sf.add_argument("--note", help="por qué, para el registro")
+    g.add_argument("--ok", action="store_true", help="the answer was good")
+    g.add_argument("--ko", action="store_true", help="the answer was bad")
+    sf.add_argument("--note", help="why, for the ledger")
     sf.set_defaults(func=_cmd_feedback)
 
-    sd = sub.add_parser("doctor", help="comprueba claude, perfil, hooks, skill y estado; --live hace una llamada con Haiku")
-    sd.add_argument("--live", action="store_true", help="además, una llamada real con Haiku para probar la cuenta")
+    sd = sub.add_parser("doctor", help="check claude, profile, hooks, skill and state; --live makes one Haiku call")
+    sd.add_argument("--live", action="store_true", help="also make one real Haiku call to test the account")
     sd.set_defaults(func=_cmd_doctor)
 
-    sc = sub.add_parser("cells", help="la retícula de celdas con su coste y capacidad supuesta")
+    sc = sub.add_parser("cells", help="the lattice of cells with their cost and assumed capability")
     sc.set_defaults(func=_cmd_cells)
 
-    si = sub.add_parser("install", help="activa el router en un perfil de Claude Code (hooks + skill)")
+    si = sub.add_parser("install", help="wire the router into a Claude Code profile (hooks + skill)")
     _add_profile_args(si)
-    si.add_argument("--link", action="store_true", help="enlaza la skill en vez de copiarla (desarrollo)")
+    si.add_argument("--link", action="store_true", help="symlink the skill instead of copying it (development)")
     si.add_argument("--profile-dir", type=Path,
-                    help="perfil de Claude que usará `router run` (por defecto, el del settings si es un perfil)")
-    si.add_argument("--models", help="modelos que puede elegir esta instalación, p. ej. haiku,sonnet,opus; all = todos")
+                    help="Claude profile `router run` will use (default: the settings file's, when it is a profile)")
+    si.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
     si.set_defaults(func=_cmd_install)
 
-    su = sub.add_parser("uninstall", help="quita los hooks y la skill del perfil")
+    su = sub.add_parser("uninstall", help="remove the hooks and the skill from the profile")
     _add_profile_args(su)
     su.set_defaults(func=_cmd_uninstall)
 
-    sg = sub.add_parser("config", help="muestra o fija el perfil de `router run` y los modelos disponibles (sin tocar hooks)")
-    sg.add_argument("--profile-dir", type=Path, help="perfil de Claude que usará `router run`")
-    sg.add_argument("--models", help="modelos que puede elegir esta instalación, p. ej. haiku,sonnet,opus; all = todos")
+    sg = sub.add_parser("config", help="show or set the profile for `router run` and the available models (hooks untouched)")
+    sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
+    sg.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
     sg.set_defaults(func=_cmd_config)
     return p
 
@@ -504,10 +505,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(args.func(args) or 0)
     except UnknownModelError as exc:
-        raise SystemExit(f"modelo desconocido {exc.name!r}; válidos: {', '.join(exc.known)} "
-                         f"(revisa {MODELS_ENV}, config.json o --models)") from exc
+        raise SystemExit(f"unknown model {exc.name!r}; valid: {', '.join(exc.known)} "
+                         f"(check {MODELS_ENV}, config.json or --models)") from exc
     except ValueError as exc:
-        raise SystemExit(f"valor no válido: {exc}") from exc
+        raise SystemExit(f"invalid value: {exc}") from exc
 
 
 if __name__ == "__main__":

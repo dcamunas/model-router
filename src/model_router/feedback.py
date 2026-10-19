@@ -65,8 +65,8 @@ class FeedbackStore:
     def suggest_start(
         self, kind: str, default: Cell, cells: list[Cell], *, break_even: float | None = None
     ) -> tuple[Cell, str | None]:
-        """Return the cell `kind` should start on instead of `default`, and the reason in Spanish when it
-        differs (None otherwise). With at least `min_n` first attempts, a pass rate under `break_even`
+        """Return the cell `kind` should start on instead of `default`, and the reason when it differs
+        (None otherwise). With at least `min_n` first attempts, a pass rate under `break_even`
         moves one step up and a rate over `promote_above` explores one step down on an `explore`
         fraction of tasks. `break_even` is the rate below which starting on `default` costs more than
         starting one step up, verification included; without it the flat `demote_below` applies.
@@ -78,12 +78,12 @@ class FeedbackStore:
         if rate < threshold:
             up = step_up(default, cells)
             if up is not None:
-                return up, (f"feedback: {default} resuelve a la primera {rate:.0%} de {n} tareas '{kind}' "
-                            f"(umbral {threshold:.0%}) -> empieza en {up}")
+                return up, (f"feedback: {default} passes first time on {rate:.0%} of {n} '{kind}' tasks "
+                            f"(threshold {threshold:.0%}) -> start on {up}")
         elif rate >= self.promote_above and self.explore > 0 and self.rng.random() < self.explore:
             down = step_down(default, cells)
             if down is not None:
-                return down, f"feedback: {default} resuelve a la primera {rate:.0%} de {n} '{kind}'; explorando {down}"
+                return down, f"feedback: {default} passes first time on {rate:.0%} of {n} '{kind}'; exploring {down}"
         return default, None
 
     def apply_override(self, kind: str, cell_label: str, passed: bool, *, first: bool) -> None:

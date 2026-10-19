@@ -87,18 +87,18 @@ class Verifier:
             if mode == "none":
                 return VerifyResult(True, "checker", check.reason)
         elif mode == "none":
-            return VerifyResult(True, "none", "sin verificación")
+            return VerifyResult(True, "none", "no verification requested")
         cell = self.policy.verifier_for(worker, mode)
         if cell is None:
-            return VerifyResult(True, "none", "sin celda verificadora")
+            return VerifyResult(True, "none", "no verifier cell")
         completion = self.client.complete(
             cell, prompt=judge_prompt(task, answer), system=JUDGE_SYSTEM, max_tokens=JUDGE_MAX_TOKENS, output_format=Verdict
         )
         cost = cost_usd(cell.model, completion.usage)
         verdict = completion.parsed
         if completion.refused or not isinstance(verdict, Verdict):
-            why = f"rechazada ({completion.refusal_category})" if completion.refused else "sin veredicto estructurado"
-            return VerifyResult(False, "judge-error", f"el verificador no dio veredicto: {why}", cell, completion.usage, cost)
+            why = f"refused ({completion.refusal_category})" if completion.refused else "no structured verdict"
+            return VerifyResult(False, "judge-error", f"verifier returned no verdict: {why}", cell, completion.usage, cost)
         confidence = max(0.0, min(1.0, verdict.confidence))
         passed = verdict.passed and confidence >= self.min_confidence
         issues = "; ".join(verdict.issues[:MAX_ISSUES_SHOWN])

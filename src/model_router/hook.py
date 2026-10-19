@@ -42,15 +42,15 @@ PROMPT_HEAD_CHARS = 60
 TRANSCRIPT_TAIL_BYTES = 262_144  # enough for the last few assistant entries of a long session
 
 SESSION_CONTEXT = (
-    "Router de modelos activo (hook PreToolUse sobre la herramienta Agent): cuando lances un subagente "
-    "general-purpose sin `model`, el hook fija `model` y `effort` según el tipo y el riesgo que infiere "
-    "del prompt del subagente. No pongas `model` tú salvo que el usuario lo pida o la tarea sea de riesgo "
-    "alto; si lo pones, el hook lo respeta. Una revisión de riesgo crítico la manda a un modelo distinto "
-    "del que sirve este chat (cruce ciego): si has diseñado tú algo crítico aquí, lanza un subagente de "
-    "revisión con el brief y el diseño y deja que el hook elija. Subtareas de solo texto (clasificar, "
-    "extraer, resumir, redactar, revisar un texto pegado) van por `router run \"...\"` en vez de por un "
-    "subagente: cien veces menos contexto, verificadas y registradas. Para verificar y escalar por riesgo "
-    "usa la skill `router`."
+    "Model router active (PreToolUse hook on the Agent tool): when you launch a general-purpose subagent "
+    "without `model`, the hook sets `model` and `effort` from the kind and the risk it infers from the "
+    "subagent's prompt. Do not set `model` yourself unless the user asks for it or the task is high risk; "
+    "if you set it, the hook keeps it. A critical-risk review goes to a model other than the one serving "
+    "this chat (a blind cross-check): if you designed something critical here, launch a review subagent "
+    "with the brief and the design and let the hook choose. Text-only subtasks (classify, extract, "
+    "summarise, draft, review a pasted text) go through `router run \"...\"` instead of a subagent: a "
+    "hundred times less context, verified and recorded. To verify and escalate by risk, use the `router` "
+    "skill."
 )
 
 
@@ -91,10 +91,10 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     if subagent not in ROUTED_SUBAGENTS:
         return None, {"skipped": f"subagent_type={subagent}"}
     if tool_input.get("model"):
-        return None, {"skipped": "modelo elegido explícitamente", "model": tool_input["model"]}
+        return None, {"skipped": "model chosen explicitly", "model": tool_input["model"]}
     prompt = str(tool_input.get("prompt") or "")
     if not prompt.strip():
-        return None, {"skipped": "prompt vacío"}
+        return None, {"skipped": "empty prompt"}
     description = str(tool_input.get("description") or "")
     cls = classify_rules(f"{description}\n{prompt}")
     policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
@@ -103,7 +103,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
         other = choose_verifier(cell, "full", policy.cells)
         if other is not None and other.claude_code()["model"] != chat_model:
-            cross = f"revisión {cls.risk} en otro modelo que el chat ({chat_model}): {cell} -> {other}"
+            cross = f"{cls.risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
             cell = other
     cc = cell.claude_code()
     updated = dict(tool_input)
@@ -146,7 +146,7 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": updated}}
     if os.environ.get(HOOK_QUIET_ENV) != "1":
         out["systemMessage"] = f"router: {record['cell']} ({record['kind']}/{record['risk']})" + (
-            " · cruce con el chat" if record.get("cross") else "")
+            " · cross-checked against the chat" if record.get("cross") else "")
     return out
 
 

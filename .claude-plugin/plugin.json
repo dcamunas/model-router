@@ -1,8 +1,8 @@
 {
   "name": "model-router",
   "displayName": "Model router",
-  "version": "0.2.0",
-  "description": "Picks model and effort for every Claude Code subagent launched without one, and adds the `router` skill to verify and escalate by risk. / Elige modelo y effort para cada subagente que se lanza sin modelo y añade la skill `router` para verificar y escalar por riesgo.",
+  "version": "0.3.0",
+  "description": "Picks model and effort for every Claude Code subagent launched without one, and adds the `router` skill to verify and escalate by risk.",
   "author": {
     "name": "David Camuñas",
     "url": "https://github.com/dcamunas"

@@ -18,7 +18,7 @@ echo = {"model": opt("--model"), "effort": opt("--effort"), "system": opt("--sys
         "prompt": prompt}
 with open(os.environ["FAKE_CLAUDE_ECHO"], "w") as fh:
     json.dump(echo, fh)
-out = {"type": "result", "is_error": False, "result": "respuesta a: " + prompt.strip(), "stop_reason": "end_turn",
+out = {"type": "result", "is_error": False, "result": "answer to: " + prompt.strip(), "stop_reason": "end_turn",
        "session_id": "sess-1", "modelUsage": {opt("--model"): {"costUSD": 0.001}},
        "usage": {"input_tokens": 12, "output_tokens": 34, "cache_read_input_tokens": 5, "cache_creation_input_tokens": 800}}
 if prompt.strip() == "LOGOUT":
@@ -46,11 +46,11 @@ def fake(tmp_path, monkeypatch):
 
 def test_passes_cell_profile_and_prompt_and_reads_usage(fake):
     client, echo = fake
-    c = client.complete(parse_cell("opus/low"), prompt="hola", system="sé breve")
+    c = client.complete(parse_cell("opus/low"), prompt="hello", system="be brief")
     e = json.loads(echo.read_text())
-    assert (e["model"], e["effort"], e["system"], e["tools"], e["prompt"]) == ("claude-opus-5-5", "low", "sé breve", "", "hola")
+    assert (e["model"], e["effort"], e["system"], e["tools"], e["prompt"]) == ("claude-opus-5-5", "low", "be brief", "", "hello")
     assert e["config_dir"].endswith("profile") and e["nested"] is None and e["schema"] is None
-    assert c.text == "respuesta a: hola" and c.model == "claude-opus-5-5" and c.stop_reason == "end_turn"
+    assert c.text == "answer to: hello" and c.model == "claude-opus-5-5" and c.stop_reason == "end_turn"
     u = c.usage
     assert (u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens) == (12, 34, 5, 800)
     assert c.request_id == "sess-1" and not c.refused and not c.fallback_ran and c.parsed is None
@@ -58,16 +58,16 @@ def test_passes_cell_profile_and_prompt_and_reads_usage(fake):
 
 def test_structured_output_becomes_the_parsed_model(fake):
     client, echo = fake
-    c = client.complete(parse_cell("sonnet/medium"), prompt="juzga", output_format=Verdict)
+    c = client.complete(parse_cell("sonnet/medium"), prompt="judge", output_format=Verdict)
     assert json.loads(json.loads(echo.read_text())["schema"])["required"] == ["passed", "confidence", "reason"]
     assert isinstance(c.parsed, Verdict) and c.parsed.passed and c.stop_reason == "end_turn"
 
 
 def test_errors_become_client_unavailable(fake):
     client, _ = fake
-    with pytest.raises(ClientUnavailableError, match="sesión iniciada"):
+    with pytest.raises(ClientUnavailableError, match="not logged in"):
         client.complete(parse_cell("haiku/low"), prompt="LOGOUT")
-    with pytest.raises(ClientUnavailableError, match="sin JSON"):
+    with pytest.raises(ClientUnavailableError, match="no JSON"):
         client.complete(parse_cell("haiku/low"), prompt="GARBAGE")
 
 
@@ -86,5 +86,5 @@ def test_profile_must_be_explicit(monkeypatch, tmp_path):
     assert resolve_profile()[0] == tmp_path / "installed"  # config.json beats the ambient variable
     monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(tmp_path))
     assert resolve_config_dir() == tmp_path
-    with pytest.raises(ClientUnavailableError, match="no encuentro"):
-        CliClient(binary="claude-no-existe")
+    with pytest.raises(ClientUnavailableError, match="cannot find"):
+        CliClient(binary="claude-does-not-exist")

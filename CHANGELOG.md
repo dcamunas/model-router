@@ -1,8 +1,18 @@
 # Changelog
 
-Versión en español: [CHANGELOG.es.md](CHANGELOG.es.md).
-
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
+
+## [0.3.0] - 2026-10-19
+
+### Changed
+
+- Everything the user sees is now English: command line, hook notices, skill, attempt reasons, backend errors and the plugin listing. The classification rules still understand Spanish prompts.
+- Verdict labels are `pass` and `fail` (were `OK` and `KO`). The simulation's strategies are named by their cells (`fable/xhigh`, `sonnet>opus`, `router`, `router+feedback`).
+- The example tasks file is `tasks.example.yaml`, in English.
+
+### Removed
+
+- The Spanish README and changelog.
 
 ## [0.2.0] - 2026-10-19
 
@@ -37,7 +47,7 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 ### Added
 
 - Docstrings on the whole public API, required by ruff on public modules, classes and functions.
-- End-to-end tests of `router run` and `router feedback`.
+- Tests of `router run` and `router feedback` that go from the command line to the ledger.
 - This file.
 
 ## [0.1.0] - 2026-10-19

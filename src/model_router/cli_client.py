@@ -36,7 +36,7 @@ from .catalog import Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
 from .paths import CONFIG_DIR_ENV, config_path, read_config
 
-DEFAULT_SYSTEM = "Haz la tarea del mensaje con cuidado y responde solo con lo pedido."
+DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
 NO_MCP = '{"mcpServers":{}}'
 NOT_LOGGED_IN = "not logged in"
 ERROR_DETAIL_CHARS = 300  # how much of the CLI's stderr/stdout an error message carries
@@ -57,8 +57,8 @@ def resolve_profile() -> tuple[Path, str]:
     if value:
         return Path(value).expanduser(), "CLAUDE_CONFIG_DIR"
     raise ClientUnavailableError(
-        f"perfil de Claude sin fijar: ejecuta `router install` en el perfil que debe usar el router o exporta "
-        f"{CONFIG_DIR_ENV}, por ejemplo ~/.claude-personal"
+        f"Claude profile not set: run `router install` in the profile the router must use, or export "
+        f"{CONFIG_DIR_ENV}, for example ~/.claude-personal"
     )
 
 
@@ -80,7 +80,7 @@ class CliClient:
     ) -> None:
         path = shutil.which(binary)
         if path is None:
-            raise ClientUnavailableError(f"no encuentro el ejecutable {binary!r}; instala Claude Code o pasa --backend api")
+            raise ClientUnavailableError(f"cannot find the executable {binary!r}; install Claude Code or pass --backend api")
         self.binary = path
         self.config_dir = config_dir or resolve_config_dir()
         self.timeout = timeout
@@ -110,13 +110,13 @@ class CliClient:
             proc = subprocess.run(args, input=prompt, capture_output=True, text=True, env=env, timeout=self.timeout,
                                   check=False)
         except subprocess.TimeoutExpired as exc:
-            raise ClientUnavailableError(f"claude -p superó los {self.timeout:.0f}s") from exc
+            raise ClientUnavailableError(f"claude -p exceeded {self.timeout:.0f}s") from exc
         seconds = time.monotonic() - t0
         try:
             data = json.loads(proc.stdout)
         except ValueError as exc:
             detail = (proc.stderr or proc.stdout).strip()[:ERROR_DETAIL_CHARS]
-            raise ClientUnavailableError(f"claude -p terminó con código {proc.returncode} sin JSON: {detail}") from exc
+            raise ClientUnavailableError(f"claude -p exited with code {proc.returncode} and no JSON: {detail}") from exc
         return self.to_completion(data, cell, output_format, seconds)
 
     def to_completion(self, data: dict[str, Any], cell: Cell, output_format: type[BaseModel] | None,
@@ -125,8 +125,8 @@ class CliClient:
         if data.get("is_error"):
             if NOT_LOGGED_IN in text.lower():
                 raise ClientUnavailableError(
-                    f"el perfil {self.config_dir} no tiene sesión iniciada: abre claude con ese perfil y haz /login")
-            raise ClientUnavailableError(f"claude -p: {text[:ERROR_DETAIL_CHARS] or 'error sin detalle'}")
+                    f"profile {self.config_dir} is not logged in: open claude with that profile and run /login")
+            raise ClientUnavailableError(f"claude -p: {text[:ERROR_DETAIL_CHARS] or 'error without details'}")
         u = data.get("usage") or {}
         usage = Usage(
             input_tokens=int(u.get("input_tokens") or 0),

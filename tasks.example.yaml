@@ -1,0 +1,47 @@
+# Example for `router bench tasks.example.yaml --strategies "router,fable/low,opus/high"`.
+# Made-up tasks, no real data. Each one has a programmatic checker where possible.
+tasks:
+  - id: dates-01
+    kind: code
+    risk: medium
+    prompt: |
+      Write a Python function `parse_date(text: str) -> datetime.date` that accepts
+      "DD/MM/YYYY", "D/M/YYYY" and "YYYY-MM-DD" and raises ValueError for anything else.
+      Return only the code, no explanation.
+    check_regex: "def parse_date\\(.*\\).*ValueError"
+
+  - id: extract-01
+    kind: extract
+    risk: high
+    prompt: |
+      From the text below, extract name, tax_id, date (ISO) and amount (a number) as a JSON
+      object with those four keys and nothing else.
+      "Invoice 2026-0417 issued on 3/4/2026 to Imaginary Workshops Ltd, tax id GB000000000, for a
+      total of 1,250.40 EUR."
+    check_json: [name, tax_id, date, amount]
+
+  - id: classify-01
+    kind: classify
+    risk: low
+    prompt: |
+      Classify each sentence as POSITIVE, NEGATIVE or NEUTRAL and answer with one line per
+      sentence, in the format "n: LABEL".
+      1. The order arrived earlier than expected.
+      2. I have been waiting three weeks for an answer.
+      3. Opening hours are 9 to 18.
+    check_regex: "1: POSITIVE[\\s\\S]*2: NEGATIVE[\\s\\S]*3: NEUTRAL"
+
+  - id: sql-01
+    kind: code
+    risk: high
+    prompt: |
+      BigQuery table `sales` with columns date DATE, customer_id STRING, amount NUMERIC.
+      Write the query that returns, per customer, the total amount in 2025 and the number of
+      distinct months with sales, only for customers active in more than 6 months. SQL only.
+    check_regex: "SELECT[\\s\\S]*FROM[\\s\\S]*sales[\\s\\S]*HAVING"
+
+  - id: summary-01
+    kind: summarize
+    risk: low
+    prompt: |
+      Summarise in three sentences what a data warehouse is and what it is for.

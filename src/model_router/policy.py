@@ -45,7 +45,7 @@ FULL_VERIFY_GAIN = 0.08  # a full verifier must be this much more capable than t
 @dataclass
 class Plan:
     """What the router will do with one task: the ladder of cells to try in order, the verification mode,
-    the budget and the attempt cap, plus the reasons in Spanish that `router plan` prints.
+    the budget and the attempt cap, plus the reasons `router plan` prints.
     """
 
     ladder: list[Cell]
@@ -108,7 +108,7 @@ class Policy:
         """Replace a cell whose model this installation does not have with the nearest available one."""
         near = nearest_available(cell, self.models)
         if near != cell:
-            rationale.append(f"{cell.spec.short} no disponible: {cell} -> {near}")
+            rationale.append(f"{cell.spec.short} not available: {cell} -> {near}")
         return near
 
     def plan(self, task: Task) -> Plan:
@@ -118,7 +118,7 @@ class Policy:
         kind = task.kind if task.kind in self.start_table else "unknown"
         risk = task.risk
         start = parse_cell(self.start_table[kind][risk])
-        rationale = [f"tabla {kind} x {risk} -> {start}"]
+        rationale = [f"table {kind} x {risk} -> {start}"]
         start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
         est_input = task.estimated_input_tokens
@@ -134,14 +134,14 @@ class Policy:
         if floor:
             floor_cell = self._available(parse_cell(floor), [])
             if start.capability < floor_cell.capability:
-                rationale.append(f"suelo de riesgo {risk}: {start} -> {floor_cell}")
+                rationale.append(f"risk floor {risk}: {start} -> {floor_cell}")
                 start = floor_cell
         max_attempts = task.max_attempts or MAX_ATTEMPTS_BY_RISK[risk]
         cells = ladder(start, self.cells, max_attempts, min_gain=self.min_gain)
         first_attempt = start.expected_cost(est_input, out_tokens)
         budget = task.budget_usd or max(BUDGET_USD_BY_RISK[risk], BUDGET_ATTEMPTS * first_attempt)
-        rationale.append(f"escalera: {' -> '.join(map(str, cells))}")
-        rationale.append(f"verificación {verify} (riesgo {risk}); presupuesto ${budget:.2f}; máx. {max_attempts} intentos")
+        rationale.append(f"ladder: {' -> '.join(map(str, cells))}")
+        rationale.append(f"verification {verify} (risk {risk}); budget ${budget:.2f}; max {max_attempts} attempts")
         return Plan(cells, verify, budget, max_attempts, rationale)
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
@@ -183,7 +183,7 @@ class LadderPolicy:
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)
         return Plan(cells, task.verify or self.verify, task.budget_usd or self.budget_usd, len(cells),
-                    [f"escalera fija: {' -> '.join(map(str, cells))}"])
+                    [f"fixed ladder: {' -> '.join(map(str, cells))}"])
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
         """Return the cell that verifies `worker`'s answer in `mode`, chosen from the whole lattice."""

@@ -113,11 +113,11 @@ class Summary:
     def text(self) -> str:
         """Render the summary as the text `router stats` prints."""
         lines = [
-            f"tareas {self.tasks} · resueltas {self.solved} · "
+            f"tasks {self.tasks} · solved {self.solved} · "
             + ", ".join(f"{k} {v}" for k, v in sorted(self.by_status.items())),
-            f"intentos {self.attempts} · reintentos {self.retries} · tokens {self.tokens:,}",
-            f"coste trabajo {money(self.work_cost)} · verificación {money(self.verify_cost)} · total {money(self.total_cost)}",
-            f"coste por tarea resuelta: {money(self.cost_per_solved) if self.cost_per_solved is not None else 'n/a'}",
+            f"attempts {self.attempts} · retries {self.retries} · tokens {self.tokens:,}",
+            f"work cost {money(self.work_cost)} · verification {money(self.verify_cost)} · total {money(self.total_cost)}",
+            f"cost per solved task: {money(self.cost_per_solved) if self.cost_per_solved is not None else 'n/a'}",
         ]
         if self.by_cell:
             rows = []
@@ -125,14 +125,14 @@ class Summary:
                 rate = s["passes"] / s["judged"] if s["judged"] else None
                 rows.append([label, int(s["attempts"]), f"{rate:.0%}" if rate is not None else "-", money(s["cost"])])
             lines.append("")
-            lines.append(table(["celda", "intentos", "acierto", "coste"], rows))
+            lines.append(table(["cell", "attempts", "pass rate", "cost"], rows))
         if self.by_kind:
             rows = [
                 [k, int(s["tasks"]), int(s["solved"]), money(s["cost"]), money(s["cost"] / s["solved"]) if s["solved"] else "-"]
                 for k, s in sorted(self.by_kind.items())
             ]
             lines.append("")
-            lines.append(table(["tipo", "tareas", "resueltas", "coste", "coste/resuelta"], rows))
+            lines.append(table(["kind", "tasks", "solved", "cost", "cost/solved"], rows))
         return "\n".join(lines)
 
 

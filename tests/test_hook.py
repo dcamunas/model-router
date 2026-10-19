@@ -7,7 +7,7 @@ from model_router.hook import decide, handle
 
 def agent_event(**tool_input):
     return {"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s1", "cwd": "/tmp",
-            "tool_input": {"description": "task", "prompt": "Revisa este script SQL antes de producción", **tool_input}}
+            "tool_input": {"description": "task", "prompt": "Review this SQL script before production", **tool_input}}
 
 
 def routed(event) -> dict:
@@ -28,7 +28,7 @@ def test_fills_model_and_effort_for_general_purpose_subagent(tmp_path, monkeypat
     updated = out["hookSpecificOutput"]["updatedInput"]
     assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     assert updated["model"] == "opus" and updated["effort"] == "medium"  # review x high -> opus/medium
-    assert updated["prompt"].startswith("Revisa")
+    assert updated["prompt"].startswith("Review")
     assert out["systemMessage"].startswith("router: opus/medium")
     log = (tmp_path / "hook.jsonl").read_text().strip().splitlines()
     assert len(log) == 1 and json.loads(log[0])["cell"] == "opus/medium"
@@ -44,13 +44,13 @@ def test_keeps_an_explicit_model_and_skips_custom_agents(tmp_path, monkeypatch):
 
 
 def test_only_model_is_set_when_claude_chose_an_effort():
-    updated, record = decided({"prompt": "clasifica estos tickets", "effort": "high"})
+    updated, record = decided({"prompt": "classify these tickets", "effort": "high"})
     assert updated["model"] == "haiku" and updated["effort"] == "high" and record["set"] == ["model"]
 
 
 def test_session_start_adds_context_and_other_events_are_silent():
     out = routed({"hook_event_name": "SessionStart", "source": "startup"})
-    assert "Router de modelos activo" in out["hookSpecificOutput"]["additionalContext"]
+    assert "Model router active" in out["hookSpecificOutput"]["additionalContext"]
     assert handle({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}) is None
     assert handle({"hook_event_name": "PostToolUse", "tool_name": "Agent"}) is None
 
@@ -66,7 +66,7 @@ def test_entry_point_never_fails_on_garbage(tmp_path, monkeypatch):
 
 def test_entry_point_routes_a_real_payload(tmp_path):
     env = {"MODEL_ROUTER_HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
-    payload = json.dumps(agent_event(prompt="Escribe un post de LinkedIn sobre migraciones de datos"))
+    payload = json.dumps(agent_event(prompt="Write a LinkedIn post about data migrations"))
     proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=payload, text=True, capture_output=True, env=env)
     out = json.loads(proc.stdout)
     assert out["hookSpecificOutput"]["updatedInput"]["model"] == "sonnet"  # write x medium -> sonnet/medium
@@ -90,7 +90,7 @@ def test_main_model_reads_last_non_sidechain_assistant_entry(tmp_path):
 
     path = _transcript(
         tmp_path,
-        {"type": "user", "message": {"role": "user", "content": "hola"}},
+        {"type": "user", "message": {"role": "user", "content": "hello"}},
         {"type": "assistant", "message": {"model": "claude-opus-5-5", "role": "assistant"}},
         {"type": "assistant", "isSidechain": True, "message": {"model": "claude-fable-5-1"}},
     )
@@ -101,31 +101,31 @@ def test_main_model_reads_last_non_sidechain_assistant_entry(tmp_path):
 
 def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    prompt = "Revisa este diseño crítico de la migración de pagos antes de ejecutarlo"
+    prompt = "Review this critical design of the payments migration before running it"
     event = agent_event(prompt=prompt)
     event["transcript_path"] = _transcript(tmp_path, {"type": "assistant", "message": {"model": "claude-opus-5-5"}})
     out = routed(event)
     updated = out["hookSpecificOutput"]["updatedInput"]
     assert (updated["model"], updated["effort"]) == ("fable", "low")  # review x critical = opus/high, crossed
-    assert out["systemMessage"].endswith("cruce con el chat")
+    assert out["systemMessage"].endswith("cross-checked against the chat")
     record = json.loads((tmp_path / "hook.jsonl").read_text().strip().splitlines()[-1])
-    assert record["cell"] == "fable/low" and "otro modelo que el chat (opus)" in record["cross"]
+    assert record["cell"] == "fable/low" and "another model than the chat (opus)" in record["cross"]
 
 
 def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp_path):
-    critical = "Revisa este diseño crítico de la migración de pagos"
+    critical = "Review this critical design of the payments migration"
     updated, record = decided({"prompt": critical}, chat_model="fable")
     assert updated["model"] == "opus" and updated["effort"] == "high" and "cross" not in record
     updated, record = decided({"prompt": critical}, chat_model=None)
     assert updated["model"] == "opus" and "cross" not in record
-    updated, record = decided({"prompt": "Revisa este script SQL antes de producción"}, chat_model="opus")
+    updated, record = decided({"prompt": "Review this SQL script before production"}, chat_model="opus")
     assert updated["model"] == "opus" and updated["effort"] == "medium" and "cross" not in record
 
 
 def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
-    updated, record = decided({"prompt": "Analiza el diseño crítico de la migración de pagos"})
+    updated, record = decided({"prompt": "Analyse the critical design of the payments migration"})
     assert updated["model"] == "opus" and record["cell"] == "opus/medium"  # fable/low degraded, then the floor
-    updated, record = decided({"prompt": "Revisa este diseño crítico de la migración de pagos"}, chat_model="opus")
+    updated, record = decided({"prompt": "Review this critical design of the payments migration"}, chat_model="opus")
     assert updated["model"] == "opus" and "cross" not in record  # no other model can take the cross-check

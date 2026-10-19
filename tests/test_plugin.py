@@ -50,7 +50,7 @@ def test_outside_a_plugin_or_before_bootstrap_the_hook_is_silent(tmp_path):
     proc = subprocess.run([str(SCRIPT)], input="{}", text=True, capture_output=True, env={"PATH": os.environ["PATH"]})
     assert proc.returncode == 0 and proc.stdout == "" and "CLAUDE_PLUGIN_ROOT" in proc.stderr
     proc = run_hook(tmp_path, {"hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_input": {"prompt": "x"}})
-    assert proc.returncode == 0 and proc.stdout == "" and "aún no está listo" in proc.stderr
+    assert proc.returncode == 0 and proc.stdout == "" and "not ready yet" in proc.stderr
     assert not (tmp_path / "venv").exists()
 
 
@@ -59,7 +59,7 @@ def test_bootstrap_without_uv_explains_and_exits_0(tmp_path):
     empty.mkdir()
     proc = run_hook(tmp_path / "data", {"hook_event_name": "SessionStart"}, "--bootstrap",
                     env={"PATH": str(empty), "HOME": str(tmp_path), "MODEL_ROUTER_UV": str(tmp_path / "no-uv")})
-    assert proc.returncode == 0 and proc.stdout == "" and "no encuentro uv" in proc.stderr
+    assert proc.returncode == 0 and proc.stdout == "" and "cannot find uv" in proc.stderr
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
@@ -67,11 +67,12 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     data = tmp_path / "data"
     proc = run_hook(data, {"hook_event_name": "SessionStart", "source": "startup"}, "--bootstrap")
     assert proc.returncode == 0, proc.stderr
-    assert "Router de modelos activo" in json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "Model router active" in json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
     assert (data / "installed-version").read_text() == VERSION
     venv_mtime = (data / "venv" / "bin" / "router-hook").stat().st_mtime
     event = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s", "cwd": "/",
-             "tool_input": {"subagent_type": "general-purpose", "prompt": "Analiza el diseño crítico de la migración de pagos"}}
+             "tool_input": {"subagent_type": "general-purpose",
+                            "prompt": "Analyse the critical design of the payments migration"}}
     proc = run_hook(data, event)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "fable"

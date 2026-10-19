@@ -45,7 +45,7 @@ def hook_binary() -> Path | None:
 
 def hook_entries(hook_bin: Path) -> dict[str, list[dict[str, Any]]]:
     """Return the settings.json entries that run `hook_bin` on PreToolUse(Agent) and SessionStart."""
-    cmd = {"type": "command", "command": str(hook_bin), "timeout": 10, "statusMessage": "router: eligiendo modelo"}
+    cmd = {"type": "command", "command": str(hook_bin), "timeout": 10, "statusMessage": "router: picking a model"}
     return {
         "PreToolUse": [{"matcher": "Agent", "hooks": [cmd]}],
         "SessionStart": [{"hooks": [{"type": "command", "command": str(hook_bin), "timeout": 10}]}],
@@ -60,7 +60,7 @@ def _read_settings(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except ValueError as exc:
-        raise SystemExit(f"{path} no es JSON válido ({exc}); arréglalo antes, Claude Code lo ignora entero") from exc
+        raise SystemExit(f"{path} is not valid JSON ({exc}); fix it first, Claude Code ignores the whole file") from exc
 
 
 def _rewrite_hooks(path: Path, entries: dict[str, list[dict[str, Any]]] | None) -> None:
@@ -84,13 +84,13 @@ def _rewrite_hooks(path: Path, entries: dict[str, list[dict[str, Any]]] | None) 
 def add_hooks(path: Path, hook_bin: Path) -> None:
     """Add the router hooks to the settings file at `path`, replacing previous router entries."""
     _rewrite_hooks(path, hook_entries(hook_bin))
-    print(f"hooks en {path}")
+    print(f"hooks in {path}")
 
 
 def remove_hooks(path: Path) -> None:
     """Remove the router hooks from the settings file at `path`, keeping every other setting."""
     _rewrite_hooks(path, None)
-    print(f"hooks quitados de {path}")
+    print(f"hooks removed from {path}")
 
 
 def _is_ours(path: Path) -> bool:
@@ -103,9 +103,9 @@ def _check_replaceable(target: Path) -> None:
     if target.is_symlink():
         return
     if target.is_dir() and not _is_ours(target):
-        raise SystemExit(f"{target} existe y no es la skill del router; quítala a mano")
+        raise SystemExit(f"{target} exists and is not the router skill; remove it by hand")
     if target.exists() and not target.is_dir():
-        raise SystemExit(f"{target} existe y no es una carpeta; quítala a mano")
+        raise SystemExit(f"{target} exists and is not a directory; remove it by hand")
 
 
 def _clear_skill(target: Path) -> None:
@@ -125,17 +125,17 @@ def copy_skill(skills_dir: Path, *, link: bool = False) -> None:
     skills_dir.mkdir(parents=True, exist_ok=True)
     if link:
         target.symlink_to(SKILL_SRC, target_is_directory=True)
-        print(f"skill enlazada: {target} -> {SKILL_SRC}")
+        print(f"skill linked: {target} -> {SKILL_SRC}")
     else:
         shutil.copytree(SKILL_SRC, target)
-        print(f"skill copiada en {target}")
+        print(f"skill copied to {target}")
 
 
 def remove_skill(skills_dir: Path) -> None:
     """Remove the `router` skill from `skills_dir`; a skill that is not the router's is left alone."""
     target = skills_dir / "router"
     _clear_skill(target)
-    print(f"skill quitada de {target}")
+    print(f"skill removed from {target}")
 
 
 def model_names(models: str) -> list[str] | None:
@@ -165,10 +165,10 @@ def remember(profile: Path | None, models: list[str] | None, *, reset_models: bo
         cfg.pop("models", None)
     path = save_config(cfg)
     if profile is not None:
-        print(f"perfil para `router run`: {profile} (en {path})")
+        print(f"profile for `router run`: {profile} (in {path})")
     if models is not None or reset_models:
         shown = ", ".join(cfg.get("models") or [spec.short for spec in MODELS.values()])
-        print(f"modelos disponibles: {shown} (en {path})")
+        print(f"available models: {shown} (in {path})")
 
 
 def install(
@@ -194,8 +194,8 @@ def install(
     names = model_names(models) if models is not None else None
     hook_bin = hook_binary()
     if hook_bin is None:
-        raise SystemExit("no encuentro `router-hook` junto a este intérprete ni en el PATH: instala el paquete "
-                         "(uv tool install ..., o uv sync en el repo) y vuelve a ejecutar `router install`")
+        raise SystemExit("cannot find `router-hook` next to this interpreter or on the PATH: install the package "
+                         "(uv tool install ..., or uv sync in the repo) and run `router install` again")
     skills = (skills_dir or settings.parent / "skills").expanduser()
     if not no_skill:
         _check_replaceable(skills / "router")
@@ -206,9 +206,9 @@ def install(
     if profile is not None:
         profile = profile.expanduser().resolve()
     elif models is None:
-        print(f"perfil para `router run` sin fijar (pasa --profile-dir o exporta {CONFIG_DIR_ENV})")
+        print(f"profile for `router run` not set (pass --profile-dir or export {CONFIG_DIR_ENV})")
     remember(profile, names, reset_models=models is not None and names is None)
-    print("activo en las sesiones nuevas; en una sesión abierta, /hooks recarga la configuración")
+    print("active in new sessions; in an open session, /hooks reloads the configuration")
     return 0
 
 

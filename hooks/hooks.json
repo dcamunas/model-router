@@ -8,7 +8,7 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/router-hook.sh",
             "timeout": 10,
-            "statusMessage": "router: eligiendo modelo"
+            "statusMessage": "router: picking a model"
           }
         ]
       }
@@ -20,7 +20,7 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/router-hook.sh --bootstrap",
             "timeout": 180,
-            "statusMessage": "router: preparando el hook"
+            "statusMessage": "router: preparing the hook"
           }
         ]
       }

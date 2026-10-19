@@ -21,5 +21,5 @@ def test_search_prompts_are_their_own_kind():
 
 def test_the_reason_names_the_rule_and_the_risk_signal_in_spanish():
     cls = classify_rules("Revisa este script SQL antes de producción")
-    assert cls.reason == "regla 'revisa'; riesgo: palabra de riesgo alto"
-    assert classify_rules("¿Qué hora es?").reason == "pregunta corta; riesgo: tipo barato, prompt corto"
+    assert cls.reason == "rule 'revisa'; risk: high-risk keyword"
+    assert classify_rules("What time is it?").reason == "short question; risk: cheap kind, short prompt"

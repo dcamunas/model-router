@@ -31,9 +31,7 @@ CRITICAL_RISK = r"\b(cr[ií]tic\w*|critical|urgente|urgent|sin vuelta atr[aá]s|
 
 @dataclass(frozen=True)
 class Classification:
-    """Kind and risk guessed for a prompt, the rule or model that decided (in Spanish, for the user) and
-    what the guess cost.
-    """
+    """Kind and risk guessed for a prompt, the rule or model that decided, and what the guess cost."""
 
     kind: str
     risk: str
@@ -46,23 +44,23 @@ def classify_rules(prompt: str) -> Classification:
     critical and high-risk keywords, else low for cheap kinds with short prompts, else medium.
     """
     text = prompt.lower()
-    kind, why = "unknown", "ninguna regla"
+    kind, why = "unknown", "no rule matched"
     for candidate, pattern in KIND_RULES:
         m = re.search(pattern, text)
         if m:
-            kind, why = candidate, f"regla '{m.group(0)}'"
+            kind, why = candidate, f"rule '{m.group(0)}'"
             break
     if kind == "unknown" and len(prompt) < 200 and prompt.rstrip().endswith("?"):
-        kind, why = "chat", "pregunta corta"
+        kind, why = "chat", "short question"
     if re.search(CRITICAL_RISK, text):
-        risk, risk_why = "critical", "palabra crítica"
+        risk, risk_why = "critical", "critical keyword"
     elif re.search(HIGH_RISK, text):
-        risk, risk_why = "high", "palabra de riesgo alto"
+        risk, risk_why = "high", "high-risk keyword"
     elif kind in ("classify", "summarize", "chat") and len(prompt) < 400:
-        risk, risk_why = "low", "tipo barato, prompt corto"
+        risk, risk_why = "low", "cheap kind, short prompt"
     else:
-        risk, risk_why = "medium", "por defecto"
-    return Classification(kind, risk, f"{why}; riesgo: {risk_why}")
+        risk, risk_why = "medium", "default"
+    return Classification(kind, risk, f"{why}; risk: {risk_why}")
 
 
 class LlmClassification(BaseModel):
@@ -99,5 +97,5 @@ def classify_llm(client: ClaudeClient, prompt: str) -> Classification:
     parsed = completion.parsed
     if not isinstance(parsed, LlmClassification) or parsed.kind not in KINDS or parsed.risk not in RISKS:
         fallback = classify_rules(prompt)
-        return Classification(fallback.kind, fallback.risk, f"llm inservible, reglas: {fallback.reason}", cost)
+        return Classification(fallback.kind, fallback.risk, f"llm unusable, rules: {fallback.reason}", cost)
     return Classification(parsed.kind, parsed.risk, f"llm: {parsed.reason}", cost)

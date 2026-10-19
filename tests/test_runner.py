@@ -49,8 +49,8 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
 
 
 def test_low_risk_without_checker_accepts_first_answer():
-    client = FakeClient(script={"*": [Reply("hola")]})
-    result = Router(client).run(Task(prompt="hola?", kind="chat", risk="low"))
+    client = FakeClient(script={"*": [Reply("hello")]})
+    result = Router(client).run(Task(prompt="hello?", kind="chat", risk="low"))
     assert result.solved and len(result.attempts) == 1
     assert result.attempts[0].verdict_source == "none"
     assert len(client.calls) == 1
@@ -110,8 +110,8 @@ def test_ledger_persists_and_summarises(tmp_path: Path):
     assert s.cost_per_solved is not None and abs(s.cost_per_solved - s.total_cost / 2) < 1e-12
     ledger.override("a2", passed=False, note="wrong after all")
     s2 = summarize(ledger.tasks())
-    assert s2.solved == 1 and "KO" not in s2.text()
-    assert "coste por tarea resuelta" in s2.text()
+    assert s2.solved == 1
+    assert "cost per solved task" in s2.text()
 
 
 def test_feedback_learns_first_attempt_rate_and_moves_the_start(tmp_path: Path):
