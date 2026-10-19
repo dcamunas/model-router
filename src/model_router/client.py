@@ -46,7 +46,12 @@ class ClaudeClient(Protocol):
         system: str | None = None,
         max_tokens: int = NON_STREAMING_MAX_TOKENS,
         output_format: type[BaseModel] | None = None,
-    ) -> Completion: ...
+    ) -> Completion:
+        """Complete `prompt` on `cell` and return what came back with its real usage; `output_format` asks
+        for a structured answer parsed into that model. Raises ClientUnavailableError when the backend
+        could not serve the request at all.
+        """
+        ...
 
 
 class ClientUnavailableError(RuntimeError):
@@ -109,12 +114,12 @@ class LiveClient:
             else:
                 msg = api.create(**kwargs)
         except a.RateLimitError as exc:
-            raise ClientUnavailableError(f"rate limited: {exc}") from exc
+            raise ClientUnavailableError(f"límite de peticiones: {exc}") from exc
         except a.APIConnectionError as exc:
-            raise ClientUnavailableError(f"connection: {exc}") from exc
+            raise ClientUnavailableError(f"conexión: {exc}") from exc
         except a.APIStatusError as exc:
             if exc.status_code >= 500:
-                raise ClientUnavailableError(f"server {exc.status_code}: {exc}") from exc
+                raise ClientUnavailableError(f"servidor {exc.status_code}: {exc}") from exc
             raise
         return to_completion(msg, time.monotonic() - t0)
 

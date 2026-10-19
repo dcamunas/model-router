@@ -110,13 +110,13 @@ class CliClient:
             proc = subprocess.run(args, input=prompt, capture_output=True, text=True, env=env, timeout=self.timeout,
                                   check=False)
         except subprocess.TimeoutExpired as exc:
-            raise ClientUnavailableError(f"claude -p supero los {self.timeout:.0f}s") from exc
+            raise ClientUnavailableError(f"claude -p superó los {self.timeout:.0f}s") from exc
         seconds = time.monotonic() - t0
         try:
             data = json.loads(proc.stdout)
         except ValueError as exc:
             detail = (proc.stderr or proc.stdout).strip()[:ERROR_DETAIL_CHARS]
-            raise ClientUnavailableError(f"claude -p termino con codigo {proc.returncode} sin JSON: {detail}") from exc
+            raise ClientUnavailableError(f"claude -p terminó con código {proc.returncode} sin JSON: {detail}") from exc
         return self.to_completion(data, cell, output_format, seconds)
 
     def to_completion(self, data: dict[str, Any], cell: Cell, output_format: type[BaseModel] | None,
@@ -125,7 +125,7 @@ class CliClient:
         if data.get("is_error"):
             if NOT_LOGGED_IN in text.lower():
                 raise ClientUnavailableError(
-                    f"el perfil {self.config_dir} no tiene sesion iniciada: abre claude con ese perfil y haz /login")
+                    f"el perfil {self.config_dir} no tiene sesión iniciada: abre claude con ese perfil y haz /login")
             raise ClientUnavailableError(f"claude -p: {text[:ERROR_DETAIL_CHARS] or 'error sin detalle'}")
         u = data.get("usage") or {}
         usage = Usage(

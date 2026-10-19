@@ -91,10 +91,10 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     if subagent not in ROUTED_SUBAGENTS:
         return None, {"skipped": f"subagent_type={subagent}"}
     if tool_input.get("model"):
-        return None, {"skipped": "model chosen explicitly", "model": tool_input["model"]}
+        return None, {"skipped": "modelo elegido explícitamente", "model": tool_input["model"]}
     prompt = str(tool_input.get("prompt") or "")
     if not prompt.strip():
-        return None, {"skipped": "empty prompt"}
+        return None, {"skipped": "prompt vacío"}
     description = str(tool_input.get("description") or "")
     cls = classify_rules(f"{description}\n{prompt}")
     policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
@@ -103,7 +103,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
         other = choose_verifier(cell, "full", policy.cells)
         if other is not None and other.claude_code()["model"] != chat_model:
-            cross = f"revision {cls.risk} en otro modelo que el chat ({chat_model}): {cell} -> {other}"
+            cross = f"revisión {cls.risk} en otro modelo que el chat ({chat_model}): {cell} -> {other}"
             cell = other
     cc = cell.claude_code()
     updated = dict(tool_input)

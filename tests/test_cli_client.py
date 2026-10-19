@@ -65,7 +65,7 @@ def test_structured_output_becomes_the_parsed_model(fake):
 
 def test_errors_become_client_unavailable(fake):
     client, _ = fake
-    with pytest.raises(ClientUnavailableError, match="sesion iniciada"):
+    with pytest.raises(ClientUnavailableError, match="sesión iniciada"):
         client.complete(parse_cell("haiku/low"), prompt="LOGOUT")
     with pytest.raises(ClientUnavailableError, match="sin JSON"):
         client.complete(parse_cell("haiku/low"), prompt="GARBAGE")

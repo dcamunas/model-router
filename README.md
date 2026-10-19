@@ -71,11 +71,11 @@ entorno o, sin ella, tu cuenta de Claude Code (ver «Sin API key»). `plan`, `be
 ```bash
 # Qué haría el router con una tarea, sin gastar nada
 router plan "Revisa este script SQL de migración antes de pasarlo a producción"
-#   clasificacion: review / high  (rule 'revisa'; risk: high-risk keyword)
+#   clasificación: review / high  (regla 'revisa'; riesgo: palabra de riesgo alto)
 #   inicio: opus/medium  -> Claude Code {'model': 'opus', 'effort': 'medium'}
 #     - tabla review x high -> opus/medium
 #     - escalera: opus/medium -> fable/low -> fable/xhigh
-#     - verificacion light (riesgo high); presupuesto $2.00; max 4 intentos
+#     - verificación light (riesgo high); presupuesto $2.00; máx. 4 intentos
 #   verificador (light): opus/medium
 
 # Solo model/effort, para el frontmatter de un agente de Claude Code
@@ -120,7 +120,7 @@ tasks:
 llamada es un proceso `claude -p` (modo headless de Claude Code) con el modelo y el esfuerzo de la
 celda, sin herramientas, sin MCP y con un system prompt mínimo, unos 900 tokens por llamada (sin
 `--system-prompt` Claude Code enviaría su prompt completo, unos 100K). Las salidas estructuradas van
-por `--json-schema`. Consume la cuota de tu suscripción, no dólares: los importes del libro son el
+por `--json-schema`. Consume la cuota de tu suscripción, no dólares: los importes del registro son el
 equivalente a precio de lista, un proxy del consumo de cuota.
 
 El perfil de Claude que usa, por orden: `MODEL_ROUTER_CLAUDE_CONFIG_DIR`, `claude_config_dir` en
@@ -209,7 +209,7 @@ streaming.
   `~/.model-router/hook.jsonl` con los primeros 60 caracteres del prompt del subagente.
 - `router run` y `router bench` mandan el prompt a Anthropic, por tu API key o por tu cuenta de
   Claude Code. A nadie más.
-- El libro guarda tokens, coste, celda, veredicto y motivo de cada intento; no guarda el prompt ni
+- El registro guarda tokens, coste, celda, veredicto y motivo de cada intento; no guarda el prompt ni
   la respuesta.
 - `router plan`, `router stats`, `router cells` y `router doctor` sin `--live` no llaman a nada.
 

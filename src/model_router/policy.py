@@ -141,7 +141,7 @@ class Policy:
         first_attempt = start.expected_cost(est_input, out_tokens)
         budget = task.budget_usd or max(BUDGET_USD_BY_RISK[risk], BUDGET_ATTEMPTS * first_attempt)
         rationale.append(f"escalera: {' -> '.join(map(str, cells))}")
-        rationale.append(f"verificacion {verify} (riesgo {risk}); presupuesto ${budget:.2f}; max {max_attempts} intentos")
+        rationale.append(f"verificación {verify} (riesgo {risk}); presupuesto ${budget:.2f}; máx. {max_attempts} intentos")
         return Plan(cells, verify, budget, max_attempts, rationale)
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:

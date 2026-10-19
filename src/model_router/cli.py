@@ -39,13 +39,13 @@ def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True) -> N
         p.add_argument("--file", "-f", help="fichero con la tarea")
     p.add_argument("--kind", "-k", choices=KINDS, help="tipo de tarea (si falta, se infiere por reglas)")
     p.add_argument("--risk", "-r", choices=RISKS, help="riesgo de equivocarse (si falta, se infiere)")
-    p.add_argument("--verify", choices=VERIFY_MODES, help="fuerza el modo de verificacion")
+    p.add_argument("--verify", choices=VERIFY_MODES, help="fuerza el modo de verificación")
     p.add_argument("--budget", type=float, help="tope en USD para la tarea")
-    p.add_argument("--max-attempts", type=int, help="intentos maximos")
+    p.add_argument("--max-attempts", type=int, help="intentos máximos")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="solo backend api; el cli lo gestiona solo")
     p.add_argument("--system", help="fichero con el system prompt del trabajador")
-    p.add_argument("--check-regex", help="la respuesta debe casar con esta regex (checker programatico)")
-    p.add_argument("--check-json", help="la respuesta debe ser JSON con estas claves (coma-separadas; vacio = solo JSON valido)")
+    p.add_argument("--check-regex", help="la respuesta debe casar con esta regex (checker programático)")
+    p.add_argument("--check-json", help="la respuesta debe ser JSON con estas claves (coma-separadas; vacío = solo JSON válido)")
     p.add_argument("--classify-llm", action="store_true", help="clasifica con Haiku en vez de con reglas")
 
 
@@ -56,7 +56,7 @@ def _prompt_from(args: argparse.Namespace) -> str:
         return args.prompt
     if not sys.stdin.isatty():
         return sys.stdin.read()
-    raise SystemExit("falta la tarea: pasala como argumento, con --file o por stdin")
+    raise SystemExit("falta la tarea: pásala como argumento, con --file o por stdin")
 
 
 def _task_from(
@@ -88,7 +88,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         print(f"model: {cc['model']}\neffort: {cc['effort']}")
         return 0
     if cls is not None:
-        print(f"clasificacion: {cls.kind} / {cls.risk}  ({cls.reason})")
+        print(f"clasificación: {cls.kind} / {cls.risk}  ({cls.reason})")
     print(f"inicio: {plan.start}  -> Claude Code {plan.start.claude_code()}")
     for line in plan.rationale:
         print("  - " + line)
@@ -146,12 +146,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(result.answer)
     print()
     if cls is not None:
-        print(f"clasificacion: {cls.kind} / {cls.risk}  ({cls.reason})")
+        print(f"clasificación: {cls.kind} / {cls.risk}  ({cls.reason})")
     print(_attempts_table(result))
-    print(f"estado {result.status} · coste {money(result.total_cost_usd)} (verificacion {money(result.verify_cost_usd)})"
+    print(f"estado {result.status} · coste {money(result.total_cost_usd)} (verificación {money(result.verify_cost_usd)})"
           f" · reintentos {result.retries} · id {task.id}")
     if not result.solved:
-        print("la ultima respuesta no paso la verificacion; revisa antes de usarla", file=sys.stderr)
+        print("la última respuesta no pasó la verificación; revisa antes de usarla", file=sys.stderr)
     return 0 if result.solved else 1
 
 
@@ -209,7 +209,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
             first = plan.start.expected_cost(t.estimated_input_tokens, t.planned_output_tokens)
             estimate += first * (1.0 if len(plan.ladder) == 1 else ESCALATION_COST_FACTOR)
             estimate += JUDGE_COST_ESTIMATE_USD.get(plan.verify, 0.0)
-    print(f"{len(tasks)} tareas x {len(strategies)} estrategias · estimacion {money(estimate)} "
+    print(f"{len(tasks)} tareas x {len(strategies)} estrategias · estimación {money(estimate)} "
           "(orientativa, puede quedarse corta)")
     if not args.yes:
         answer = input("¿Lanzar llamadas reales? [s/N] ").strip().lower()
@@ -282,7 +282,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
             version = f"? ({exc})"
         checks.append((True, f"claude en PATH: {claude} ({version.strip()})"))
     else:
-        checks.append((False, "claude no esta en PATH: instala Claude Code o usa --backend api con ANTHROPIC_API_KEY"))
+        checks.append((False, "claude no está en PATH: instala Claude Code o usa --backend api con ANTHROPIC_API_KEY"))
     profile: Path | None = None
     try:
         profile, source = resolve_profile()
@@ -297,10 +297,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     checks.append((hook_bin is not None, f"binario del hook: {hook_bin or missing}"))
     try:
         avail = available_models()
-        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if len(avail) < len(MODELS) else "catalogo")
+        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if len(avail) < len(MODELS) else "catálogo")
         checks.append((True, f"modelos disponibles: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
-    except ValueError as exc:
-        checks.append((False, f"modelos disponibles: {exc} (revisa {MODELS_ENV} o `router install --models`)"))
+    except UnknownModelError as exc:
+        checks.append((False, f"modelos disponibles: {exc.name!r} no existe (revisa {MODELS_ENV} o `router install --models`)"))
+    except ValueError:
+        checks.append((False, f"modelos disponibles: lista vacía (revisa {MODELS_ENV} o `router install --models`)"))
     if profile is not None and profile.is_dir():
         settings = profile / "settings.json"
         try:
@@ -308,7 +310,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
         except ValueError:
             data = None
         if data is None:
-            checks.append((False, f"{settings} no es JSON valido: Claude Code ignora todo el fichero"))
+            checks.append((False, f"{settings} no es JSON válido: Claude Code ignora todo el fichero"))
         else:
             hooks = data.get("hooks", {})
 
@@ -333,12 +335,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
             checks.append((True, f"chat principal: model {model}" + (f", effort {effort}" if effort else "")))
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
-    checks.append((True, f"estado en {home()}: {ledger_n} tareas en el libro, {hook_n} decisiones del hook"))
+    checks.append((True, f"estado en {home()}: {ledger_n} tareas en el registro, {hook_n} decisiones del hook"))
     if args.live and claude and profile is not None:
         try:
             c = CliClient(config_dir=profile).complete(parse_cell("haiku/low"), prompt="Responde solo OK.",
                                                       system="Responde solo lo pedido.")
-            summary = f"{c.model} respondio {c.text.strip()[:20]!r} en {c.seconds:.1f}s, {c.usage.total} tokens"
+            summary = f"{c.model} respondió {c.text.strip()[:20]!r} en {c.seconds:.1f}s, {c.usage.total} tokens"
             checks.append((True, f"llamada real: {summary}"))
         except ClientUnavailableError as exc:
             checks.append((False, f"llamada real: {exc}"))
@@ -369,7 +371,7 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
           f" · precios {PRICES_AS_OF}")
     off = [MODELS[m].short for m in MODELS if m not in available_models()]
     if off:
-        print(f"fuera de esta instalacion: {', '.join(off)} ({MODELS_ENV} o `router install --models`)")
+        print(f"fuera de esta instalación: {', '.join(off)} ({MODELS_ENV} o `router install --models`)")
     return 0
 
 
@@ -403,7 +405,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("plan", help="que haria el router con esta tarea (sin llamar a la API)")
+    sp = sub.add_parser("plan", help="qué haría el router con esta tarea (sin llamar a la API)")
     _add_task_args(sp)
     sp.add_argument("--claude-code", action="store_true", help="imprime solo model/effort para un agente de Claude Code")
     sp.set_defaults(func=_cmd_plan)
@@ -414,15 +416,15 @@ def build_parser() -> argparse.ArgumentParser:
     sr.add_argument("--json", action="store_true", help="salida JSON con la respuesta y los intentos")
     sr.set_defaults(func=_cmd_run)
 
-    sb = sub.add_parser("bench", help="compara estrategias: simulacion offline o fichero de tareas reales")
-    sb.add_argument("file", nargs="?", help="YAML/JSON con tareas (sin fichero: simulacion)")
-    sb.add_argument("--simulate", action="store_true", help="fuerza la simulacion")
+    sb = sub.add_parser("bench", help="compara estrategias: simulación offline o fichero de tareas reales")
+    sb.add_argument("file", nargs="?", help="YAML/JSON con tareas (sin fichero: simulación)")
+    sb.add_argument("--simulate", action="store_true", help="fuerza la simulación")
     sb.add_argument("--tasks", type=int, default=60, help="tareas simuladas")
     sb.add_argument("--seed", type=int, default=1, help="semilla de la simulación (1 por defecto)")
-    sb.add_argument("--detail", action="store_true", help="simulacion: desglose por celda y tipo de cada estrategia")
+    sb.add_argument("--detail", action="store_true", help="simulación: desglose por celda y tipo de cada estrategia")
     sb.add_argument("--strategies", default="router",
                     help='p. ej. "router,fable/xhigh,opus/high,sonnet/medium>opus/high"')
-    sb.add_argument("--yes", "-y", action="store_true", help="no pedir confirmacion antes de gastar")
+    sb.add_argument("--yes", "-y", action="store_true", help="no pedir confirmación antes de gastar")
     sb.add_argument("--jobs", "-j", type=int, default=3, help="tareas en paralelo (3 por defecto)")
     _add_backend_args(sb)
     sb.set_defaults(func=_cmd_bench)
@@ -443,7 +445,7 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--live", action="store_true", help="además, una llamada real con Haiku para probar la cuenta")
     sd.set_defaults(func=_cmd_doctor)
 
-    sc = sub.add_parser("cells", help="la reticula de celdas con su coste y capacidad supuesta")
+    sc = sub.add_parser("cells", help="la retícula de celdas con su coste y capacidad supuesta")
     sc.set_defaults(func=_cmd_cells)
 
     si = sub.add_parser("install", help="activa el router en un perfil de Claude Code (hooks + skill)")

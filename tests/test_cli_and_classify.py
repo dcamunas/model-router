@@ -31,7 +31,7 @@ def test_plan_claude_code_prints_frontmatter_values(capsys):
 def test_bench_simulate_prints_table(capsys):
     assert main(["bench", "--simulate", "--tasks", "12", "--seed", "2"]) == 0
     out = capsys.readouterr().out
-    assert "SIMULACION" in out and "G router" in out
+    assert "SIMULACIÓN" in out and "G router" in out
 
 
 def test_cells_command_lists_lattice(capsys):

@@ -245,7 +245,7 @@ def format_report(tasks: list[SimTask], reports: list[StrategyReport], seed: int
         kinds[t.kind] = kinds.get(t.kind, 0) + 1
         risks[t.risk] = risks.get(t.risk, 0) + 1
     head = [
-        f"SIMULACION · {len(tasks)} tareas · semilla {seed} · precios reales, capacidades supuestas (catalog.py)",
+        f"SIMULACIÓN · {len(tasks)} tareas · semilla {seed} · precios reales, capacidades supuestas (catalog.py)",
         "tipos: " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())),
         "riesgos: " + ", ".join(
             f"{k} {v}" for k, v in sorted(risks.items(), key=lambda kv: ["low", "medium", "high", "critical"].index(kv[0]))
@@ -259,12 +259,12 @@ def format_report(tasks: list[SimTask], reports: list[StrategyReport], seed: int
     foot = [
         "",
         "resueltas = verdad del simulador; falsos OK = la estrategia dio por buena una respuesta mala;",
-        "cola 10% = parte del coste que se llevan las 10% tareas mas dificiles.",
+        "cola 10% = parte del coste que se llevan las 10% tareas más difíciles.",
     ]
     out = head + [tbl] + foot
     if detail:
         out.append("")
-        out.append("detalle por estrategia (aqui 'resueltas' = aceptadas por la estrategia; la tabla de arriba usa la verdad)")
+        out.append("detalle por estrategia (aquí 'resueltas' = aceptadas por la estrategia; la tabla de arriba usa la verdad)")
         for r in reports:
             out += ["", f"== {r.name} ==", summarize(r.ledger.tasks()).text()]
     return "\n".join(out)

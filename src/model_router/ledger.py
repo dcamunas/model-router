@@ -116,7 +116,7 @@ class Summary:
             f"tareas {self.tasks} · resueltas {self.solved} · "
             + ", ".join(f"{k} {v}" for k, v in sorted(self.by_status.items())),
             f"intentos {self.attempts} · reintentos {self.retries} · tokens {self.tokens:,}",
-            f"coste trabajo {money(self.work_cost)} · verificacion {money(self.verify_cost)} · total {money(self.total_cost)}",
+            f"coste trabajo {money(self.work_cost)} · verificación {money(self.verify_cost)} · total {money(self.total_cost)}",
             f"coste por tarea resuelta: {money(self.cost_per_solved) if self.cost_per_solved is not None else 'n/a'}",
         ]
         if self.by_cell:

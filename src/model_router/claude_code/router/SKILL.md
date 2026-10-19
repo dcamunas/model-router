@@ -14,7 +14,7 @@ Lo que esta skill añade es el resto del ciclo: verificar según el riesgo y esc
 Un subagente de Claude Code arrastra el prompt completo de la sesión (herramientas, MCP, skills:
 unos 100K tokens). Para una subtarea que no necesita herramientas (clasificar, extraer, resumir,
 redactar, revisar un texto que ya tienes) usa el router directamente: unos 900 tokens de contexto,
-modelo y esfuerzo por tipo y riesgo, checker opcional, juez según riesgo y entrada en el libro.
+modelo y esfuerzo por tipo y riesgo, checker opcional, juez según riesgo y entrada en el registro.
 
 ```bash
 router run "<tarea>" --kind <tipo> --risk <riesgo>            # la respuesta sale por stdout
