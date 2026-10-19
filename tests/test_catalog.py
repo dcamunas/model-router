@@ -22,7 +22,7 @@ def test_haiku_long_prompts_bill_five_times():
     assert long / short > 5
 
 
-def test_cell_parsing_and_claude_code_names():
+def test_parse_cell_accepts_short_names_ids_and_the_default_effort():
     assert parse_cell("opus/medium") == Cell("claude-opus-5-5", "medium")
     assert parse_cell("sonnet").effort == MODELS["claude-sonnet-5-5"].default_effort
     assert parse_cell("claude-fable-5-1/low").claude_code() == {"model": "fable", "effort": "low"}

@@ -56,7 +56,7 @@ def test_low_risk_without_checker_accepts_first_answer():
     assert len(client.calls) == 1
 
 
-def test_budget_stops_escalation():
+def test_exhausted_budget_stops_escalation_with_status_budget():
     client = FakeClient(script={"*": [Reply("no", usage=Usage(1000, 1000))]}, judge={"*": [ko()]})
     task = Task(prompt="hard", kind="analysis", risk="high", budget_usd=0.03)
     result = Router(client).run(task)

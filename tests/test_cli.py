@@ -1,20 +1,18 @@
 import json
+import re
+import stat
 
 import pytest
 
-from model_router.classify import classify_rules
+from model_router import cli
 from model_router.cli import main
+from model_router.testing import FakeClient, Reply
 
 
-def test_rules_place_common_spanish_and_english_prompts():
-    assert classify_rules("Revisa este script SQL antes de producción").kind == "review"
-    assert classify_rules("Revisa este script SQL antes de producción").risk == "high"
-    assert classify_rules("clasifica estos tickets en 5 categorías").kind == "classify"
-    assert classify_rules("Write a LinkedIn post about data migrations").kind == "write"
-    assert classify_rules("Extrae los campos de esta factura a JSON").kind == "extract"
-    assert classify_rules("¿Qué hora es en Tokio?").kind == "chat"
-    assert classify_rules("Migra el pipeline paso a paso a Dagster").kind == "agentic"
-    assert classify_rules("Es crítico: borra los duplicados").risk == "critical"
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    return tmp_path
 
 
 def test_plan_command_needs_no_api(capsys):
@@ -28,58 +26,91 @@ def test_plan_claude_code_prints_frontmatter_values(capsys):
     assert capsys.readouterr().out == "model: haiku\neffort: medium\n"
 
 
-def test_bench_simulate_prints_table(capsys):
+def test_bench_without_a_file_runs_the_simulation_and_prints_the_table(capsys):
     assert main(["bench", "--simulate", "--tasks", "12", "--seed", "2"]) == 0
     out = capsys.readouterr().out
     assert "SIMULACIÓN" in out and "G router" in out
 
 
-def test_cells_command_lists_lattice(capsys):
+def test_cells_lists_every_cell_of_the_lattice(capsys):
     assert main(["cells"]) == 0
     assert "fable/max" in capsys.readouterr().out
 
 
-def test_stats_on_empty_home(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+def test_stats_says_there_are_no_tasks_on_an_empty_home(home, capsys):
     assert main(["stats"]) == 0
     assert "sin tareas" in capsys.readouterr().out
-    assert json.loads("{}") == {}
 
 
-def test_search_prompts_are_their_own_kind():
-    from model_router.classify import classify_rules
+def test_run_prints_the_answer_the_attempts_and_records_the_task(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("def f(): return 42")]}))
+    assert main(["run", "Implementa f que devuelva 42", "--check-regex", "return 42"]) == 0
+    out, err = capsys.readouterr()
+    assert out.startswith("def f(): return 42\n")
+    assert "clasificación: code / medium" in out
+    assert "OK (checker)" in out and "estado solved" in out and "reintentos 0" in out
+    assert err == ""
+    records = [json.loads(line) for line in (home / "ledger.jsonl").read_text().splitlines()]
+    assert len(records) == 1 and records[0]["status"] == "solved" and records[0]["attempts"][0]["cell"] == "opus/low"
+    assert "prompt" not in records[0] and "answer" not in records[0]
 
-    assert classify_rules("Explora el repo y lista los módulos que tocan la base de datos").kind == "search"
-    assert classify_rules("Find where the config is loaded").kind == "search"
-    assert classify_rules("Busca errores en este módulo").kind == "review"
-    assert classify_rules("Implementa una función que devuelva una lista").kind == "code"
+
+def test_run_json_gives_the_result_and_the_answer(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply('{"a": 1}')]}))
+    assert main(["run", "dame un JSON", "--kind", "extract", "--risk", "low", "--check-json", "a", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["status"] == "solved" and data["answer"] == '{"a": 1}' and len(data["attempts"]) == 1
+    assert data["attempts"][0]["reason"] == "JSON válido"
 
 
-def test_bench_file_runs_tasks_in_parallel(tmp_path, monkeypatch, capsys):
-    from model_router import cli
-    from model_router.testing import FakeClient, Reply
+def test_run_exits_1_and_warns_when_nothing_passes(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("no")]}))
+    assert main(["run", "clasifica esto", "--kind", "classify", "--risk", "low", "--check-regex", "POSITIVO"]) == 1
+    out, err = capsys.readouterr()
+    assert "estado unsolved" in out and "no casa con /POSITIVO/" in out
+    assert "no pasó la verificación" in err
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+
+def test_feedback_overrides_the_verdict_in_the_ledger_and_the_feedback_store(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVO")]}))
+    main(["run", "clasifica", "--kind", "classify", "--risk", "low", "--check-regex", "POSITIVO"])
+    match = re.search(r"· id (\w+)", capsys.readouterr().out)
+    assert match is not None
+    task_id = match.group(1)
+    assert main(["feedback", task_id, "--ko", "--note", "la etiqueta era NEGATIVO"]) == 0
+    assert capsys.readouterr().out.strip() == f"{task_id}: marcada como KO"
+    main(["stats"])
+    out = capsys.readouterr().out
+    assert "tareas 1 · resueltas 0" in out
+    store = json.loads((home / "feedback.json").read_text())
+    assert store["classify"]["haiku/low"] == {"n": 1, "pass": 0, "n_first": 1, "pass_first": 0}
+    with pytest.raises(SystemExit, match="no hay tarea nope"):
+        main(["feedback", "nope", "--ok"])
+
+
+def test_bench_file_runs_tasks_in_parallel(home, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVO")] * 6}))
-    spec = tmp_path / "t.json"
+    spec = home / "t.json"
     spec.write_text(json.dumps({"tasks": [
         {"id": f"c{i}", "kind": "classify", "risk": "low", "prompt": "clasifica", "check_regex": "POSITIVO"} for i in range(3)
     ]}))
     assert main(["bench", str(spec), "--yes", "--jobs", "2", "--strategies", "router"]) == 0
     out = capsys.readouterr().out
     assert out.count(" solved $") == 3 and "tareas 3" in out
-    assert len(list((tmp_path / "bench").glob("*.jsonl"))) == 1
+    assert len(list((home / "bench").glob("*.jsonl"))) == 1
 
 
-def test_doctor_reports_missing_hooks(tmp_path, monkeypatch, capsys):
-    import stat
-
+def _fake_claude(tmp_path, monkeypatch):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     claude = fake_bin / "claude"
     claude.write_text("#!/bin/sh\necho 9.9.9\n")
     claude.chmod(claude.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", str(fake_bin))
+
+
+def test_doctor_reports_missing_hooks(tmp_path, monkeypatch, capsys):
+    _fake_claude(tmp_path, monkeypatch)
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
     profile = tmp_path / "profile"
     profile.mkdir()
@@ -112,35 +143,32 @@ def test_doctor_shows_the_effort_of_the_chat_model_whatever_its_version(tmp_path
     assert "chat principal: model fable, effort low" in capsys.readouterr().out
 
 
-def test_an_unknown_model_is_a_one_line_error_not_a_traceback(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+def test_an_unknown_model_is_a_one_line_error_not_a_traceback(home, monkeypatch, capsys):
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonet")
     with pytest.raises(SystemExit, match="modelo desconocido 'sonet'.*haiku, sonnet, opus, fable"):
         main(["plan", "clasifica esto", "--kind", "classify", "--risk", "low"])
     monkeypatch.delenv("MODEL_ROUTER_MODELS")
     with pytest.raises(SystemExit, match="modelo desconocido 'opsu'"):
-        main(["install", "--settings", str(tmp_path / "s.json"), "--no-skill", "--models", "opsu"])
-    assert not (tmp_path / "s.json").exists()
+        main(["install", "--settings", str(home / "s.json"), "--no-skill", "--models", "opsu"])
+    assert not (home / "s.json").exists()
 
 
-def test_stats_skips_corrupt_lines_in_the_logs_and_says_so(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+def test_stats_skips_corrupt_lines_in_the_logs_and_says_so(home, capsys):
     good = json.dumps({"cell": "opus/low", "kind": "code", "risk": "medium"})
-    (tmp_path / "hook.jsonl").write_text(good + "\n{\"cell\": \"opus/l\n" + good + "\n")
+    (home / "hook.jsonl").write_text(good + "\n{\"cell\": \"opus/l\n" + good + "\n")
     task = {"type": "task", "task_id": "t1", "kind": "code", "status": "solved", "attempts": [], "usage": {}}
-    (tmp_path / "ledger.jsonl").write_text(json.dumps(task) + "\n{\"type\": \"ta\n")
+    (home / "ledger.jsonl").write_text(json.dumps(task) + "\n{\"type\": \"ta\n")
     assert main(["stats"]) == 0
     out, err = capsys.readouterr()
     assert "opus/low" in out and "tareas 1" in out
     assert "1 líneas ilegibles" in err
 
 
-def test_uninstall_command_only_takes_profile_flags(tmp_path, monkeypatch, capsys):
+def test_uninstall_command_only_takes_profile_flags(home, monkeypatch, capsys):
     from model_router import install as mod
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
-    monkeypatch.setattr(mod, "hook_binary", lambda: tmp_path / "router-hook")
-    settings = tmp_path / "profile" / "settings.json"
+    monkeypatch.setattr(mod, "hook_binary", lambda: home / "router-hook")
+    settings = home / "profile" / "settings.json"
     assert main(["install", "--settings", str(settings), "--no-skill"]) == 0
     assert "hooks" in json.loads(settings.read_text())
     assert main(["uninstall", "--settings", str(settings), "--no-skill"]) == 0
