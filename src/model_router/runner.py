@@ -6,7 +6,7 @@ decides whether a cheaper cell was actually cheaper.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -158,10 +158,10 @@ class Router:
                 break
             cost = cost_usd(cell.model, completion.usage)
             spent += cost
-            base = dict(n=n, cell=cell, usage=completion.usage, cost_usd=cost, seconds=completion.seconds,
-                        stop_reason=completion.stop_reason, served_model=completion.model, request_id=completion.request_id)
+            base = Attempt(n, cell, completion.usage, cost, completion.seconds, completion.stop_reason, completion.model,
+                           completion.request_id, refused=False, verdict=None, verdict_source="", reason="")
             if completion.refused:
-                attempts.append(Attempt(**base, refused=True, verdict=None, verdict_source="refusal",
+                attempts.append(replace(base, refused=True, verdict_source="refusal",
                                         reason=f"refused ({completion.refusal_category or 'no category'})"))
                 if sum(a.refused for a in attempts) >= 2:
                     status = "refused"
@@ -170,15 +170,14 @@ class Router:
                 continue
             if completion.stop_reason == "max_tokens" and not truncated_retry and max_tokens * 2 <= cell.spec.max_output:
                 truncated_retry = True
-                attempts.append(Attempt(**base, refused=False, verdict=None, verdict_source="truncated",
+                attempts.append(replace(base, verdict_source="truncated",
                                         reason=f"hit max_tokens={max_tokens}; retrying with {max_tokens * 2}"))
                 max_tokens *= 2
                 continue
             verdict = self.verifier.verify(task, completion.text, plan.verify, cell)
             spent += verdict.cost_usd
-            attempts.append(Attempt(**base, refused=False, verdict=verdict.passed, verdict_source=verdict.source,
-                                    reason=verdict.reason, verifier=verdict.cell, verify_usage=verdict.usage,
-                                    verify_cost_usd=verdict.cost_usd))
+            attempts.append(replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
+                                    verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd))
             answer, parsed, final = completion.text, completion.parsed, cell
             if verdict.passed:
                 status = "solved"

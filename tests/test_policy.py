@@ -46,7 +46,7 @@ def test_break_even_is_cost_ratio_including_verification():
     none = policy.break_even(start, "none", 2000, 1500)
     full = policy.break_even(start, "full", 2000, 1500)
     assert none == pytest.approx(start.expected_cost() / parse_cell("fable/low").expected_cost())
-    assert full > none
+    assert none is not None and full is not None and full > none
     assert policy.break_even(parse_cell("fable/xhigh"), "none", 2000, 1500) is None
 
 
@@ -60,18 +60,20 @@ def test_feedback_demotes_below_the_break_even(tmp_path):
 
 def test_light_verifier_is_cheapest_cell_at_least_as_capable():
     cells = lattice()
-    assert choose_verifier(parse_cell("haiku/medium"), "light", cells).label == "haiku/medium"
-    assert choose_verifier(parse_cell("sonnet/medium"), "light", cells).label == "sonnet/medium"
+    light = choose_verifier(parse_cell("haiku/medium"), "light", cells)
+    assert light is not None and light.label == "haiku/medium"
+    light = choose_verifier(parse_cell("sonnet/medium"), "light", cells)
+    assert light is not None and light.label == "sonnet/medium"
 
 
 def test_full_verifier_is_another_model_clearly_more_capable():
     cells = lattice()
     v = choose_verifier(parse_cell("sonnet/medium"), "full", cells)
-    assert v.spec.short == "opus"
+    assert v is not None and v.spec.short == "opus"
     v = choose_verifier(parse_cell("opus/low"), "full", cells)
-    assert v.spec.short == "fable"
+    assert v is not None and v.spec.short == "fable"
     v = choose_verifier(parse_cell("fable/xhigh"), "full", cells)
-    assert v.spec.short == "fable" and v != parse_cell("fable/xhigh")
+    assert v is not None and v.spec.short == "fable" and v != parse_cell("fable/xhigh")
     assert choose_verifier(parse_cell("opus/low"), "none", cells) is None
 
 
@@ -92,7 +94,8 @@ def test_policy_falls_back_when_the_table_names_a_missing_model(monkeypatch):
     assert any("fable no disponible: fable/low -> opus/low" in r for r in plan.rationale)
     assert any("suelo de riesgo critical" in r for r in plan.rationale)
     assert all(c.spec.short != "fable" for c in plan.ladder)
-    assert policy.verifier_for(plan.start, "full").spec.short != "fable"
+    full = policy.verifier_for(plan.start, "full")
+    assert full is not None and full.spec.short != "fable"
     plan = policy.plan(Task(prompt="x", kind="code", risk="critical"))  # floor opus/medium still applies
     assert plan.start.capability >= parse_cell("opus/medium").capability
     assert all(c.spec.short != "fable" for c in plan.ladder)

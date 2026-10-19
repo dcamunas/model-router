@@ -41,8 +41,7 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
     result = Router(client).run(task)
     assert result.solved
     assert [a.cell.label for a in result.attempts] == ["opus/medium", "fable/low"]
-    assert result.attempts[0].verifier.label == "fable/low"
-    assert result.attempts[1].verifier.label == "fable/medium"
+    assert [a.verifier.label if a.verifier else None for a in result.attempts] == ["fable/low", "fable/medium"]
     assert "off by one" in result.attempts[0].reason
     assert result.verify_cost_usd > 0
     judge_calls = [c for c in client.calls if c["output_format"] == "Verdict"]
@@ -108,7 +107,7 @@ def test_ledger_persists_and_summarises(tmp_path: Path):
     s = summarize(records)
     assert s.tasks == 2 and s.solved == 2 and s.retries == 1 and s.attempts == 3
     assert s.by_cell["opus/low"]["passes"] == 1 and s.by_cell["opus/low"]["judged"] == 2
-    assert abs(s.cost_per_solved - s.total_cost / 2) < 1e-12
+    assert s.cost_per_solved is not None and abs(s.cost_per_solved - s.total_cost / 2) < 1e-12
     ledger.override("a2", passed=False, note="wrong after all")
     s2 = summarize(ledger.tasks())
     assert s2.solved == 1 and "KO" not in s2.text()

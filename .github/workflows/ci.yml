@@ -17,6 +17,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check src tests
       - run: uv run pytest -q
+      - run: uv run pyright
       - run: uv build
       - name: la skill viaja dentro del wheel
         run: unzip -l dist/*.whl | grep -q 'model_router/claude_code/router/SKILL.md'

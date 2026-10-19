@@ -10,9 +10,21 @@ def agent_event(**tool_input):
             "tool_input": {"description": "task", "prompt": "Revisa este script SQL antes de producción", **tool_input}}
 
 
+def routed(event) -> dict:
+    out = handle(event)
+    assert out is not None
+    return out
+
+
+def decided(tool_input, chat_model=None) -> tuple[dict, dict]:
+    updated, record = decide(tool_input, chat_model)
+    assert updated is not None
+    return updated, record
+
+
 def test_fills_model_and_effort_for_general_purpose_subagent(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    out = handle(agent_event())
+    out = routed(agent_event())
     updated = out["hookSpecificOutput"]["updatedInput"]
     assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     assert updated["model"] == "opus" and updated["effort"] == "medium"  # review x high -> opus/medium
@@ -32,12 +44,12 @@ def test_keeps_an_explicit_model_and_skips_custom_agents(tmp_path, monkeypatch):
 
 
 def test_only_model_is_set_when_claude_chose_an_effort():
-    updated, record = decide({"prompt": "clasifica estos tickets", "effort": "high"})
+    updated, record = decided({"prompt": "clasifica estos tickets", "effort": "high"})
     assert updated["model"] == "haiku" and updated["effort"] == "high" and record["set"] == ["model"]
 
 
 def test_session_start_adds_context_and_other_events_are_silent():
-    out = handle({"hook_event_name": "SessionStart", "source": "startup"})
+    out = routed({"hook_event_name": "SessionStart", "source": "startup"})
     assert "Router de modelos activo" in out["hookSpecificOutput"]["additionalContext"]
     assert handle({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}) is None
     assert handle({"hook_event_name": "PostToolUse", "tool_name": "Agent"}) is None
@@ -92,7 +104,7 @@ def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, monkey
     prompt = "Revisa este diseño crítico de la migración de pagos antes de ejecutarlo"
     event = agent_event(prompt=prompt)
     event["transcript_path"] = _transcript(tmp_path, {"type": "assistant", "message": {"model": "claude-opus-5-5"}})
-    out = handle(event)
+    out = routed(event)
     updated = out["hookSpecificOutput"]["updatedInput"]
     assert (updated["model"], updated["effort"]) == ("fable", "low")  # review x critical = opus/high, crossed
     assert out["systemMessage"].endswith("cruce con el chat")
@@ -102,18 +114,18 @@ def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, monkey
 
 def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp_path):
     critical = "Revisa este diseño crítico de la migración de pagos"
-    updated, record = decide({"prompt": critical}, chat_model="fable")
+    updated, record = decided({"prompt": critical}, chat_model="fable")
     assert updated["model"] == "opus" and updated["effort"] == "high" and "cross" not in record
-    updated, record = decide({"prompt": critical}, chat_model=None)
+    updated, record = decided({"prompt": critical}, chat_model=None)
     assert updated["model"] == "opus" and "cross" not in record
-    updated, record = decide({"prompt": "Revisa este script SQL antes de producción"}, chat_model="opus")
+    updated, record = decided({"prompt": "Revisa este script SQL antes de producción"}, chat_model="opus")
     assert updated["model"] == "opus" and updated["effort"] == "medium" and "cross" not in record
 
 
 def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
-    updated, record = decide({"prompt": "Analiza el diseño crítico de la migración de pagos"})
+    updated, record = decided({"prompt": "Analiza el diseño crítico de la migración de pagos"})
     assert updated["model"] == "opus" and record["cell"] == "opus/medium"  # fable/low degraded, then the floor
-    updated, record = decide({"prompt": "Revisa este diseño crítico de la migración de pagos"}, chat_model="opus")
+    updated, record = decided({"prompt": "Revisa este diseño crítico de la migración de pagos"}, chat_model="opus")
     assert updated["model"] == "opus" and "cross" not in record  # no other model can take the cross-check
