@@ -3,7 +3,8 @@ import json
 import pytest
 
 from model_router import install as mod
-from model_router.install import install
+from model_router.catalog import UnknownModelError
+from model_router.install import install, uninstall
 
 
 @pytest.fixture
@@ -39,14 +40,15 @@ def test_install_writes_hooks_copies_skill_and_remembers_profile_and_models(home
     assert "modelos disponibles: haiku, opus" in out
 
 
-def test_install_is_idempotent_and_uninstall_cleans_up(home):
+def test_install_is_idempotent_and_uninstall_removes_hooks_and_skill_but_keeps_config(home):
     profile = home / "profile"
-    install(profile / "settings.json", profile_dir=profile)
+    install(profile / "settings.json", profile_dir=profile, models="opus")
     install(profile / "settings.json", profile_dir=profile)
     assert len(_settings(home)["hooks"]["PreToolUse"]) == 1
-    install(profile / "settings.json", uninstall=True)
+    assert uninstall(profile / "settings.json") == 0
     assert "hooks" not in _settings(home)
     assert not (profile / "skills" / "router").exists()
+    assert json.loads((home / "state" / "config.json").read_text())["models"] == ["opus"]
 
 
 def test_link_mode_symlinks_the_skill_and_models_all_resets(home):
@@ -58,15 +60,21 @@ def test_link_mode_symlinks_the_skill_and_models_all_resets(home):
     assert "models" not in json.loads((home / "state" / "config.json").read_text())
 
 
-def test_refuses_a_foreign_skill_dir_and_bad_models(home):
+def test_a_bad_model_or_a_foreign_skill_stops_the_install_before_anything_is_written(home):
     profile = home / "profile"
+    settings = profile / "settings.json"
+    with pytest.raises(UnknownModelError, match="sonet"):
+        install(settings, profile_dir=profile, no_skill=True, models="sonet")
+    assert not settings.exists()
     foreign = profile / "skills" / "router"
     foreign.mkdir(parents=True)
     (foreign / "SKILL.md").write_text("---\nname: otra\n---\n")
-    with pytest.raises(SystemExit):
-        install(profile / "settings.json", profile_dir=profile)
-    with pytest.raises(ValueError):
-        install(profile / "settings.json", profile_dir=profile, no_skill=True, models="sonet")
+    with pytest.raises(SystemExit, match="no es la skill del router"):
+        install(settings, profile_dir=profile)
+    assert not settings.exists() and (foreign / "SKILL.md").exists()
+    with pytest.raises(SystemExit, match="no es la skill del router"):
+        uninstall(settings)
+    assert (foreign / "SKILL.md").exists()
 
 
 def test_missing_hook_binary_is_a_clear_error(home, monkeypatch):

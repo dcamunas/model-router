@@ -65,6 +65,15 @@ SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
 MODELS_ENV = "MODEL_ROUTER_MODELS"
 
 
+class UnknownModelError(ValueError):
+    """A model name outside the catalogue. `name` is the offending value and `known` the accepted short names."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.known = list(SHORT_TO_ID)
+        super().__init__(f"unknown model {name!r}; known: {', '.join(self.known)}")
+
+
 @dataclass(frozen=True)
 class Usage:
     input_tokens: int = 0
@@ -107,16 +116,25 @@ def cost_usd(model_id: str, usage: Usage) -> float:
 
 
 def resolve_model(name: str) -> str:
+    """Return the catalogue id for `name`, a short name ('opus') or an id ('claude-opus-5-5').
+
+    Raises:
+        UnknownModelError: `name` is not in the catalogue.
+    """
     if name in MODELS:
         return name
     if name in SHORT_TO_ID:
         return SHORT_TO_ID[name]
-    raise ValueError(f"unknown model {name!r}; known: {', '.join(SHORT_TO_ID)}")
+    raise UnknownModelError(name)
 
 
 def parse_models(text: str | Iterable[str]) -> list[str]:
-    """'haiku,sonnet,opus' (short names or ids, any order) -> model ids in catalogue order.
-    Raises ValueError on an unknown name, so a typo never silently changes the lattice.
+    """Return the model ids named in `text` ('haiku,sonnet,opus', short names or ids, any order, or
+    an iterable of them) in catalogue order.
+
+    Raises:
+        UnknownModelError: a name is not in the catalogue, so a typo never silently changes the lattice.
+        ValueError: the list is empty.
     """
     names = [n.strip() for n in text.split(",")] if isinstance(text, str) else [str(n).strip() for n in text]
     ids = {resolve_model(n) for n in names if n}

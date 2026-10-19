@@ -25,6 +25,7 @@ class Ledger:
     def __init__(self, path: Path | None) -> None:
         self.path = path
         self._memory: list[dict[str, Any]] = []
+        self.corrupt = 0  # lines of the file that were not JSON on the last load
 
     def append(self, result: TaskResult) -> None:
         self._write({"type": "task", **result.to_dict()})
@@ -41,14 +42,22 @@ class Ledger:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def load(self) -> list[dict[str, Any]]:
+        """Return every record in file order. Lines that are not JSON (a write cut short by another
+        process) are skipped and counted in `corrupt`.
+        """
         if self.path is None or not self.path.exists():
             return list(self._memory)
-        out = []
+        out: list[dict[str, Any]] = []
+        self.corrupt = 0
         with self.path.open(encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     out.append(json.loads(line))
+                except ValueError:
+                    self.corrupt += 1
         return out
 
     def tasks(self) -> list[dict[str, Any]]:

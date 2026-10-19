@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ._fmt import money, table
-from .catalog import MODELS, MODELS_ENV, PRICES_AS_OF, available_models, lattice, parse_cell
+from .catalog import MODELS, MODELS_ENV, PRICES_AS_OF, SHORT_TO_ID, UnknownModelError, available_models, lattice, parse_cell
 from .classify import Classification, classify_llm, classify_rules
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
@@ -224,6 +224,8 @@ def cmd_bench(args: argparse.Namespace) -> int:
 def cmd_stats(args: argparse.Namespace) -> int:
     ledger = Ledger(Path(args.ledger) if args.ledger else home() / "ledger.jsonl")
     records = ledger.tasks()
+    if ledger.corrupt:
+        print(f"aviso: {ledger.corrupt} líneas ilegibles en {ledger.path}, no se cuentan", file=sys.stderr)
     if not records:
         print(f"sin tareas en {ledger.path}")
     else:
@@ -247,7 +249,10 @@ def _hook_decisions(path: Path) -> list[list[Any]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        r = json.loads(line)
+        try:
+            r = json.loads(line)
+        except ValueError:  # a line cut short by two sessions writing at once
+            continue
         key = (r.get("cell", "?"), r.get("kind", "?"), r.get("risk", "?"))
         counts[key] = counts.get(key, 0) + 1
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
@@ -312,8 +317,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checklis
             checks.append((start, f"hook SessionStart en {settings}" + ("" if start else fix)))
             link = profile / "skills" / "router"
             checks.append((link.is_dir(), f"skill router: {link}" + ("" if link.is_dir() else fix)))
-            model = data.get("model", "por defecto")
-            effort = (data.get("modelSettings") or {}).get(f"claude-{model}-5-5", {}).get("effortLevel")
+            model = str(data.get("model", "por defecto"))
+            model_id = SHORT_TO_ID.get(model, model)  # settings may name the model by its short name
+            effort = (data.get("modelSettings") or {}).get(model_id, {}).get("effortLevel")
             checks.append((True, f"chat principal: model {model}" + (f", effort {effort}" if effort else "")))
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
@@ -361,7 +367,22 @@ def cmd_install(args: argparse.Namespace) -> int:
     from .install import install
 
     return install(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill, link=args.link,
-                   profile_dir=args.profile_dir, models=args.models, uninstall=args.cmd == "uninstall")
+                   profile_dir=args.profile_dir, models=args.models)
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    from .install import uninstall
+
+    return uninstall(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill)
+
+
+def _add_profile_args(p: argparse.ArgumentParser) -> None:
+    from .install import default_settings
+
+    p.add_argument("--settings", type=Path, default=default_settings(),
+                   help="settings.json a tocar (por defecto el del perfil: $CLAUDE_CONFIG_DIR o ~/.claude)")
+    p.add_argument("--skills-dir", type=Path, help="carpeta de skills (por defecto, junto al settings)")
+    p.add_argument("--no-skill", action="store_true", help="solo hooks, sin la skill")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -386,7 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("file", nargs="?", help="YAML/JSON con tareas (sin fichero: simulacion)")
     sb.add_argument("--simulate", action="store_true", help="fuerza la simulacion")
     sb.add_argument("--tasks", type=int, default=60, help="tareas simuladas")
-    sb.add_argument("--seed", type=int, default=1)
+    sb.add_argument("--seed", type=int, default=1, help="semilla de la simulación (1 por defecto)")
     sb.add_argument("--detail", action="store_true", help="simulacion: desglose por celda y tipo de cada estrategia")
     sb.add_argument("--strategies", default="router",
                     help='p. ej. "router,fable/xhigh,opus/high,sonnet/medium>opus/high"')
@@ -400,40 +421,46 @@ def build_parser() -> argparse.ArgumentParser:
     ss.set_defaults(func=cmd_stats)
 
     sf = sub.add_parser("feedback", help="corrige a mano el veredicto de una tarea")
-    sf.add_argument("task_id")
+    sf.add_argument("task_id", help="id de la tarea, el que imprime `router run` y lista `router stats`")
     g = sf.add_mutually_exclusive_group(required=True)
-    g.add_argument("--ok", action="store_true")
-    g.add_argument("--ko", action="store_true")
-    sf.add_argument("--note")
+    g.add_argument("--ok", action="store_true", help="la respuesta era buena")
+    g.add_argument("--ko", action="store_true", help="la respuesta era mala")
+    sf.add_argument("--note", help="por qué, para el registro")
     sf.set_defaults(func=cmd_feedback)
 
     sd = sub.add_parser("doctor", help="comprueba claude, perfil, hooks, skill y estado; --live hace una llamada con Haiku")
-    sd.add_argument("--live", action="store_true")
+    sd.add_argument("--live", action="store_true", help="además, una llamada real con Haiku para probar la cuenta")
     sd.set_defaults(func=cmd_doctor)
 
     sc = sub.add_parser("cells", help="la reticula de celdas con su coste y capacidad supuesta")
     sc.set_defaults(func=cmd_cells)
 
-    from .install import default_settings
+    si = sub.add_parser("install", help="activa el router en un perfil de Claude Code (hooks + skill)")
+    _add_profile_args(si)
+    si.add_argument("--link", action="store_true", help="enlaza la skill en vez de copiarla (desarrollo)")
+    si.add_argument("--profile-dir", type=Path,
+                    help="perfil de Claude que usará `router run` (por defecto, el del settings si es un perfil)")
+    si.add_argument("--models", help="modelos que puede elegir esta instalación, p. ej. haiku,sonnet,opus; all = todos")
+    si.set_defaults(func=cmd_install)
 
-    for name, help_ in (("install", "activa el router en un perfil de Claude Code (hooks + skill)"),
-                        ("uninstall", "quita los hooks y la skill del perfil")):
-        si = sub.add_parser(name, help=help_)
-        si.add_argument("--settings", type=Path, default=default_settings(),
-                        help="settings.json a tocar (por defecto el del perfil: $CLAUDE_CONFIG_DIR o ~/.claude)")
-        si.add_argument("--skills-dir", type=Path, help="carpeta de skills (por defecto, junto al settings)")
-        si.add_argument("--no-skill", action="store_true", help="solo hooks, sin la skill")
-        si.add_argument("--link", action="store_true", help="enlaza la skill en vez de copiarla (desarrollo)")
-        si.add_argument("--profile-dir", type=Path,
-                        help="perfil de Claude que usara `router run` (por defecto, el del settings si es un perfil)")
-        si.add_argument("--models", help="modelos que puede elegir esta instalacion, p. ej. haiku,sonnet,opus; all = todos")
-        si.set_defaults(func=cmd_install)
+    su = sub.add_parser("uninstall", help="quita los hooks y la skill del perfil")
+    _add_profile_args(su)
+    su.set_defaults(func=cmd_uninstall)
     return p
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run `router` with `argv` (the process arguments when None) and return the exit code. Bad input
+    values become one-line messages with exit code 1 instead of tracebacks.
+    """
     args = build_parser().parse_args(argv)
-    return int(args.func(args) or 0)
+    try:
+        return int(args.func(args) or 0)
+    except UnknownModelError as exc:
+        raise SystemExit(f"modelo desconocido {exc.name!r}; válidos: {', '.join(exc.known)} "
+                         f"(revisa {MODELS_ENV}, config.json o --models)") from exc
+    except ValueError as exc:
+        raise SystemExit(f"valor no válido: {exc}") from exc
 
 
 if __name__ == "__main__":

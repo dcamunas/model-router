@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from model_router.classify import classify_rules
 from model_router.cli import main
 
@@ -95,3 +97,54 @@ def test_doctor_reports_missing_hooks(tmp_path, monkeypatch, capsys):
     main(["doctor"])
     out = capsys.readouterr().out
     assert "FALLO  hook" not in out and "ok     skill router" in out and "model opus" in out
+
+
+def test_doctor_shows_the_effort_of_the_chat_model_whatever_its_version(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PATH", str(tmp_path))  # no claude binary: doctor still reads the settings
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    monkeypatch.setenv("ROUTER_CLAUDE_CONFIG_DIR", str(profile))
+    (profile / "settings.json").write_text(json.dumps({
+        "model": "fable", "modelSettings": {"claude-fable-5-1": {"effortLevel": "low"}},
+    }))
+    main(["doctor"])
+    assert "chat principal: model fable, effort low" in capsys.readouterr().out
+
+
+def test_an_unknown_model_is_a_one_line_error_not_a_traceback(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonet")
+    with pytest.raises(SystemExit, match="modelo desconocido 'sonet'.*haiku, sonnet, opus, fable"):
+        main(["plan", "clasifica esto", "--kind", "classify", "--risk", "low"])
+    monkeypatch.delenv("MODEL_ROUTER_MODELS")
+    with pytest.raises(SystemExit, match="modelo desconocido 'opsu'"):
+        main(["install", "--settings", str(tmp_path / "s.json"), "--no-skill", "--models", "opsu"])
+    assert not (tmp_path / "s.json").exists()
+
+
+def test_stats_skips_corrupt_lines_in_the_logs_and_says_so(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    good = json.dumps({"cell": "opus/low", "kind": "code", "risk": "medium"})
+    (tmp_path / "hook.jsonl").write_text(good + "\n{\"cell\": \"opus/l\n" + good + "\n")
+    task = {"type": "task", "task_id": "t1", "kind": "code", "status": "solved", "attempts": [], "usage": {}}
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(task) + "\n{\"type\": \"ta\n")
+    assert main(["stats"]) == 0
+    out, err = capsys.readouterr()
+    assert "opus/low" in out and "tareas 1" in out
+    assert "1 líneas ilegibles" in err
+
+
+def test_uninstall_command_only_takes_profile_flags(tmp_path, monkeypatch, capsys):
+    from model_router import install as mod
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(mod, "hook_binary", lambda: tmp_path / "router-hook")
+    settings = tmp_path / "profile" / "settings.json"
+    assert main(["install", "--settings", str(settings), "--no-skill"]) == 0
+    assert "hooks" in json.loads(settings.read_text())
+    assert main(["uninstall", "--settings", str(settings), "--no-skill"]) == 0
+    assert "hooks" not in json.loads(settings.read_text())
+    with pytest.raises(SystemExit):
+        main(["uninstall", "--settings", str(settings), "--models", "opus"])
+    capsys.readouterr()
