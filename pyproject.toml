@@ -2,15 +2,33 @@
 name = "model-router"
 version = "0.1.0"
 description = "Router de modelos Claude: modelo + effort por tarea, verificacion por riesgo, escalado y coste por tarea resuelta"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "David Camuñas" }
 ]
 requires-python = ">=3.12"
+keywords = ["claude", "claude-code", "anthropic", "llm", "router", "model-routing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "anthropic>=1.0",
     "pydantic>=2.9",
     "pyyaml>=6.0.3",
 ]
+
+[project.urls]
+Repository = "https://github.com/dcamunas/model-router"
+Issues = "https://github.com/dcamunas/model-router/issues"
 
 [project.scripts]
 router = "model_router.cli:main"
