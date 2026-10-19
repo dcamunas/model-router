@@ -176,3 +176,35 @@ def test_uninstall_command_only_takes_profile_flags(home, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         main(["uninstall", "--settings", str(settings), "--models", "opus"])
     capsys.readouterr()
+
+
+def test_config_shows_and_sets_the_profile_and_the_models_without_touching_hooks(home, capsys):
+    assert main(["config"]) == 0
+    out = capsys.readouterr().out
+    assert "perfil para `router run`: sin fijar" in out and "haiku, sonnet, opus, fable" in out
+    assert main(["config", "--models", "haiku, opus", "--profile-dir", str(home / "p")]) == 0
+    cfg = json.loads((home / "config.json").read_text())
+    assert cfg == {"claude_config_dir": str((home / "p").resolve()), "models": ["haiku", "opus"]}
+    assert main(["config", "--models", "all"]) == 0
+    assert "models" not in json.loads((home / "config.json").read_text())
+    with pytest.raises(SystemExit, match="modelo desconocido 'opsu'"):
+        main(["config", "--models", "opsu"])
+    assert not (home / "settings.json").exists()
+
+
+def test_doctor_recognises_the_plugin_install(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(profile))
+    (profile / "settings.json").write_text(json.dumps({"enabledPlugins": {"model-router@dcamunas": True}}))
+    main(["doctor"])
+    out = capsys.readouterr().out
+    assert "ok     plugin model-router@dcamunas activo" in out and "hook PreToolUse" not in out
+    assert "FALLO  entorno del plugin" in out and "necesita uv" in out
+    venv_hook = profile / "plugins" / "data" / "model-router-dcamunas" / "venv" / "bin" / "router-hook"
+    venv_hook.parent.mkdir(parents=True)
+    venv_hook.write_text("")
+    main(["doctor"])
+    assert "ok     entorno del plugin" in capsys.readouterr().out

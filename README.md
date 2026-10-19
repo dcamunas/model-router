@@ -27,16 +27,46 @@ Lo que NO hace: no decide nada con datos reales hasta que tengas veredictos real
 Requisitos: Python 3.12 o superior, [uv](https://docs.astral.sh/uv/), y Claude Code si quieres el
 hook o el backend sin API key.
 
-```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.1.1
-router install        # hooks + skill en el perfil activo de Claude Code ($CLAUDE_CONFIG_DIR o ~/.claude)
-router doctor         # claude, perfil, hooks, skill, modelos disponibles y estado
+### Como plugin de Claude Code (hook + skill)
+
+Dentro de Claude Code, una línea (2.1.275 o posterior):
+
+```
+/plugin install model-router --marketplace dcamunas/model-router
 ```
 
-Si tu plan o tu cuenta no tiene todos los modelos (sin Fable, por ejemplo):
+O desde la terminal:
 
 ```bash
-router install --models haiku,sonnet,opus
+claude plugin marketplace add dcamunas/model-router
+claude plugin install model-router@dcamunas
+```
+
+El repo es a la vez el marketplace (`dcamunas`) y el plugin (`model-router`). La primera sesión tarda
+unos segundos más: el hook crea su propio entorno Python con `uv` en la carpeta de datos del plugin
+(`plugins/data/model-router-dcamunas/` dentro del perfil) y lo reutiliza después; con cada versión
+nueva del plugin lo rehace solo. Hace falta `uv` en la máquina (`MODEL_ROUTER_UV=/ruta/a/uv` si no
+está en el PATH). En `settings.json` solo queda la activación del plugin.
+
+Si tu plan o tu cuenta no tiene todos los modelos (sin Fable, por ejemplo), o quieres `router run`,
+instala también el CLI y díselo una vez:
+
+```bash
+uv tool install git+https://github.com/dcamunas/model-router@v0.2.0
+router config --models haiku,sonnet,opus    # sin tocar hooks ni skill
+router doctor                               # claude, perfil, plugin o hooks, modelos disponibles y estado
+```
+
+### Con el CLI, cuando no se pueden usar plugins
+
+Perfiles donde una política bloquea los marketplaces, o un repo concreto: `router install` escribe
+los mismos hooks y la misma skill en el `settings.json` del perfil.
+
+```bash
+uv tool install git+https://github.com/dcamunas/model-router@v0.2.0
+router install                              # hooks + skill en el perfil activo ($CLAUDE_CONFIG_DIR o ~/.claude)
+router install --models haiku,sonnet,opus   # sin Fable
+router doctor
 ```
 
 Las tablas no cambian: cuando piden un modelo que no está, el router baja al más capaz disponible
@@ -61,6 +91,7 @@ git clone https://github.com/dcamunas/model-router && cd model-router
 uv sync
 uv run router install --link    # la skill queda enlazada al repo en vez de copiada
 uv run pytest -q
+claude --plugin-dir .           # o probar el plugin tal cual está en el repo, solo en esa sesión
 ```
 
 Para llamadas reales desde la línea de comandos hace falta una credencial: `ANTHROPIC_API_KEY` en el
@@ -134,7 +165,8 @@ uno u otro.
 
 ## Dentro de Claude Code
 
-Dos piezas, una sola fuente de verdad (el paquete `model_router`):
+Dos piezas, una sola fuente de verdad (el paquete `model_router`), que llegan igual por el plugin
+que por `router install`:
 
 - **Hook** `router-hook`: `PreToolUse` sobre la herramienta Agent fija `model` y `effort` de cada
   subagente general-purpose que Claude lance sin elegir modelo, según el tipo y el riesgo que infiere
@@ -155,8 +187,9 @@ Lo que no hace: no toca los agentes definidos en `.claude/agents/*.md` (su front
 los forks, y no verifica ni escala por sí solo.
 
 Variables de entorno: `MODEL_ROUTER_HOOK=0` lo apaga sin desinstalar; `MODEL_ROUTER_HOOK_QUIET=1` quita el aviso
-de una línea en la interfaz; `MODEL_ROUTER_HOOK_LOG=0` deja de registrar decisiones. Las decisiones quedan
-en `~/.model-router/hook.jsonl` y las resume `router stats`.
+de una línea en la interfaz; `MODEL_ROUTER_HOOK_LOG=0` deja de registrar decisiones; `MODEL_ROUTER_UV`
+dice al plugin dónde está `uv`. Las decisiones quedan en `~/.model-router/hook.jsonl` y las resume
+`router stats`.
 
 ## Como librería
 

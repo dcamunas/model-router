@@ -22,8 +22,8 @@ router run --file brief.md --check-json nombre,fecha,importe   # checker program
 router run "..." --json                                       # respuesta + intentos en JSON
 ```
 
-Usa la cuenta de Claude del perfil fijado en `~/.model-router/config.json` (lo escribe `router
-install`), sin API key. Si `router` no está en el PATH o algo falla, `router doctor` lo dice.
+Usa la cuenta de Claude del perfil fijado en `~/.model-router/config.json` (lo escriben `router
+install` o `router config`), sin API key. Si `router` no está en el PATH o algo falla, `router doctor` lo dice.
 
 ## Cuándo intervenir tú
 

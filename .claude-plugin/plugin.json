@@ -1,0 +1,12 @@
+{
+  "name": "model-router",
+  "displayName": "Router de modelos",
+  "version": "0.2.0",
+  "description": "Elige modelo y effort para cada subagente de Claude Code que se lanza sin modelo, y añade la skill `router` para verificar y escalar por riesgo.",
+  "author": { "name": "David Camuñas", "url": "https://github.com/dcamunas" },
+  "homepage": "https://github.com/dcamunas/model-router",
+  "repository": "https://github.com/dcamunas/model-router",
+  "license": "MIT",
+  "keywords": ["claude", "claude-code", "router", "model", "effort", "subagents"],
+  "skills": "./src/model_router/claude_code"
+}

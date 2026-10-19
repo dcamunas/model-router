@@ -1,0 +1,14 @@
+{
+  "name": "dcamunas",
+  "owner": { "name": "David Camuñas", "url": "https://github.com/dcamunas" },
+  "description": "Plugins de dcamunas para Claude Code",
+  "plugins": [
+    {
+      "name": "model-router",
+      "source": ".",
+      "description": "Router de modelos: modelo y effort por subagente, verificación y escalado por riesgo con la skill `router`.",
+      "category": "productivity",
+      "tags": ["router", "models", "effort", "subagents", "cost"]
+    }
+  ]
+}

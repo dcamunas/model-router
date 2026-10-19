@@ -23,7 +23,7 @@ from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
-from .paths import CONFIG_DIR_ENV, home
+from .paths import CONFIG_DIR_ENV, config_path, home, read_config
 from .policy import LadderPolicy, Policy, PolicyProtocol
 from .runner import Router, TaskResult
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
@@ -31,6 +31,7 @@ from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_che
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02}  # per verified attempt, rough, for the bench estimate
 REASON_COLUMN_CHARS = 70  # keeps the attempts table on one line per attempt
+PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
 
 
 def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True) -> None:
@@ -267,6 +268,47 @@ def _hook_decisions(path: Path) -> list[list[Any]]:
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
 
+def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
+    """Check how the router is wired into the Claude profile at `profile`: through the plugin (hooks and
+    skill come with it; its venv appears at the first session) or through `router install`.
+    """
+    settings = profile / "settings.json"
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
+    except ValueError:
+        return [(False, f"{settings} no es JSON válido: Claude Code ignora todo el fichero")]
+    checks: list[tuple[bool, str]] = []
+    if (data.get("enabledPlugins") or {}).get(PLUGIN_ID):
+        checks.append((True, f"plugin {PLUGIN_ID} activo en {settings}: hooks y skill vienen del plugin"))
+        venv_hook = profile / "plugins" / "data" / PLUGIN_ID.replace("@", "-") / "venv" / "bin" / "router-hook"
+        ready = venv_hook.exists()
+        note = "" if ready else " (se crea al abrir una sesión; necesita uv)"
+        checks.append((ready, f"entorno del plugin: {venv_hook}{note}"))
+    else:
+        hooks = data.get("hooks", {})
+
+        def wired(event: str, matcher: str | None = None) -> bool:
+            for entry in hooks.get(event, []):
+                if matcher and entry.get("matcher") != matcher:
+                    continue
+                for h in entry.get("hooks", []):
+                    if "router-hook" in str(h.get("command", "")):
+                        return Path(h["command"]).exists()
+            return False
+
+        fix = " (falta: el plugin o router install)"
+        pre, start = wired("PreToolUse", "Agent"), wired("SessionStart")
+        checks.append((pre, f"hook PreToolUse(Agent) en {settings}" + ("" if pre else fix)))
+        checks.append((start, f"hook SessionStart en {settings}" + ("" if start else fix)))
+        link = profile / "skills" / "router"
+        checks.append((link.is_dir(), f"skill router: {link}" + ("" if link.is_dir() else fix)))
+    model = str(data.get("model", "por defecto"))
+    model_id = SHORT_TO_ID.get(model, model)  # settings may name the model by its short name
+    effort = (data.get("modelSettings") or {}).get(model_id, {}).get("effortLevel")
+    checks.append((True, f"chat principal: model {model}" + (f", effort {effort}" if effort else "")))
+    return checks
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checklist of independent checks
     """Check that everything is in place: claude binary, profile, hooks, skill, models and state; `--live`
     adds one real Haiku call. Print one line per check and return 1 when any failed.
@@ -304,35 +346,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     except ValueError:
         checks.append((False, f"modelos disponibles: lista vacía (revisa {MODELS_ENV} o `router install --models`)"))
     if profile is not None and profile.is_dir():
-        settings = profile / "settings.json"
-        try:
-            data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
-        except ValueError:
-            data = None
-        if data is None:
-            checks.append((False, f"{settings} no es JSON válido: Claude Code ignora todo el fichero"))
-        else:
-            hooks = data.get("hooks", {})
-
-            def wired(event: str, matcher: str | None = None) -> bool:
-                for entry in hooks.get(event, []):
-                    if matcher and entry.get("matcher") != matcher:
-                        continue
-                    for h in entry.get("hooks", []):
-                        if "router-hook" in str(h.get("command", "")):
-                            return Path(h["command"]).exists()
-                return False
-
-            fix = " (falta: router install)"
-            pre, start = wired("PreToolUse", "Agent"), wired("SessionStart")
-            checks.append((pre, f"hook PreToolUse(Agent) en {settings}" + ("" if pre else fix)))
-            checks.append((start, f"hook SessionStart en {settings}" + ("" if start else fix)))
-            link = profile / "skills" / "router"
-            checks.append((link.is_dir(), f"skill router: {link}" + ("" if link.is_dir() else fix)))
-            model = str(data.get("model", "por defecto"))
-            model_id = SHORT_TO_ID.get(model, model)  # settings may name the model by its short name
-            effort = (data.get("modelSettings") or {}).get(model_id, {}).get("effortLevel")
-            checks.append((True, f"chat principal: model {model}" + (f", effort {effort}" if effort else "")))
+        checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
     checks.append((True, f"estado en {home()}: {ledger_n} tareas en el registro, {hook_n} decisiones del hook"))
@@ -386,6 +400,21 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     from .install import uninstall
 
     return uninstall(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill)
+
+
+def _cmd_config(args: argparse.Namespace) -> int:
+    from .install import model_names, remember
+
+    if args.models is None and args.profile_dir is None:
+        cfg = read_config()
+        print(f"perfil para `router run`: {cfg.get('claude_config_dir') or 'sin fijar'}")
+        print(f"modelos disponibles: {', '.join(cfg.get('models') or [m.short for m in MODELS.values()])}")
+        print(f"(en {config_path()})")
+        return 0
+    names = model_names(args.models) if args.models is not None else None
+    profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
+    remember(profile, names, reset_models=args.models is not None and names is None)
+    return 0
 
 
 def _add_profile_args(p: argparse.ArgumentParser) -> None:
@@ -459,6 +488,11 @@ def build_parser() -> argparse.ArgumentParser:
     su = sub.add_parser("uninstall", help="quita los hooks y la skill del perfil")
     _add_profile_args(su)
     su.set_defaults(func=_cmd_uninstall)
+
+    sg = sub.add_parser("config", help="muestra o fija el perfil de `router run` y los modelos disponibles (sin tocar hooks)")
+    sg.add_argument("--profile-dir", type=Path, help="perfil de Claude que usará `router run`")
+    sg.add_argument("--models", help="modelos que puede elegir esta instalación, p. ej. haiku,sonnet,opus; all = todos")
+    sg.set_defaults(func=_cmd_config)
     return p
 
 

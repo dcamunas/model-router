@@ -2,6 +2,18 @@
 
 Formato de [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones según [SemVer](https://semver.org/lang/es/).
 
+## [0.2.0] - 2026-10-19
+
+### Añadido
+
+- Plugin de Claude Code: el repo es a la vez marketplace (`dcamunas`) y plugin (`model-router`). `/plugin install model-router --marketplace dcamunas/model-router` instala hook y skill. El hook crea su entorno Python con `uv` en la carpeta de datos del plugin en la primera sesión y lo rehace al cambiar de versión; `MODEL_ROUTER_UV` apunta a `uv` cuando no está en el PATH.
+- `router config [--models ...] [--profile-dir ...]`: muestra o fija el perfil de `router run` y los modelos disponibles sin tocar hooks ni skill, para las instalaciones por plugin.
+- `router doctor` reconoce la instalación por plugin y comprueba su entorno.
+
+### Cambiado
+
+- `router install` pasa a ser la alternativa para perfiles donde no se permiten marketplaces; el plugin es la vía documentada primero.
+
 ## [0.1.1] - 2026-10-19
 
 ### Corregido

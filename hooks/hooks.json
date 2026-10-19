@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/router-hook.sh",
+            "timeout": 10,
+            "statusMessage": "router: eligiendo modelo"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/router-hook.sh --bootstrap",
+            "timeout": 180,
+            "statusMessage": "router: preparando el hook"
+          }
+        ]
+      }
+    ]
+  }
+}
