@@ -22,7 +22,11 @@ from .ledger import Ledger, summarize
 from .paths import CONFIG_DIR_ENV, home
 from .policy import LadderPolicy, Policy, PolicyProtocol
 from .runner import Router, TaskResult
-from .task import KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
+from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
+
+ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
+JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02}  # per verified attempt, rough, for the bench estimate
+REASON_COLUMN_CHARS = 70  # keeps the attempts table on one line per attempt
 
 
 def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True) -> None:
@@ -34,7 +38,7 @@ def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True) -> N
     p.add_argument("--verify", choices=VERIFY_MODES, help="fuerza el modo de verificacion")
     p.add_argument("--budget", type=float, help="tope en USD para la tarea")
     p.add_argument("--max-attempts", type=int, help="intentos maximos")
-    p.add_argument("--max-tokens", type=int, default=16_000, help="solo backend api; el cli lo gestiona solo")
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="solo backend api; el cli lo gestiona solo")
     p.add_argument("--system", help="fichero con el system prompt del trabajador")
     p.add_argument("--check-regex", help="la respuesta debe casar con esta regex (checker programatico)")
     p.add_argument("--check-json", help="la respuesta debe ser JSON con estas claves (coma-separadas; vacio = solo JSON valido)")
@@ -85,8 +89,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     verifier = policy.verifier_for(plan.start, plan.verify)
     if verifier is not None:
         print(f"verificador ({plan.verify}): {verifier}")
-    est_in = len(prompt) // 4 + 50
-    print(f"coste estimado del primer intento: {money(plan.start.expected_cost(est_in, min(1500, task.max_tokens)))}"
+    first = plan.start.expected_cost(task.estimated_input_tokens, task.planned_output_tokens)
+    print(f"coste estimado del primer intento: {money(first)}"
           f"  (precios {PRICES_AS_OF})")
     return 0
 
@@ -98,7 +102,7 @@ def _attempts_table(result: TaskResult) -> str:
         served = a.served_model if a.fallback_ran else ""
         rows.append([a.n, a.cell.label, served, a.stop_reason, f"{a.usage.input_tokens:,}/{a.usage.output_tokens:,}",
                      money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + a.verifier.label if a.verifier else ''})",
-                     money(a.verify_cost_usd), a.reason[:70]])
+                     money(a.verify_cost_usd), a.reason[:REASON_COLUMN_CHARS]])
     return table(["#", "celda", "fallback", "stop", "tok in/out", "coste", "veredicto", "verif.", "motivo"], rows)
 
 
@@ -170,7 +174,7 @@ def _spec_task(spec: dict[str, Any]) -> Task:
         checker = json_checker(tuple(keys) if isinstance(keys, list) else ())
     return Task(prompt=prompt, kind=spec.get("kind", cls.kind), risk=spec.get("risk", cls.risk),
                 id=str(spec.get("id") or Task(prompt="x").id), system=spec.get("system"), checker=checker,
-                max_tokens=int(spec.get("max_tokens", 16_000)), budget_usd=spec.get("budget"),
+                max_tokens=int(spec.get("max_tokens", DEFAULT_MAX_TOKENS)), budget_usd=spec.get("budget"),
                 max_attempts=spec.get("max_attempts"), verify=spec.get("verify"))
 
 
@@ -196,10 +200,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
     for _, policy in strategies:
         for t in tasks:
             plan = policy.plan(t)
-            est_in = (len(t.prompt) + len(t.system or "")) // 4 + 50
-            estimate += plan.start.expected_cost(est_in, min(1500, t.max_tokens)) * (1.0 if len(plan.ladder) == 1 else 1.6)
-            if plan.verify != "none":
-                estimate += 0.02 if plan.verify == "full" else 0.005
+            first = plan.start.expected_cost(t.estimated_input_tokens, t.planned_output_tokens)
+            estimate += first * (1.0 if len(plan.ladder) == 1 else ESCALATION_COST_FACTOR)
+            estimate += JUDGE_COST_ESTIMATE_USD.get(plan.verify, 0.0)
     print(f"{len(tasks)} tareas x {len(strategies)} estrategias · estimacion {money(estimate)} "
           "(orientativa, puede quedarse corta)")
     if not args.yes:

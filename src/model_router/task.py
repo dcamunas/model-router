@@ -13,11 +13,17 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
+from .catalog import PLAN_OUTPUT_TOKENS_AT_HIGH
+
 KINDS: tuple[str, ...] = (
     "classify", "extract", "summarize", "search", "chat", "write", "code", "review", "analysis", "agentic", "unknown",
 )
 RISKS: tuple[str, ...] = ("low", "medium", "high", "critical")
 VERIFY_MODES: tuple[str, ...] = ("none", "light", "full")
+
+DEFAULT_MAX_TOKENS = 16_000  # equals client.NON_STREAMING_MAX_TOKENS, so the api backend never streams by default
+CHARS_PER_TOKEN = 4  # rough average for Spanish and English prose and code; planning only
+PROMPT_OVERHEAD_TOKENS = 50  # message framing the API adds around prompt and system
 
 
 @dataclass(frozen=True)
@@ -38,7 +44,7 @@ class Task:
     system: str | None = None
     checker: Checker | None = None
     output_schema: type[BaseModel] | None = None  # structured output for the worker
-    max_tokens: int = 16_000
+    max_tokens: int = DEFAULT_MAX_TOKENS
     budget_usd: float | None = None  # overrides the risk default
     max_attempts: int | None = None  # overrides the risk default
     verify: str | None = None  # overrides the risk default: none | light | full
@@ -52,6 +58,16 @@ class Task:
             raise ValueError(f"unknown verify mode {self.verify!r}; known: {', '.join(VERIFY_MODES)}")
         if not self.prompt.strip():
             raise ValueError("empty prompt")
+
+    @property
+    def estimated_input_tokens(self) -> int:
+        """Estimate the prompt size (prompt plus system) for planning, before any call is made."""
+        return (len(self.prompt) + len(self.system or "")) // CHARS_PER_TOKEN + PROMPT_OVERHEAD_TOKENS
+
+    @property
+    def planned_output_tokens(self) -> int:
+        """Return the output size assumed when pricing an attempt: the reference size, capped by `max_tokens`."""
+        return min(PLAN_OUTPUT_TOKENS_AT_HIGH, self.max_tokens)
 
 
 def regex_checker(pattern: str, flags: int = re.IGNORECASE | re.DOTALL) -> Checker:

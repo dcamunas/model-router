@@ -39,6 +39,7 @@ from .paths import CONFIG_DIR_ENV, config_path, read_config
 DEFAULT_SYSTEM = "Haz la tarea del mensaje con cuidado y responde solo con lo pedido."
 NO_MCP = '{"mcpServers":{}}'
 NOT_LOGGED_IN = "not logged in"
+ERROR_DETAIL_CHARS = 300  # how much of the CLI's stderr/stdout an error message carries
 
 
 def resolve_profile() -> tuple[Path, str]:
@@ -113,7 +114,7 @@ class CliClient:
         try:
             data = json.loads(proc.stdout)
         except ValueError as exc:
-            detail = (proc.stderr or proc.stdout).strip()[:300]
+            detail = (proc.stderr or proc.stdout).strip()[:ERROR_DETAIL_CHARS]
             raise ClientUnavailableError(f"claude -p termino con codigo {proc.returncode} sin JSON: {detail}") from exc
         return self.to_completion(data, cell, output_format, seconds)
 
@@ -124,7 +125,7 @@ class CliClient:
             if NOT_LOGGED_IN in text.lower():
                 raise ClientUnavailableError(
                     f"el perfil {self.config_dir} no tiene sesion iniciada: abre claude con ese perfil y haz /login")
-            raise ClientUnavailableError(f"claude -p: {text[:300] or 'error sin detalle'}")
+            raise ClientUnavailableError(f"claude -p: {text[:ERROR_DETAIL_CHARS] or 'error sin detalle'}")
         u = data.get("usage") or {}
         usage = Usage(
             input_tokens=int(u.get("input_tokens") or 0),

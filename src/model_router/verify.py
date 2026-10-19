@@ -36,6 +36,7 @@ JUDGE_SYSTEM = (
 
 MAX_ANSWER_CHARS = 60_000
 JUDGE_MAX_TOKENS = 8000  # thinking counts against max_tokens; a verdict is short but the reasoning is not
+MAX_ISSUES_SHOWN = 3  # issues appended to a failed verdict's reason
 
 
 def judge_prompt(task: Task, answer: str) -> str:
@@ -86,5 +87,6 @@ class Verifier:
             return VerifyResult(False, "judge-error", f"verifier returned no verdict: {why}", cell, completion.usage, cost)
         confidence = max(0.0, min(1.0, verdict.confidence))
         passed = verdict.passed and confidence >= self.min_confidence
-        reason = verdict.reason if passed or not verdict.issues else verdict.reason + " | " + "; ".join(verdict.issues[:3])
+        issues = "; ".join(verdict.issues[:MAX_ISSUES_SHOWN])
+        reason = verdict.reason if passed or not verdict.issues else f"{verdict.reason} | {issues}"
         return VerifyResult(passed, "judge", reason, cell, completion.usage, cost, confidence)

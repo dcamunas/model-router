@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from .catalog import Cell, Usage, cost_usd
+from .catalog import PLAN_OUTPUT_TOKENS_AT_HIGH, Cell, Usage, cost_usd
 from .client import ClaudeClient, ClientUnavailableError
 from .policy import Policy, PolicyProtocol
 from .task import Task
@@ -133,7 +133,7 @@ class Router:
 
     def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
         plan = self.policy.plan(task)
-        est_input = (len(task.prompt) + len(task.system or "")) // 4 + 50
+        est_input = task.estimated_input_tokens
         attempts: list[Attempt] = []
         spent = 0.0
         answer, parsed, final, status = "", None, None, "unsolved"
@@ -145,7 +145,7 @@ class Router:
         while i < len(plan.ladder) and len(attempts) < plan.max_attempts:
             cell = plan.ladder[i]
             n = len(attempts) + 1
-            if attempts and spent + cell.expected_cost(est_input, min(1500, max_tokens)) > plan.budget_usd:
+            if attempts and spent + cell.expected_cost(est_input, min(PLAN_OUTPUT_TOKENS_AT_HIGH, max_tokens)) > plan.budget_usd:
                 status = "budget"
                 break
             try:

@@ -20,7 +20,7 @@ from .catalog import EFFORT_OUTPUT_MULT, Cell, Usage, parse_cell
 from .client import NON_STREAMING_MAX_TOKENS, Completion
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
-from .policy import FULL_VERIFY_GAIN, LadderPolicy, Policy, PolicyProtocol
+from .policy import FULL_VERIFY_GAIN, JUDGE_PROMPT_OVERHEAD_TOKENS, LadderPolicy, Policy, PolicyProtocol
 from .runner import Router
 from .task import CheckResult, Task
 from .verify import Verdict
@@ -135,7 +135,8 @@ class SimClient:
         false_pass, false_fail = self.judge_error[mode]
         r = _draw(self.seed, "judge", task.id, cell.label, worker.label)
         passed = (r >= false_fail) if truth else (r < false_pass)
-        usage = Usage(task.input_tokens + round(task.output_high * 0.5) + 300, 120)
+        # the judge reads the task and the answer (about half the high-effort output) and writes a short verdict
+        usage = Usage(task.input_tokens + round(task.output_high * 0.5) + JUDGE_PROMPT_OVERHEAD_TOKENS, 120)
         return Completion(text="{}", usage=usage, stop_reason="end_turn", model=cell.model,
                           parsed=Verdict(passed=passed, confidence=0.9, reason=f"sim {mode} judge"))
 

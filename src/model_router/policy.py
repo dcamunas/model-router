@@ -38,6 +38,7 @@ BUDGET_ATTEMPTS = 3.0  # the budget is at least this many first attempts, so big
 # Reference request for pricing a verification call: it reads the task and the answer, writes little.
 JUDGE_INPUT_TOKENS = 3000
 JUDGE_OUTPUT_TOKENS_AT_HIGH = 300
+JUDGE_PROMPT_OVERHEAD_TOKENS = 300  # the verdict instructions and tags around the task and the answer
 FULL_VERIFY_GAIN = 0.08  # a full verifier must be this much more capable than the worker
 
 
@@ -110,8 +111,8 @@ class Policy:
         rationale = [f"tabla {kind} x {risk} -> {start}"]
         start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
-        est_input = (len(task.prompt) + len(task.system or "")) // 4 + 50
-        out_tokens = min(1500, task.max_tokens)
+        est_input = task.estimated_input_tokens
+        out_tokens = task.planned_output_tokens
         if self.feedback is not None:
             suggested, why = self.feedback.suggest_start(
                 kind, start, self.cells, break_even=self.break_even(start, verify, est_input, out_tokens)
@@ -141,7 +142,7 @@ class Policy:
         cost = cell.expected_cost(est_input, out_tokens)
         judge = self.verifier_for(cell, verify)
         if judge is not None:
-            cost += judge.expected_cost(est_input + out_tokens + 300, JUDGE_OUTPUT_TOKENS_AT_HIGH)
+            cost += judge.expected_cost(est_input + out_tokens + JUDGE_PROMPT_OVERHEAD_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
         return cost
 
     def break_even(self, start: Cell, verify: str, est_input: int, out_tokens: int) -> float | None:
