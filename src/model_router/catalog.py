@@ -22,7 +22,7 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .paths import read_config
+from .paths import MODELS_ENV, read_config
 
 PRICES_AS_OF = "2026-10-06"
 
@@ -62,7 +62,6 @@ MODELS: dict[str, ModelSpec] = {
     "claude-fable-5-1": ModelSpec("claude-fable-5-1", "fable", 3, 10.00, 50.00, 0.25, 12.50, "high", True),
 }
 SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
-MODELS_ENV = "MODEL_ROUTER_MODELS"
 
 
 class UnknownModelError(ValueError):

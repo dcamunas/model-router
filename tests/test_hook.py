@@ -73,7 +73,7 @@ def test_entry_point_routes_a_real_payload(tmp_path):
 
 
 def test_disabled_by_env(tmp_path):
-    env = {"MODEL_ROUTER_HOME": str(tmp_path), "ROUTER_HOOK": "0", "PATH": "/usr/bin:/bin"}
+    env = {"MODEL_ROUTER_HOME": str(tmp_path), "MODEL_ROUTER_HOOK": "0", "PATH": "/usr/bin:/bin"}
     proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=json.dumps(agent_event()), text=True,
                           capture_output=True, env=env)
     assert proc.returncode == 0 and proc.stdout == ""

@@ -123,7 +123,7 @@ celda, sin herramientas, sin MCP y con un system prompt mínimo, unos 900 tokens
 por `--json-schema`. Consume la cuota de tu suscripción, no dólares: los importes del libro son el
 equivalente a precio de lista, un proxy del consumo de cuota.
 
-El perfil de Claude que usa, por orden: `ROUTER_CLAUDE_CONFIG_DIR`, `claude_config_dir` en
+El perfil de Claude que usa, por orden: `MODEL_ROUTER_CLAUDE_CONFIG_DIR`, `claude_config_dir` en
 `~/.model-router/config.json` (lo escribe `router install`), `CLAUDE_CONFIG_DIR`. Sin ninguno se
 niega a arrancar, para no usar otro perfil por accidente. `router doctor` dice cuál está usando.
 
@@ -153,8 +153,8 @@ leer, o no hay otro modelo disponible, la regla no hace nada.
 Lo que no hace: no toca agentes con `model:` en su frontmatter ni forks, no verifica ni escala por
 sí solo.
 
-Variables de entorno: `ROUTER_HOOK=0` lo apaga sin desinstalar; `ROUTER_HOOK_QUIET=1` quita el aviso
-de una línea en la interfaz; `ROUTER_HOOK_LOG=0` deja de registrar decisiones. Las decisiones quedan
+Variables de entorno: `MODEL_ROUTER_HOOK=0` lo apaga sin desinstalar; `MODEL_ROUTER_HOOK_QUIET=1` quita el aviso
+de una línea en la interfaz; `MODEL_ROUTER_HOOK_LOG=0` deja de registrar decisiones. Las decisiones quedan
 en `~/.model-router/hook.jsonl` y las resume `router stats`.
 
 ## Como librería

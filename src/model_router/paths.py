@@ -1,6 +1,9 @@
-"""Where the router keeps its state: ~/.model-router (MODEL_ROUTER_HOME moves it). `config.json`
-holds what `router install` decides for this machine: the Claude profile the cli backend uses and,
-optionally, the models this installation may route to.
+"""Where the router keeps its state and the environment variables that configure it.
+
+State lives in ~/.model-router (MODEL_ROUTER_HOME moves it). `config.json` holds what `router
+install` decides for this machine: the Claude profile the cli backend uses and, optionally, the
+models this installation may route to. Every variable the router reads is named here, all under
+the MODEL_ROUTER_ prefix.
 """
 
 from __future__ import annotations
@@ -11,6 +14,11 @@ from pathlib import Path
 from typing import Any
 
 HOME_ENV = "MODEL_ROUTER_HOME"
+MODELS_ENV = "MODEL_ROUTER_MODELS"  # models this installation may route to, e.g. "haiku,sonnet,opus"
+CONFIG_DIR_ENV = "MODEL_ROUTER_CLAUDE_CONFIG_DIR"  # Claude profile for the cli backend
+HOOK_ENV = "MODEL_ROUTER_HOOK"  # "0" disables the Claude Code hook without uninstalling it
+HOOK_LOG_ENV = "MODEL_ROUTER_HOOK_LOG"  # "0" stops the hook's decisions log
+HOOK_QUIET_ENV = "MODEL_ROUTER_HOOK_QUIET"  # "1" hides the hook's one-line notice in the UI
 
 
 def home() -> Path:

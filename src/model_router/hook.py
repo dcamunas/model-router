@@ -17,8 +17,8 @@ Rules: explicit beats automatic. A `model` chosen by Claude is kept. Custom agen
 `.claude/agents/*.md` are skipped (their frontmatter is their routing), and so are forks (the Agent
 tool ignores model and effort for them). The hook never blocks: on any error it exits 0 silently.
 
-Environment: ROUTER_HOOK=0 disables it; ROUTER_HOOK_LOG=0 stops the decisions log
-(~/.model-router/hook.jsonl); ROUTER_HOOK_QUIET=1 hides the one-line notice in the UI.
+Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the decisions log
+(~/.model-router/hook.jsonl); MODEL_ROUTER_HOOK_QUIET=1 hides the one-line notice in the UI.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from typing import Any
 from .catalog import MODELS
 from .classify import classify_rules
 from .feedback import FeedbackStore
-from .paths import home
+from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home
 from .policy import VERIFY_BY_RISK, Policy, choose_verifier
 from .task import Task
 
@@ -122,7 +122,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
 
 
 def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
-    if os.environ.get("ROUTER_HOOK_LOG", "1") == "0":
+    if os.environ.get(HOOK_LOG_ENV, "1") == "0":
         return
     path = home() / "hook.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,14 +144,14 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
         return None
     _log(event, record)
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": updated}}
-    if os.environ.get("ROUTER_HOOK_QUIET") != "1":
+    if os.environ.get(HOOK_QUIET_ENV) != "1":
         out["systemMessage"] = f"router: {record['cell']} ({record['kind']}/{record['risk']})" + (
             " · cruce con el chat" if record.get("cross") else "")
     return out
 
 
 def main() -> int:
-    if os.environ.get("ROUTER_HOOK", "1") == "0":
+    if os.environ.get(HOOK_ENV, "1") == "0":
         return 0
     try:
         event = json.load(sys.stdin)

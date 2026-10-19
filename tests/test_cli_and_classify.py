@@ -83,7 +83,7 @@ def test_doctor_reports_missing_hooks(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
     profile = tmp_path / "profile"
     profile.mkdir()
-    monkeypatch.setenv("ROUTER_CLAUDE_CONFIG_DIR", str(profile))
+    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(profile))
     assert main(["doctor"]) == 1
     out = capsys.readouterr().out
     assert "ok     claude en PATH" in out and "9.9.9" in out
@@ -104,7 +104,7 @@ def test_doctor_shows_the_effort_of_the_chat_model_whatever_its_version(tmp_path
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
     profile = tmp_path / "profile"
     profile.mkdir()
-    monkeypatch.setenv("ROUTER_CLAUDE_CONFIG_DIR", str(profile))
+    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(profile))
     (profile / "settings.json").write_text(json.dumps({
         "model": "fable", "modelSettings": {"claude-fable-5-1": {"effortLevel": "low"}},
     }))

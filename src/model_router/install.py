@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import MODELS, parse_models
-from .paths import read_config, save_config
+from .paths import CONFIG_DIR_ENV, read_config, save_config
 
 SKILL_SRC = Path(__file__).resolve().parent / "claude_code" / "router"
 HOOK_NAME = "router-hook"
@@ -206,7 +206,7 @@ def install(
     if profile is not None:
         profile = profile.expanduser().resolve()
     elif models is None:
-        print("perfil para `router run` sin fijar (pasa --profile-dir o exporta ROUTER_CLAUDE_CONFIG_DIR)")
+        print(f"perfil para `router run` sin fijar (pasa --profile-dir o exporta {CONFIG_DIR_ENV})")
     remember(profile, names, reset_models=models is not None and names is None)
     print("activo en las sesiones nuevas; en una sesión abierta, /hooks recarga la configuración")
     return 0

@@ -76,15 +76,15 @@ def test_profile_must_be_explicit(monkeypatch, tmp_path):
     from model_router.paths import write_config
 
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("ROUTER_CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    with pytest.raises(ClientUnavailableError, match="ROUTER_CLAUDE_CONFIG_DIR"):
+    with pytest.raises(ClientUnavailableError, match="MODEL_ROUTER_CLAUDE_CONFIG_DIR"):
         resolve_config_dir()
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "ambient"))
     assert resolve_profile() == (tmp_path / "ambient", "CLAUDE_CONFIG_DIR")
     write_config(claude_config_dir=str(tmp_path / "installed"))
     assert resolve_profile()[0] == tmp_path / "installed"  # config.json beats the ambient variable
-    monkeypatch.setenv("ROUTER_CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(tmp_path))
     assert resolve_config_dir() == tmp_path
     with pytest.raises(ClientUnavailableError, match="no encuentro"):
         CliClient(binary="claude-no-existe")

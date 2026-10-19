@@ -19,7 +19,7 @@ from .catalog import MODELS, MODELS_ENV, PRICES_AS_OF, SHORT_TO_ID, UnknownModel
 from .classify import Classification, classify_llm, classify_rules
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
-from .paths import home
+from .paths import CONFIG_DIR_ENV, home
 from .policy import LadderPolicy, Policy, PolicyProtocol
 from .runner import Router, TaskResult
 from .task import KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
@@ -105,7 +105,7 @@ def _attempts_table(result: TaskResult) -> str:
 def _add_backend_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--backend", choices=("auto", "api", "cli"), default="auto",
                    help="api = SDK con ANTHROPIC_API_KEY; cli = `claude -p` con tu cuenta; auto = api si hay clave, si no cli")
-    p.add_argument("--claude-config-dir", help="perfil de Claude para el backend cli (si falta: ROUTER_CLAUDE_CONFIG_DIR)")
+    p.add_argument("--claude-config-dir", help=f"perfil de Claude para el backend cli (si falta: {CONFIG_DIR_ENV})")
     p.add_argument("--no-fallbacks", action="store_true", help="backend api: sin fallbacks de refusal en el servidor")
 
 

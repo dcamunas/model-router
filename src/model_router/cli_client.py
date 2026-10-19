@@ -13,8 +13,9 @@ What differs from the API backend (`client.LiveClient`):
 * Dollar amounts in the ledger are list-price equivalents: a subscription is billed by quota, not
   per token, so read them as a proxy for quota consumption.
 
-Profile: the subprocess runs on the Claude profile named by ROUTER_CLAUDE_CONFIG_DIR, else
-CLAUDE_CONFIG_DIR, else it refuses to start, so the router never uses another profile by accident.
+Profile: the subprocess runs on the Claude profile named by MODEL_ROUTER_CLAUDE_CONFIG_DIR, else the
+one recorded by `router install`, else CLAUDE_CONFIG_DIR, else it refuses to start, so the router
+never uses another profile by accident.
 CLAUDECODE is dropped from the environment so the CLI does not think it is nested in a session.
 """
 
@@ -33,9 +34,8 @@ from pydantic import BaseModel, ValidationError
 
 from .catalog import Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
-from .paths import config_path, read_config
+from .paths import CONFIG_DIR_ENV, config_path, read_config
 
-CONFIG_DIR_ENV = "ROUTER_CLAUDE_CONFIG_DIR"
 DEFAULT_SYSTEM = "Haz la tarea del mensaje con cuidado y responde solo con lo pedido."
 NO_MCP = '{"mcpServers":{}}'
 NOT_LOGGED_IN = "not logged in"
@@ -43,7 +43,7 @@ NOT_LOGGED_IN = "not logged in"
 
 def resolve_profile() -> tuple[Path, str]:
     """Return the Claude profile directory for the cli backend and where it came from: the
-    ROUTER_CLAUDE_CONFIG_DIR variable, then `config.json` (written by `router install`), then the
+    MODEL_ROUTER_CLAUDE_CONFIG_DIR variable, then `config.json` (written by `router install`), then the
     ambient CLAUDE_CONFIG_DIR. Nothing else: the router must never land on another profile by accident.
     """
     value = os.environ.get(CONFIG_DIR_ENV)
