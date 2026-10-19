@@ -1,6 +1,6 @@
 [project]
 name = "model-router"
-version = "0.1.0"
+version = "0.1.1"
 description = "Router de modelos Claude: modelo + effort por tarea, verificación por riesgo, escalado y coste por tarea resuelta"
 readme = "README.md"
 license = "MIT"
@@ -29,6 +29,7 @@ dependencies = [
 [project.urls]
 Repository = "https://github.com/dcamunas/model-router"
 Issues = "https://github.com/dcamunas/model-router/issues"
+Changelog = "https://github.com/dcamunas/model-router/blob/main/CHANGELOG.md"
 
 [project.scripts]
 router = "model_router.cli:main"

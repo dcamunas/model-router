@@ -28,7 +28,7 @@ Requisitos: Python 3.12 o superior, [uv](https://docs.astral.sh/uv/), y Claude C
 hook o el backend sin API key.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.1.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.1.1
 router install        # hooks + skill en el perfil activo de Claude Code ($CLAUDE_CONFIG_DIR o ~/.claude)
 router doctor         # claude, perfil, hooks, skill, modelos disponibles y estado
 ```
@@ -51,7 +51,8 @@ router install --settings .claude/settings.json --no-skill
 router uninstall
 ```
 
-Actualizar: `uv tool upgrade model-router` (o instala otro tag) y `router install` otra vez.
+Actualizar: `uv tool upgrade model-router` (o instala otro tag) y `router install` otra vez. Lo que
+cambia en cada versión está en `CHANGELOG.md`.
 
 Para desarrollar sobre el repo:
 
@@ -138,7 +139,7 @@ Dos piezas, una sola fuente de verdad (el paquete `model_router`):
 - **Hook** `router-hook`: `PreToolUse` sobre la herramienta Agent fija `model` y `effort` de cada
   subagente general-purpose que Claude lance sin elegir modelo, según el tipo y el riesgo que infiere
   del prompt. `SessionStart` le cuenta a Claude que el hook existe para que no luche contra él. No
-  llama a la API, tarda unos 50 ms y nunca bloquea: ante cualquier error sale en silencio.
+  llama a la API, tarda unas décimas de segundo y nunca bloquea: ante cualquier error sale en silencio.
 - **Skill** `router`: lo que un hook no puede hacer. Verificar con un segundo subagente, escalar, y
   mandar las subtareas de solo texto (clasificar, extraer, resumir, redactar) por `router run` en vez
   de por un subagente, que arrastra el contexto completo de la sesión.
@@ -150,8 +151,8 @@ sesión y salta a la celda de verificador en otro modelo (chat en Opus → revis
 fable/low). Es la única verificación que recibe el propio orquestador. Si el transcript no se puede
 leer, o no hay otro modelo disponible, la regla no hace nada.
 
-Lo que no hace: no toca agentes con `model:` en su frontmatter ni forks, no verifica ni escala por
-sí solo.
+Lo que no hace: no toca los agentes definidos en `.claude/agents/*.md` (su frontmatter manda) ni
+los forks, y no verifica ni escala por sí solo.
 
 Variables de entorno: `MODEL_ROUTER_HOOK=0` lo apaga sin desinstalar; `MODEL_ROUTER_HOOK_QUIET=1` quita el aviso
 de una línea en la interfaz; `MODEL_ROUTER_HOOK_LOG=0` deja de registrar decisiones. Las decisiones quedan
@@ -192,7 +193,7 @@ print(result.answer)
    `policy.py` cuando tu bench lo justifique). Si la tarea trae checker, el checker va primero y
    manda si falla.
 5. **Parada.** Veredicto OK, escalera agotada, presupuesto por riesgo (0,10 / 0,50 / 2 / 10 USD),
-   dos refusals seguidos, o la API caída. Una respuesta cortada por `max_tokens` se repite una vez
+   dos refusals en la misma tarea, o la API caída. Una respuesta cortada por `max_tokens` se repite una vez
    en la misma celda con el doble de margen.
 6. **Registro.** `~/.model-router/ledger.jsonl` (cambia con `MODEL_ROUTER_HOME`): cada intento con
    sus tokens reales, coste, modelo que sirvió (si saltó un fallback), veredicto y motivo.
@@ -234,10 +235,12 @@ referencia, pasadas por `router bench tareas.yaml` con varias estrategias. Hasta
 
 ```bash
 uv run pytest -q
-uv run ruff check src tests
+uv run ruff check src tests   # estilo, tipos en las firmas, docstrings en la API pública, complejidad
+uv run pyright                # tipos
 ```
 
 La CI de GitHub Actions hace lo mismo en cada push y comprueba que la skill viaja dentro del wheel.
+Código, comentarios y docstrings en inglés; todo lo que ve el usuario, en español.
 
 ## Licencia
 
