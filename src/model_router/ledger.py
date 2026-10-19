@@ -1,0 +1,144 @@
+"""Append-only record of every task the router ran, and the summary that turns it into cost per
+solved task. Human overrides of a verdict are appended as their own records, never rewritten."""
+
+from __future__ import annotations
+
+import json
+import threading
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from ._fmt import money, table
+
+if TYPE_CHECKING:
+    from .runner import TaskResult
+
+
+_LOCK = threading.Lock()
+
+
+class Ledger:
+    def __init__(self, path: Path | None) -> None:
+        self.path = path
+        self._memory: list[dict[str, Any]] = []
+
+    def append(self, result: TaskResult) -> None:
+        self._write({"type": "task", **result.to_dict()})
+
+    def override(self, task_id: str, passed: bool, note: str = "") -> None:
+        self._write({"type": "override", "task_id": task_id, "passed": passed, "note": note,
+                     "at": datetime.now(UTC).isoformat(timespec="seconds")})
+
+    def _write(self, record: dict[str, Any]) -> None:
+        self._memory.append(record)
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with _LOCK, self.path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def load(self) -> list[dict[str, Any]]:
+        if self.path is None or not self.path.exists():
+            return list(self._memory)
+        out = []
+        with self.path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    out.append(json.loads(line))
+        return out
+
+    def tasks(self) -> list[dict[str, Any]]:
+        """Task records with human overrides applied (the last override wins)."""
+        records = self.load()
+        by_id = {r["task_id"]: r for r in records if r.get("type") == "task"}
+        for r in records:
+            if r.get("type") == "override" and r["task_id"] in by_id:
+                t = by_id[r["task_id"]]
+                t["status"] = "solved" if r["passed"] else "unsolved"
+                t["overridden"] = True
+        return list(by_id.values())
+
+    def find(self, task_id: str) -> dict[str, Any] | None:
+        for r in self.load():
+            if r.get("type") == "task" and r["task_id"] == task_id:
+                return r
+        return None
+
+
+@dataclass
+class Summary:
+    tasks: int = 0
+    solved: int = 0
+    by_status: dict[str, int] = field(default_factory=dict)
+    attempts: int = 0
+    retries: int = 0
+    tokens: int = 0
+    work_cost: float = 0.0
+    verify_cost: float = 0.0
+    by_cell: dict[str, dict[str, float]] = field(default_factory=dict)
+    by_kind: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    @property
+    def total_cost(self) -> float:
+        return self.work_cost + self.verify_cost
+
+    @property
+    def cost_per_solved(self) -> float | None:
+        return self.total_cost / self.solved if self.solved else None
+
+    def text(self) -> str:
+        lines = [
+            f"tareas {self.tasks} · resueltas {self.solved} · "
+            + ", ".join(f"{k} {v}" for k, v in sorted(self.by_status.items())),
+            f"intentos {self.attempts} · reintentos {self.retries} · tokens {self.tokens:,}",
+            f"coste trabajo {money(self.work_cost)} · verificacion {money(self.verify_cost)} · total {money(self.total_cost)}",
+            f"coste por tarea resuelta: {money(self.cost_per_solved) if self.cost_per_solved is not None else 'n/a'}",
+        ]
+        if self.by_cell:
+            rows = []
+            for label, s in sorted(self.by_cell.items(), key=lambda kv: -kv[1]["attempts"]):
+                rate = s["passes"] / s["judged"] if s["judged"] else None
+                rows.append([label, int(s["attempts"]), f"{rate:.0%}" if rate is not None else "-", money(s["cost"])])
+            lines.append("")
+            lines.append(table(["celda", "intentos", "acierto", "coste"], rows))
+        if self.by_kind:
+            rows = [
+                [k, int(s["tasks"]), int(s["solved"]), money(s["cost"]), money(s["cost"] / s["solved"]) if s["solved"] else "-"]
+                for k, s in sorted(self.by_kind.items())
+            ]
+            lines.append("")
+            lines.append(table(["tipo", "tareas", "resueltas", "coste", "coste/resuelta"], rows))
+        return "\n".join(lines)
+
+
+def summarize(task_records: list[dict[str, Any]]) -> Summary:
+    s = Summary()
+    cells: dict[str, dict[str, float]] = defaultdict(lambda: {"attempts": 0, "judged": 0, "passes": 0, "cost": 0.0})
+    kinds: dict[str, dict[str, float]] = defaultdict(lambda: {"tasks": 0, "solved": 0, "cost": 0.0})
+    for t in task_records:
+        s.tasks += 1
+        solved = t["status"] == "solved"
+        s.solved += solved
+        s.by_status[t["status"]] = s.by_status.get(t["status"], 0) + 1
+        s.attempts += len(t["attempts"])
+        s.retries += t.get("retries", 0)
+        s.tokens += sum(t.get("usage", {}).values())
+        s.work_cost += t.get("work_cost_usd", 0.0)
+        s.verify_cost += t.get("verify_cost_usd", 0.0)
+        for a in t["attempts"]:
+            c = cells[a["cell"]]
+            c["attempts"] += 1
+            c["cost"] += a["cost_usd"] + a.get("verify_cost_usd", 0.0)
+            if a.get("verdict") is not None:
+                c["judged"] += 1
+                c["passes"] += bool(a["verdict"])
+        k = kinds[t["kind"]]
+        k["tasks"] += 1
+        k["solved"] += solved
+        k["cost"] += t.get("total_cost_usd", 0.0)
+    s.by_cell = dict(cells)
+    s.by_kind = dict(kinds)
+    return s

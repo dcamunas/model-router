@@ -1,0 +1,40 @@
+[project]
+name = "model-router"
+version = "0.1.0"
+description = "Router de modelos Claude: modelo + effort por tarea, verificacion por riesgo, escalado y coste por tarea resuelta"
+authors = [
+    { name = "David Camuñas" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.0",
+    "pydantic>=2.9",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+router = "model_router.cli:main"
+router-hook = "model_router.hook:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/model_router/classify.py" = ["E501"]

@@ -1,0 +1,47 @@
+# Ejemplo para `router bench tareas.example.yaml --strategies "router,fable/low,opus/high"`.
+# Tareas inventadas, sin datos reales. Cada una con un checker programático cuando se puede.
+tasks:
+  - id: fechas-01
+    kind: code
+    risk: medium
+    prompt: |
+      Escribe una función Python `parse_fecha(texto: str) -> datetime.date` que acepte
+      "DD/MM/YYYY", "D/M/YYYY" y "YYYY-MM-DD", y lance ValueError en cualquier otro caso.
+      Devuelve solo el código, sin explicación.
+    check_regex: "def parse_fecha\\(.*\\).*ValueError"
+
+  - id: extract-01
+    kind: extract
+    risk: high
+    prompt: |
+      Del texto siguiente extrae nombre, nif, fecha (ISO) e importe (número) en un JSON con esas
+      cuatro claves y nada más.
+      "Factura 2026-0417 emitida el 3/4/2026 a Talleres Imaginarios SL, NIF B00000000, por un total
+      de 1.250,40 EUR."
+    check_json: [nombre, nif, fecha, importe]
+
+  - id: clasif-01
+    kind: classify
+    risk: low
+    prompt: |
+      Clasifica cada frase como POSITIVO, NEGATIVO o NEUTRO y responde en una línea por frase,
+      formato "n: ETIQUETA".
+      1. El pedido llegó antes de lo previsto.
+      2. Llevo tres semanas esperando una respuesta.
+      3. El horario es de 9 a 18.
+    check_regex: "1: POSITIVO[\\s\\S]*2: NEGATIVO[\\s\\S]*3: NEUTRO"
+
+  - id: sql-01
+    kind: code
+    risk: high
+    prompt: |
+      Tabla BigQuery `ventas` con columnas fecha DATE, cliente_id STRING, importe NUMERIC.
+      Escribe la consulta que devuelva, por cliente, el importe total de 2025 y el número de
+      meses distintos con ventas, solo para clientes con más de 6 meses activos. Solo SQL.
+    check_regex: "SELECT[\\s\\S]*FROM[\\s\\S]*ventas[\\s\\S]*HAVING"
+
+  - id: resumen-01
+    kind: summarize
+    risk: low
+    prompt: |
+      Resume en tres frases, en español, qué es un data warehouse y para qué sirve.

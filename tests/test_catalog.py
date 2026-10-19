@@ -1,0 +1,57 @@
+from model_router.catalog import MODELS, Cell, Usage, cost_usd, ladder, lattice, parse_cell, step_down, step_up
+
+
+def test_prices_match_catalogue_rates():
+    one_million_in = Usage(input_tokens=1_000_000)
+    assert cost_usd("claude-sonnet-5-5", one_million_in) == 2.00
+    assert cost_usd("claude-opus-5-5", Usage(output_tokens=1_000_000)) == 20.00
+    assert cost_usd("claude-fable-5-1", Usage(input_tokens=100_000, output_tokens=10_000)) == 1.0 + 0.5
+
+
+def test_cache_tokens_are_priced_separately():
+    usage = Usage(input_tokens=1000, cache_read_tokens=100_000, cache_write_tokens=10_000)
+    cost = cost_usd("claude-opus-5-5", usage)
+    assert abs(cost - (1000 * 4 + 100_000 * 0.20 + 10_000 * 5.00) / 1e6) < 1e-12
+
+
+def test_haiku_long_prompts_bill_five_times():
+    short = cost_usd("claude-haiku-5-5", Usage(input_tokens=90_000))
+    long = cost_usd("claude-haiku-5-5", Usage(input_tokens=110_000))
+    assert long / short > 5
+
+
+def test_cell_parsing_and_claude_code_names():
+    assert parse_cell("opus/medium") == Cell("claude-opus-5-5", "medium")
+    assert parse_cell("sonnet").effort == MODELS["claude-sonnet-5-5"].default_effort
+    assert parse_cell("claude-fable-5-1/low").claude_code() == {"model": "fable", "effort": "low"}
+
+
+def test_lattice_is_sorted_by_expected_cost():
+    cells = lattice()
+    costs = [c.expected_cost() for c in cells]
+    assert costs == sorted(costs)
+    assert cells[0].label == "haiku/low" and cells[-1].label == "fable/max"
+
+
+def test_capability_tier_dominates_effort():
+    assert parse_cell("fable/low").capability > parse_cell("opus/max").capability
+    assert parse_cell("opus/low").capability > parse_cell("sonnet/max").capability
+
+
+def test_escalation_prefers_frontier_low_effort_over_lower_tier_max_effort():
+    cells = lattice()
+    assert step_up(parse_cell("sonnet/medium"), cells) == parse_cell("opus/low")
+    assert step_up(parse_cell("opus/low"), cells) == parse_cell("fable/low")
+    assert step_up(parse_cell("fable/low"), cells) == parse_cell("fable/xhigh")
+    assert step_up(parse_cell("fable/xhigh"), cells) is None
+
+
+def test_ladder_stops_when_nothing_is_more_capable():
+    steps = ladder(parse_cell("opus/high"), lattice(), 6)
+    assert [c.label for c in steps] == ["opus/high", "fable/low", "fable/xhigh"]
+
+
+def test_step_down_gives_up_little_capability_for_a_real_saving():
+    cells = lattice()
+    assert step_down(parse_cell("opus/medium"), cells) == parse_cell("opus/low")
+    assert step_down(parse_cell("haiku/low"), cells) is None
