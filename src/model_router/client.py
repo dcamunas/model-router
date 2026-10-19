@@ -19,6 +19,10 @@ NON_STREAMING_MAX_TOKENS = 16_000
 
 @dataclass
 class Completion:
+    """What one call returned: text, billed usage, stop reason, the model that actually served it and, for
+    structured outputs, the parsed object.
+    """
+
     text: str
     usage: Usage
     stop_reason: str
@@ -32,6 +36,8 @@ class Completion:
 
 
 class ClaudeClient(Protocol):
+    """Anything that completes a prompt on a cell: the SDK client, the `claude -p` backend, a fake, the simulator."""
+
     def complete(
         self,
         cell: Cell,
@@ -114,6 +120,9 @@ class LiveClient:
 
 
 def to_completion(msg: Any, seconds: float) -> Completion:
+    """Map an SDK message (plain or beta) to a Completion, reading the refusal category and the fallback
+    iterations when the response carries them.
+    """
     text = "".join(getattr(b, "text", "") for b in msg.content if getattr(b, "type", None) == "text")
     u = msg.usage
     usage = Usage(

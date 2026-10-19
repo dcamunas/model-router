@@ -56,7 +56,10 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "N", "ANN", "ARG", "PTH", "SIM", "RET", "C90", "D"]
 ignore = [
     "ANN401",  # Any: allowed for external JSON and interchangeable clients, with the reason next to it
-    "D1",      # docstring coverage is decided by value, not by rule
+    "D102",    # public methods: a docstring only where it adds to the name (modules, classes and functions always)
+    "D105",    # magic methods
+    "D106",    # nested classes
+    "D107",    # __init__: the class docstring covers it
     "D205",    # compact style: the first sentence may run into the second line
 ]
 extend-select = ["D401"]  # imperative mood on the first line, even though the google convention drops it

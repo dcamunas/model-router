@@ -38,6 +38,10 @@ PLAN_OUTPUT_TOKENS_AT_HIGH = 1500
 
 @dataclass(frozen=True)
 class ModelSpec:
+    """One model of the catalogue: ids, list prices in USD per million tokens and the API traits the router
+    relies on (default effort, server-side fallbacks, output cap, long-prompt pricing).
+    """
+
     id: str
     short: str  # the name Claude Code uses in agent frontmatter and in the Agent tool
     tier: int  # capability order between models: 0 Haiku .. 3 Fable
@@ -75,6 +79,8 @@ class UnknownModelError(ValueError):
 
 @dataclass(frozen=True)
 class Usage:
+    """Token counts of one API call as billed: input, output and prompt-cache reads and writes."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -102,6 +108,9 @@ class Usage:
 
 
 def cost_usd(model_id: str, usage: Usage) -> float:
+    """Return the list-price cost in USD of `usage` on `model_id`, with the long-prompt multiplier applied
+    when the prompt (input plus cache tokens) exceeds the model's threshold.
+    """
     spec = MODELS[model_id]
     prompt_tokens = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
     mult = spec.long_prompt_mult if spec.long_prompt_from and prompt_tokens > spec.long_prompt_from else 1.0
@@ -195,6 +204,9 @@ class Cell:
     def expected_cost(
         self, input_tokens: int = PLAN_INPUT_TOKENS, output_tokens_at_high: int = PLAN_OUTPUT_TOKENS_AT_HIGH
     ) -> float:
+        """Return the list-price cost of a request of `input_tokens` on this cell, with the output sized as
+        `output_tokens_at_high` scaled by the effort's multiplier.
+        """
         out = round(output_tokens_at_high * EFFORT_OUTPUT_MULT[self.effort])
         return cost_usd(self.model, Usage(input_tokens=input_tokens, output_tokens=out))
 
@@ -203,21 +215,23 @@ class Cell:
 
 
 def parse_cell(text: str) -> Cell:
-    """'opus/medium', 'claude-opus-5-5/high' or just 'sonnet' (the model's default effort)."""
+    """Parse 'opus/medium', 'claude-opus-5-5/high' or just 'sonnet' (the model's default effort) into a Cell."""
     name, _, effort = text.strip().partition("/")
     model = resolve_model(name)
     return Cell(model, effort or MODELS[model].default_effort)
 
 
 def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None = None) -> list[Cell]:
-    """Every cell of the available models (or of `models`), cheapest first on the reference request."""
+    """Return every (model, effort) cell of the available models (or of `models`), cheapest first on the
+    reference request.
+    """
     cells = [Cell(m, e) for m in (models or available_models()) for e in (efforts or EFFORTS)]
     return sorted(cells, key=lambda c: (c.expected_cost(), c.capability))
 
 
 def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
-    """`cell` itself when its model is available; otherwise the same effort on the most capable
-    available model below it (or the least capable one above it when nothing is below). The ladder
+    """Return `cell` itself when its model is available; otherwise the same effort on the most capable
+    available model below it, or the least capable one above it when nothing is below. The ladder
     then escalates from there as usual.
     """
     avail = [resolve_model(m) for m in (models or available_models())]
@@ -228,7 +242,7 @@ def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
     return Cell((below[-1] if below else specs[0]).id, cell.effort)
 
 
-def step_up(current: Cell, cells: Iterable[Cell], min_gain: float = 0.08, tie: float = 0.10) -> Cell | None:
+def step_up(current: Cell, cells: Iterable[Cell], *, min_gain: float = 0.08, tie: float = 0.10) -> Cell | None:
     """Return the cheapest cell at least `min_gain` more capable than `current`. Cells whose expected cost
     is within `tie` of that cheapest one compete on capability, so a frontier model at low effort
     wins over a lower tier at max effort when they cost about the same.
@@ -241,7 +255,7 @@ def step_up(current: Cell, cells: Iterable[Cell], min_gain: float = 0.08, tie: f
     return max(close, key=lambda c: (c.capability, -c.expected_cost()))
 
 
-def step_down(current: Cell, cells: Iterable[Cell], max_loss: float = 0.08, min_saving: float = 0.20) -> Cell | None:
+def step_down(current: Cell, cells: Iterable[Cell], *, max_loss: float = 0.08, min_saving: float = 0.20) -> Cell | None:
     """Return the most capable cell that gives up at most `max_loss` capability and saves at least
     `min_saving` of the expected cost. Used only for exploration by the feedback store.
     """
@@ -256,8 +270,8 @@ def step_down(current: Cell, cells: Iterable[Cell], max_loss: float = 0.08, min_
     return max(cands, key=lambda c: (c.capability, -c.expected_cost()))
 
 
-def ladder(start: Cell, cells: Iterable[Cell], steps: int, min_gain: float = 0.08) -> list[Cell]:
-    """`start` followed by up to `steps - 1` escalations."""
+def ladder(start: Cell, cells: Iterable[Cell], steps: int, *, min_gain: float = 0.08) -> list[Cell]:
+    """Return `start` followed by up to `steps - 1` escalations, each the cell `step_up` picks from `cells`."""
     cells = list(cells)
     out = [start]
     while len(out) < steps:

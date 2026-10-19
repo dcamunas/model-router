@@ -25,6 +25,10 @@ STATUSES: tuple[str, ...] = ("solved", "unsolved", "refused", "budget", "error")
 
 @dataclass
 class Attempt:
+    """One call to a worker cell and what came of it: usage and cost, whether it was refused or cut short,
+    the verdict with its source (checker, judge, none) and, for judged attempts, the verifier's cell and cost.
+    """
+
     n: int
     cell: Cell
     usage: Usage
@@ -58,6 +62,10 @@ class Attempt:
 
 @dataclass
 class TaskResult:
+    """Everything the router did for one task: the plan it followed, every attempt, the answer it settled on,
+    the status (solved, unsolved, refused, budget, error) and the totals the ledger records.
+    """
+
     task_id: str
     kind: str
     risk: str
@@ -113,9 +121,14 @@ class TaskResult:
 
 
 class Router:
+    """The loop: plan, attempt, verify, escalate, stop on budget. Every result goes to the ledger and, when a
+    feedback store is given, every verdict goes to it.
+    """
+
     def __init__(
         self,
         client: ClaudeClient,
+        *,
         policy: PolicyProtocol | None = None,
         ledger: Ledger | None = None,
         feedback: FeedbackStore | None = None,
@@ -132,6 +145,9 @@ class Router:
         self.ledger = ledger
 
     def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
+        """Run `task` through its plan and return the result. Side effects: the result is appended to the
+        ledger and, with a feedback store, every verdict is recorded and the store saved.
+        """
         plan = self.policy.plan(task)
         est_input = task.estimated_input_tokens
         attempts: list[Attempt] = []

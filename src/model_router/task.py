@@ -28,6 +28,8 @@ PROMPT_OVERHEAD_TOKENS = 50  # message framing the API adds around prompt and sy
 
 @dataclass(frozen=True)
 class CheckResult:
+    """Outcome of a programmatic checker: pass or fail, with the reason shown in the ledger."""
+
     passed: bool
     reason: str = ""
 
@@ -37,6 +39,10 @@ Checker = Callable[[str], CheckResult]
 
 @dataclass
 class Task:
+    """What the router receives. Only `prompt` is required; `kind` and `risk` pick the start cell, the
+    verification and the budget, and the optional fields override those defaults or add a `checker`.
+    """
+
     prompt: str
     kind: str = "unknown"
     risk: str = "medium"
@@ -71,6 +77,7 @@ class Task:
 
 
 def regex_checker(pattern: str, flags: int = re.IGNORECASE | re.DOTALL) -> Checker:
+    """Return a checker that passes when `pattern` is found in the answer."""
     rx = re.compile(pattern, flags)
 
     def check(answer: str) -> CheckResult:
@@ -81,6 +88,7 @@ def regex_checker(pattern: str, flags: int = re.IGNORECASE | re.DOTALL) -> Check
 
 
 def contains_checker(*needles: str, all_of: bool = True) -> Checker:
+    """Return a checker that passes when every needle (or any, with `all_of=False`) is in the answer, ignoring case."""
     def check(answer: str) -> CheckResult:
         hits = [n for n in needles if n.lower() in answer.lower()]
         ok = len(hits) == len(needles) if all_of else bool(hits)
@@ -98,6 +106,9 @@ def _json_payload(answer: str) -> object:
 
 
 def json_checker(required_keys: tuple[str, ...] = ()) -> Checker:
+    """Return a checker that passes when the answer is JSON (a fenced block is unwrapped) and, with
+    `required_keys`, an object that has all of them.
+    """
     def check(answer: str) -> CheckResult:
         try:
             data = _json_payload(answer)
@@ -115,6 +126,7 @@ def json_checker(required_keys: tuple[str, ...] = ()) -> Checker:
 
 
 def pydantic_checker(model: type[BaseModel]) -> Checker:
+    """Return a checker that passes when the answer is JSON that validates against `model`."""
     def check(answer: str) -> CheckResult:
         try:
             model.model_validate(_json_payload(answer))

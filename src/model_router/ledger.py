@@ -22,15 +22,21 @@ _LOCK = threading.Lock()
 
 
 class Ledger:
+    """Append-only JSON-lines file of task results and human overrides; with `path=None` it lives in memory
+    (benchmarks, tests).
+    """
+
     def __init__(self, path: Path | None) -> None:
         self.path = path
         self._memory: list[dict[str, Any]] = []
         self.corrupt = 0  # lines of the file that were not JSON on the last load
 
     def append(self, result: TaskResult) -> None:
+        """Append `result` as a task record."""
         self._write({"type": "task", **result.to_dict()})
 
-    def override(self, task_id: str, passed: bool, note: str = "") -> None:
+    def override(self, task_id: str, passed: bool, *, note: str = "") -> None:
+        """Append a human correction of `task_id`'s verdict; `tasks()` applies it and the original record stays."""
         self._write({"type": "override", "task_id": task_id, "passed": passed, "note": note,
                      "at": datetime.now(UTC).isoformat(timespec="seconds")})
 
@@ -61,7 +67,7 @@ class Ledger:
         return out
 
     def tasks(self) -> list[dict[str, Any]]:
-        """Task records with human overrides applied (the last override wins)."""
+        """Return the task records with human overrides applied; the last override wins."""
         records = self.load()
         by_id = {r["task_id"]: r for r in records if r.get("type") == "task"}
         for r in records:
@@ -72,6 +78,7 @@ class Ledger:
         return list(by_id.values())
 
     def find(self, task_id: str) -> dict[str, Any] | None:
+        """Return the task record with `task_id`, or None."""
         for r in self.load():
             if r.get("type") == "task" and r["task_id"] == task_id:
                 return r
@@ -80,6 +87,10 @@ class Ledger:
 
 @dataclass
 class Summary:
+    """Totals of a set of task records: counts by status, cost split into work and verification, and the
+    breakdown by cell and by kind.
+    """
+
     tasks: int = 0
     solved: int = 0
     by_status: dict[str, int] = field(default_factory=dict)
@@ -100,6 +111,7 @@ class Summary:
         return self.total_cost / self.solved if self.solved else None
 
     def text(self) -> str:
+        """Render the summary as the text `router stats` prints."""
         lines = [
             f"tareas {self.tasks} · resueltas {self.solved} · "
             + ", ".join(f"{k} {v}" for k, v in sorted(self.by_status.items())),
@@ -125,6 +137,7 @@ class Summary:
 
 
 def summarize(task_records: list[dict[str, Any]]) -> Summary:
+    """Aggregate `task_records` (as `Ledger.tasks` returns them) into a Summary."""
     s = Summary()
     cells: dict[str, dict[str, float]] = defaultdict(lambda: {"attempts": 0, "judged": 0, "passes": 0, "cost": 0.0})
     kinds: dict[str, dict[str, float]] = defaultdict(lambda: {"tasks": 0, "solved": 0, "cost": 0.0})

@@ -31,6 +31,10 @@ CRITICAL_RISK = r"\b(cr[ií]tic\w*|critical|urgente|urgent|sin vuelta atr[aá]s|
 
 @dataclass(frozen=True)
 class Classification:
+    """Kind and risk guessed for a prompt, the rule or model that decided (in Spanish, for the user) and
+    what the guess cost.
+    """
+
     kind: str
     risk: str
     reason: str
@@ -38,6 +42,9 @@ class Classification:
 
 
 def classify_rules(prompt: str) -> Classification:
+    """Classify `prompt` with the regex rules: the first kind rule that matches wins; risk comes from the
+    critical and high-risk keywords, else low for cheap kinds with short prompts, else medium.
+    """
     text = prompt.lower()
     kind, why = "unknown", "no rule matched"
     for candidate, pattern in KIND_RULES:
@@ -59,6 +66,8 @@ def classify_rules(prompt: str) -> Classification:
 
 
 class LlmClassification(BaseModel):
+    """Structured answer of the Haiku classifier."""
+
     kind: str
     risk: str
     reason: str
@@ -83,6 +92,7 @@ CLASSIFIER_CELL = Cell("claude-haiku-5-5", "low")
 
 
 def classify_llm(client: ClaudeClient, prompt: str) -> Classification:
+    """Classify `prompt` with one Haiku call; the rules take over when the answer is unusable."""
     completion = client.complete(CLASSIFIER_CELL, prompt=f"<task>\n{prompt}\n</task>", system=CLASSIFIER_SYSTEM,
                                  max_tokens=400, output_format=LlmClassification)
     cost = cost_usd(CLASSIFIER_CELL.model, completion.usage)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .catalog import Cell, Usage, cost_usd
 from .client import ClaudeClient
@@ -17,10 +17,12 @@ from .task import Task
 
 
 class Verdict(BaseModel):
+    """The judge's structured answer."""
+
     passed: bool
     confidence: float
     reason: str
-    issues: list[str] = []
+    issues: list[str] = Field(default_factory=list)
 
 
 JUDGE_SYSTEM = (
@@ -40,6 +42,9 @@ MAX_ISSUES_SHOWN = 3  # issues appended to a failed verdict's reason
 
 
 def judge_prompt(task: Task, answer: str) -> str:
+    """Build the judge's prompt: the task, the instructions the answer had to follow and the answer,
+    truncated at MAX_ANSWER_CHARS.
+    """
     shown = answer if len(answer) <= MAX_ANSWER_CHARS else answer[:MAX_ANSWER_CHARS] + "\n[... truncated for review ...]"
     parts = [f"<task>\n{task.prompt}\n</task>"]
     if task.system:
@@ -50,6 +55,8 @@ def judge_prompt(task: Task, answer: str) -> str:
 
 @dataclass
 class VerifyResult:
+    """What verification decided and what it cost; `source` says who decided (checker, judge, none, judge-error)."""
+
     passed: bool
     source: str  # checker | judge | none | judge-error
     reason: str = ""
@@ -60,12 +67,19 @@ class VerifyResult:
 
 
 class Verifier:
-    def __init__(self, client: ClaudeClient, policy: PolicyProtocol, min_confidence: float = 0.5) -> None:
+    """Verifies answers by mode: the task's checker first, then a judge cell chosen by the policy; a judge
+    verdict under `min_confidence` fails.
+    """
+
+    def __init__(self, client: ClaudeClient, policy: PolicyProtocol, *, min_confidence: float = 0.5) -> None:
         self.client = client
         self.policy = policy
         self.min_confidence = min_confidence
 
     def verify(self, task: Task, answer: str, mode: str, worker: Cell) -> VerifyResult:
+        """Verify `answer` to `task` in `mode` (none, light, full); `worker` is the cell that answered, so
+        the judge is chosen relative to it.
+        """
         if task.checker is not None:
             check = task.checker(answer)
             if not check.passed:

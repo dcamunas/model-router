@@ -55,8 +55,8 @@ SESSION_CONTEXT = (
 
 
 def main_model(transcript_path: str | None) -> str | None:
-    """Short name of the model serving the main chat, from the last non-sidechain assistant entry of
-    the session transcript; None when there is no transcript or it cannot be read.
+    """Return the short name of the model serving the main chat, read from the last non-sidechain
+    assistant entry of the session transcript; None when there is no transcript or it cannot be read.
     """
     if not transcript_path:
         return None
@@ -151,6 +151,7 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def main() -> int:
+    """Run the hook on the event JSON in stdin and print the answer; exit 0 whatever happens."""
     if os.environ.get(HOOK_ENV, "1") == "0":
         return 0
     try:

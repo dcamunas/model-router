@@ -52,6 +52,8 @@ JUDGE_ERROR: dict[str, tuple[float, float]] = {"light": (0.10, 0.05), "full": (0
 
 @dataclass(frozen=True)
 class SimTask:
+    """A synthetic task: kind and risk, a hidden difficulty in 0-1 and the token sizes the simulated worker bills."""
+
     id: str
     kind: str
     risk: str
@@ -66,6 +68,7 @@ def _weighted(rng: random.Random, mix: dict[str, float]) -> str:
 
 
 def make_tasks(n: int, seed: int) -> list[SimTask]:
+    """Return `n` synthetic tasks drawn with `seed` from the kind and risk mixes, with a hard tail."""
     rng = random.Random(seed)
     out = []
     for i in range(n):
@@ -83,6 +86,7 @@ def make_tasks(n: int, seed: int) -> list[SimTask]:
 
 
 def pass_probability(cell: Cell, difficulty: float) -> float:
+    """Return the probability that `cell` solves a task of `difficulty`: a logistic curve on capability minus difficulty."""
     return 1.0 / (1.0 + math.exp(-STEEPNESS * (cell.capability - difficulty)))
 
 
@@ -91,22 +95,24 @@ def _draw(seed: int, *parts: object) -> float:
     return int.from_bytes(digest[:8], "big") / 2**64
 
 
-MARK = re.compile(r"SIM\|(\S+?)\|(\S+?)\|(ok|ko)")
+ANSWER_MARK = re.compile(r"SIM\|(\S+?)\|(\S+?)\|(ok|ko)")
 
 
 def truth_of(answer: str) -> bool | None:
-    m = MARK.search(answer)
+    """Return the ground truth hidden in a simulated answer, or None when the answer carries no mark."""
+    m = ANSWER_MARK.search(answer)
     return None if m is None else m.group(3) == "ok"
 
 
 def sim_checker(answer: str) -> CheckResult:
+    """Check a simulated answer against its own ground truth: a perfect programmatic checker."""
     return CheckResult(bool(truth_of(answer)), "sim checker")
 
 
 class SimClient:
     """Implements ClaudeClient. Worker prompts are task ids; judge prompts contain the answer mark."""
 
-    def __init__(self, tasks: list[SimTask], seed: int, judge_error: dict[str, tuple[float, float]] | None = None) -> None:
+    def __init__(self, tasks: list[SimTask], seed: int, *, judge_error: dict[str, tuple[float, float]] | None = None) -> None:
         self.tasks = {t.id: t for t in tasks}
         self.seed = seed
         self.judge_error = judge_error or JUDGE_ERROR
@@ -127,7 +133,7 @@ class SimClient:
                           usage=Usage(task.input_tokens, out), stop_reason="end_turn", model=cell.model)
 
     def _judge(self, cell: Cell, prompt: str) -> Completion:
-        m = MARK.search(prompt)
+        m = ANSWER_MARK.search(prompt)
         if m is None:
             raise ValueError("judge prompt without a simulated answer")
         task, worker, truth = self.tasks[m.group(1)], parse_cell(m.group(2)), m.group(3) == "ok"
@@ -142,6 +148,9 @@ class SimClient:
 
 
 def default_strategies() -> dict[str, PolicyProtocol]:
+    """Return the strategies the simulation compares: single cells, a two-step rerun and the router with
+    and without feedback.
+    """
     return {
         "J fable/xhigh": LadderPolicy([parse_cell("fable/xhigh")]),
         "M opus/high": LadderPolicy([parse_cell("opus/high")]),
@@ -155,6 +164,10 @@ def default_strategies() -> dict[str, PolicyProtocol]:
 
 @dataclass
 class StrategyReport:
+    """Totals of one strategy over the simulated tasks: what it accepted against what was really solved,
+    retries, cost and the share spent on the hard tail.
+    """
+
     name: str
     tasks: int = 0
     accepted: int = 0  # what the strategy believed it solved
@@ -177,10 +190,18 @@ class StrategyReport:
         return self.total_cost / self.solved if self.solved else None
 
 
-def run_simulation(n_tasks: int = 60, seed: int = 1, strategies: dict[str, PolicyProtocol] | None = None,
-                   judge_error: dict[str, tuple[float, float]] | None = None) -> tuple[list[SimTask], list[StrategyReport]]:
+def run_simulation(
+    n_tasks: int = 60,
+    seed: int = 1,
+    *,
+    strategies: dict[str, PolicyProtocol] | None = None,
+    judge_error: dict[str, tuple[float, float]] | None = None,
+) -> tuple[list[SimTask], list[StrategyReport]]:
+    """Run every strategy over the same `n_tasks` synthetic tasks and return the tasks and one report per
+    strategy, in the order of `strategies` (the defaults when None).
+    """
     tasks = make_tasks(n_tasks, seed)
-    client = SimClient(tasks, seed, judge_error)
+    client = SimClient(tasks, seed, judge_error=judge_error)
     tail = {t.id for t in sorted(tasks, key=lambda t: -t.difficulty)[: max(1, n_tasks // 10)]}
     reports = []
     for name, policy in (strategies or default_strategies()).items():
@@ -204,7 +225,10 @@ def run_simulation(n_tasks: int = 60, seed: int = 1, strategies: dict[str, Polic
     return tasks, reports
 
 
-def format_report(tasks: list[SimTask], reports: list[StrategyReport], seed: int, detail: bool = False) -> str:
+def format_report(tasks: list[SimTask], reports: list[StrategyReport], seed: int, *, detail: bool = False) -> str:
+    """Render the simulation as the text `router bench --simulate` prints; `detail` adds each strategy's
+    ledger summary.
+    """
     base = reports[0]
     rows = []
     for r in reports:

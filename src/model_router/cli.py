@@ -1,4 +1,7 @@
-"""`router` on the command line: plan (no API), run (live), bench (simulated or live), stats, feedback."""
+"""`router` on the command line: plan (no API), run (live), bench (simulated or a file of real tasks),
+stats, feedback, doctor, cells, install and uninstall. Everything a user sees here is Spanish; the
+README documents each command.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ from typing import Any
 from ._fmt import money, table
 from .catalog import MODELS, MODELS_ENV, PRICES_AS_OF, SHORT_TO_ID, UnknownModelError, available_models, lattice, parse_cell
 from .classify import Classification, classify_llm, classify_rules
+from .client import ClaudeClient, ClientUnavailableError
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
 from .paths import CONFIG_DIR_ENV, home
@@ -55,7 +59,9 @@ def _prompt_from(args: argparse.Namespace) -> str:
     raise SystemExit("falta la tarea: pasala como argumento, con --file o por stdin")
 
 
-def _task_from(args: argparse.Namespace, prompt: str, client: Any = None) -> tuple[Task, Classification | None]:
+def _task_from(
+    args: argparse.Namespace, prompt: str, client: ClaudeClient | None = None
+) -> tuple[Task, Classification | None]:
     kind, risk, cls = args.kind, args.risk, None
     if kind is None or risk is None:
         cls = classify_llm(client, prompt) if (args.classify_llm and client is not None) else classify_rules(prompt)
@@ -72,7 +78,7 @@ def _task_from(args: argparse.Namespace, prompt: str, client: Any = None) -> tup
     return task, cls
 
 
-def cmd_plan(args: argparse.Namespace) -> int:
+def _cmd_plan(args: argparse.Namespace) -> int:
     prompt = _prompt_from(args)
     task, cls = _task_from(args, prompt)
     policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
@@ -113,7 +119,7 @@ def _add_backend_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-fallbacks", action="store_true", help="backend api: sin fallbacks de refusal en el servidor")
 
 
-def _live_client(args: argparse.Namespace) -> Any:
+def _live_client(args: argparse.Namespace) -> ClaudeClient:
     backend = args.backend
     if backend == "auto":
         backend = "api" if os.environ.get("ANTHROPIC_API_KEY") else "cli"
@@ -127,7 +133,7 @@ def _live_client(args: argparse.Namespace) -> Any:
     return CliClient(config_dir=config_dir)
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def _cmd_run(args: argparse.Namespace) -> int:
     prompt = _prompt_from(args)
     client = _live_client(args)
     task, cls = _task_from(args, prompt, client)
@@ -186,7 +192,7 @@ def _parse_strategy(text: str) -> tuple[str, PolicyProtocol]:
     return text, LadderPolicy(cells, verify="light" if len(cells) > 1 else "none")
 
 
-def cmd_bench(args: argparse.Namespace) -> int:
+def _cmd_bench(args: argparse.Namespace) -> int:
     if args.file is None or args.simulate:
         from .simulate import format_report, run_simulation
 
@@ -224,7 +230,7 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_stats(args: argparse.Namespace) -> int:
+def _cmd_stats(args: argparse.Namespace) -> int:
     ledger = Ledger(Path(args.ledger) if args.ledger else home() / "ledger.jsonl")
     records = ledger.tasks()
     if ledger.corrupt:
@@ -261,10 +267,11 @@ def _hook_decisions(path: Path) -> list[list[Any]]:
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checklist of independent checks
-    """Is everything in place? claude binary, profile, hooks, skill, state; --live makes one Haiku call."""
+def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checklist of independent checks
+    """Check that everything is in place: claude binary, profile, hooks, skill, models and state; `--live`
+    adds one real Haiku call. Print one line per check and return 1 when any failed.
+    """
     from .cli_client import CliClient, resolve_profile
-    from .client import ClientUnavailableError
 
     checks: list[tuple[bool, str]] = []
     claude = shutil.which("claude")
@@ -340,13 +347,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checklis
     return 0 if all(ok_ for ok_, _ in checks) else 1
 
 
-def cmd_feedback(args: argparse.Namespace) -> int:
+def _cmd_feedback(args: argparse.Namespace) -> int:
     ledger = Ledger(home() / "ledger.jsonl")
     record = ledger.find(args.task_id)
     if record is None:
         raise SystemExit(f"no hay tarea {args.task_id} en {ledger.path}")
     passed = bool(args.ok)
-    ledger.override(args.task_id, passed, args.note or "")
+    ledger.override(args.task_id, passed, note=args.note or "")
     if record.get("final_cell"):
         feedback = FeedbackStore(home() / "feedback.json")
         feedback.apply_override(record["kind"], record["final_cell"], passed, first=len(record["attempts"]) == 1)
@@ -355,7 +362,7 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_cells(_args: argparse.Namespace) -> int:
+def _cmd_cells(_args: argparse.Namespace) -> int:
     rows = [[c.label, c.tier, f"{c.capability:.2f}", money(c.expected_cost()), c.spec.input, c.spec.output] for c in lattice()]
     print(table(["celda", "tier", "capacidad*", "coste ref.", "$/M in", "$/M out"], rows))
     print(f"\n* capacidad supuesta (catalog.py), no medida · coste ref. = 2.000 tokens in, 1.500 out a effort high"
@@ -366,14 +373,14 @@ def cmd_cells(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_install(args: argparse.Namespace) -> int:
+def _cmd_install(args: argparse.Namespace) -> int:
     from .install import install
 
     return install(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill, link=args.link,
                    profile_dir=args.profile_dir, models=args.models)
 
 
-def cmd_uninstall(args: argparse.Namespace) -> int:
+def _cmd_uninstall(args: argparse.Namespace) -> int:
     from .install import uninstall
 
     return uninstall(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill)
@@ -389,6 +396,7 @@ def _add_profile_args(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Return the `router` argument parser; each subcommand sets `func` to its handler."""
     p = argparse.ArgumentParser(
         prog="router",
         description="Router de modelos Claude: elige modelo + effort, verifica por riesgo, escala si falla y lleva la cuenta.",
@@ -398,13 +406,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("plan", help="que haria el router con esta tarea (sin llamar a la API)")
     _add_task_args(sp)
     sp.add_argument("--claude-code", action="store_true", help="imprime solo model/effort para un agente de Claude Code")
-    sp.set_defaults(func=cmd_plan)
+    sp.set_defaults(func=_cmd_plan)
 
     sr = sub.add_parser("run", help="ejecuta la tarea con el router (llamadas reales)")
     _add_task_args(sr)
     _add_backend_args(sr)
     sr.add_argument("--json", action="store_true", help="salida JSON con la respuesta y los intentos")
-    sr.set_defaults(func=cmd_run)
+    sr.set_defaults(func=_cmd_run)
 
     sb = sub.add_parser("bench", help="compara estrategias: simulacion offline o fichero de tareas reales")
     sb.add_argument("file", nargs="?", help="YAML/JSON con tareas (sin fichero: simulacion)")
@@ -417,11 +425,11 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--yes", "-y", action="store_true", help="no pedir confirmacion antes de gastar")
     sb.add_argument("--jobs", "-j", type=int, default=3, help="tareas en paralelo (3 por defecto)")
     _add_backend_args(sb)
-    sb.set_defaults(func=cmd_bench)
+    sb.set_defaults(func=_cmd_bench)
 
     ss = sub.add_parser("stats", help="resumen del registro y del feedback")
     ss.add_argument("--ledger", help="otro fichero de registro")
-    ss.set_defaults(func=cmd_stats)
+    ss.set_defaults(func=_cmd_stats)
 
     sf = sub.add_parser("feedback", help="corrige a mano el veredicto de una tarea")
     sf.add_argument("task_id", help="id de la tarea, el que imprime `router run` y lista `router stats`")
@@ -429,14 +437,14 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--ok", action="store_true", help="la respuesta era buena")
     g.add_argument("--ko", action="store_true", help="la respuesta era mala")
     sf.add_argument("--note", help="por qué, para el registro")
-    sf.set_defaults(func=cmd_feedback)
+    sf.set_defaults(func=_cmd_feedback)
 
     sd = sub.add_parser("doctor", help="comprueba claude, perfil, hooks, skill y estado; --live hace una llamada con Haiku")
     sd.add_argument("--live", action="store_true", help="además, una llamada real con Haiku para probar la cuenta")
-    sd.set_defaults(func=cmd_doctor)
+    sd.set_defaults(func=_cmd_doctor)
 
     sc = sub.add_parser("cells", help="la reticula de celdas con su coste y capacidad supuesta")
-    sc.set_defaults(func=cmd_cells)
+    sc.set_defaults(func=_cmd_cells)
 
     si = sub.add_parser("install", help="activa el router en un perfil de Claude Code (hooks + skill)")
     _add_profile_args(si)
@@ -444,11 +452,11 @@ def build_parser() -> argparse.ArgumentParser:
     si.add_argument("--profile-dir", type=Path,
                     help="perfil de Claude que usará `router run` (por defecto, el del settings si es un perfil)")
     si.add_argument("--models", help="modelos que puede elegir esta instalación, p. ej. haiku,sonnet,opus; all = todos")
-    si.set_defaults(func=cmd_install)
+    si.set_defaults(func=_cmd_install)
 
     su = sub.add_parser("uninstall", help="quita los hooks y la skill del perfil")
     _add_profile_args(su)
-    su.set_defaults(func=cmd_uninstall)
+    su.set_defaults(func=_cmd_uninstall)
     return p
 
 

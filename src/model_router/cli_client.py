@@ -63,6 +63,7 @@ def resolve_profile() -> tuple[Path, str]:
 
 
 def resolve_config_dir() -> Path:
+    """Return the Claude profile directory for the cli backend (see `resolve_profile`)."""
     return resolve_profile()[0]
 
 

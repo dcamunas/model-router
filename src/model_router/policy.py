@@ -44,6 +44,10 @@ FULL_VERIFY_GAIN = 0.08  # a full verifier must be this much more capable than t
 
 @dataclass
 class Plan:
+    """What the router will do with one task: the ladder of cells to try in order, the verification mode,
+    the budget and the attempt cap, plus the reasons in Spanish that `router plan` prints.
+    """
+
     ladder: list[Cell]
     verify: str
     budget_usd: float
@@ -56,6 +60,8 @@ class Plan:
 
 
 class PolicyProtocol(Protocol):
+    """What the Router needs from a policy: a plan for a task and a verifier cell for a worker cell."""
+
     def plan(self, task: Task) -> Plan: ...
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None: ...
@@ -86,6 +92,7 @@ class Policy:
 
     def __init__(
         self,
+        *,
         cells: list[Cell] | None = None,
         start_table: dict[str, dict[str, str]] | None = None,
         feedback: FeedbackStore | None = None,
@@ -105,6 +112,9 @@ class Policy:
         return near
 
     def plan(self, task: Task) -> Plan:
+        """Plan `task`: start cell from the table or the feedback store, risk floor, ladder, verification
+        mode and budget, with the reasons.
+        """
         kind = task.kind if task.kind in self.start_table else "unknown"
         risk = task.risk
         start = parse_cell(self.start_table[kind][risk])
@@ -135,6 +145,7 @@ class Policy:
         return Plan(cells, verify, budget, max_attempts, rationale)
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
+        """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`."""
         return choose_verifier(worker, mode, self.cells)
 
     def attempt_cost(self, cell: Cell, verify: str, est_input: int, out_tokens: int) -> float:
@@ -146,8 +157,9 @@ class Policy:
         return cost
 
     def break_even(self, start: Cell, verify: str, est_input: int, out_tokens: int) -> float | None:
-        """First-attempt pass rate below which starting on `start` is dearer than starting one step up:
-        c1 + (1 - p) * c2 < c2  <=>  p > c1 / c2, each cost including verification.
+        """Return the first-attempt pass rate below which starting on `start` is dearer than starting one
+        step up, or None when there is no step up: c1 + (1 - p) * c2 < c2  <=>  p > c1 / c2, each cost
+        including verification.
         """
         up = step_up(start, self.cells, min_gain=self.min_gain)
         if up is None:
@@ -160,7 +172,7 @@ class Policy:
 class LadderPolicy:
     """A fixed ladder, for benchmarks: 'always Opus high', 'Sonnet then Opus on failure', etc."""
 
-    def __init__(self, cells: list[Cell], verify: str = "none", budget_usd: float = 100.0) -> None:
+    def __init__(self, cells: list[Cell], *, verify: str = "none", budget_usd: float = 100.0) -> None:
         if not cells:
             raise ValueError("a ladder needs at least one cell")
         self.ladder_cells = cells
@@ -174,4 +186,5 @@ class LadderPolicy:
                     [f"escalera fija: {' -> '.join(map(str, cells))}"])
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
+        """Return the cell that verifies `worker`'s answer in `mode`, chosen from the whole lattice."""
         return choose_verifier(worker, mode, self._all)

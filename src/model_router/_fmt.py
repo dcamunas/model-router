@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 
 def money(value: float | None) -> str:
+    """Format a USD amount with the precision its size needs; '-' for None."""
     if value is None:
         return "-"
     if value == 0:
@@ -18,6 +19,7 @@ def money(value: float | None) -> str:
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
+    """Render `rows` under `headers` as aligned plain text; numeric columns are right-aligned."""
     cells = [[str(h) for h in headers]] + [[str(c) for c in row] for row in rows]
     widths = [max(len(r[i]) for r in cells) for i in range(len(headers))]
 

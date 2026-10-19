@@ -13,6 +13,8 @@ from .client import NON_STREAMING_MAX_TOKENS, Completion
 
 @dataclass
 class Reply:
+    """One scripted answer of the FakeClient."""
+
     text: str = "ok"
     usage: Usage = field(default_factory=lambda: Usage(1000, 500))
     stop_reason: str = "end_turn"
