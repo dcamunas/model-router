@@ -2,6 +2,13 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.6.0] - 2026-10-20
+
+### Added
+
+- Judges and arbiters from other providers: `router config --external NAME=PROVIDER/MODEL_ID@IN/OUT` declares a model of OpenAI, DeepSeek or xAI with its prices (USD per million tokens), `router config --judge NAME/high` or `--arbiter NAME/high` uses it, and the provider's key comes from `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` or `XAI_API_KEY`. One OpenAI-compatible client (standard library, no SDK) serves the three; structured verdicts are asked for as a JSON object and validated locally. External models never do the work: the routing lattice, the hook and the ladder stay on Anthropic cells. `router cells` lists them, `router doctor` checks their keys, and the arbiter rule prefers a cell on a provider other than the full judge's.
+- `json_payload` in `task` is the public JSON unwrapping the checkers use.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added
