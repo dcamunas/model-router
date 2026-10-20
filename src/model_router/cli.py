@@ -507,7 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="show or set the profile for `router run`, the available models and the judge (hooks untouched)")
     sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
     sg.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
-    sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/high (effort capped at high)")
+    sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.set_defaults(func=_cmd_config)
     return p
 

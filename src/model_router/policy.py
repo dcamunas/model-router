@@ -1,10 +1,10 @@
 """Routing policy: which cell starts a task, how it escalates, how it is verified and what it may
 spend. Everything is a table you can read and edit; the feedback store nudges the start cell once
 it has seen enough verdicts for a kind. Verification has four modes: none; `light`, the worker's own
-cell in a fresh context; `full`, a fixed judge cell (opus/high unless configured) on another model
+cell in a fresh context; `full`, a fixed judge cell (opus/xhigh unless configured) on another model
 than the worker; `panel`, those two together, both must agree (critical risk, no checker, kinds
 where only judgement can decide). Verifying is easier than producing, so the judge does not have to
-outrank the worker: it has to be independent and good enough, and it never thinks above `high`.
+outrank the worker: it has to be independent and good enough, and it never thinks above `xhigh`.
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ JUDGE_INPUT_TOKENS = 3000
 JUDGE_OUTPUT_TOKENS_AT_HIGH = 300
 JUDGE_PROMPT_OVERHEAD_TOKENS = 300  # the verdict instructions and tags around the task and the answer
 FULL_VERIFY_GAIN = 0.08  # the simulation treats a judge this much more capable than the worker as a `full`-grade one
-DEFAULT_JUDGE = "opus/high"  # the `full` judge unless MODEL_ROUTER_JUDGE or `judge` in config.json say otherwise
-JUDGE_MAX_EFFORT = "high"  # a judge reads and decides; thinking above this on a verdict is cost, not accuracy
+DEFAULT_JUDGE = "opus/xhigh"  # the `full` judge unless MODEL_ROUTER_JUDGE or `judge` in config.json say otherwise
+JUDGE_MAX_EFFORT = "xhigh"  # a judge reads and decides; thinking above this on a verdict is cost, not accuracy
 
 
 @dataclass
