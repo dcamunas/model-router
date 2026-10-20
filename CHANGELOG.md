@@ -2,6 +2,20 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.5.0] - 2026-10-20
+
+### Added
+
+- `tribunal` verification mode: the two judges of the panel, always both, blind to each other; when they agree that is the verdict, when they split an arbiter cell reads the task, the answer and both reasoned verdicts (as judge A and judge B, no names) and decides. One extra call only on a split, instead of a new attempt with a new pair of judges. It is now the mode the policy picks at critical risk for `analysis`, `write` and `review` tasks without a checker (`Policy(critical_mode="panel")` keeps the cheaper panel; `--verify tribunal` forces it anywhere).
+- The arbiter: the next model up from the full judge at low effort, else the judge's model one effort up, else the worker's model one effort up; never one of the judges. `router config --arbiter` and `MODEL_ROUTER_ARBITER` fix it; `router config --arbiter rule` goes back to the rule. `router plan` prints it, `router doctor` and `router config` show it.
+- A scoreboard of judges in `router stats`: per judge cell, verdicts and pass rate, agreement with the other judge, how often the arbiter backed it on a split, and how many of its verdicts a human override contradicted. Every judge's own verdict (and the arbiter's) is now in the ledger, under `verdicts`.
+- The simulation compares `router` (tribunal) with `router (panel)` and `router (one judge)`.
+- The skill tells the orchestrator how to run a tribunal with subagents: both reviews blind, a third subagent to arbitrate a split.
+
+### Changed
+
+- `router (no panel)` in the simulation is now `router (one judge)`.
+
 ## [0.4.3] - 2026-10-20
 
 Twenty-one fixes from an independent bug hunt over the whole package, each with a test.
