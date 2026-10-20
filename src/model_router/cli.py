@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -156,6 +157,13 @@ def _ledger_files() -> list[tuple[Path, str | None]]:
     return files
 
 
+def _warn_index(store: Store) -> None:
+    """Say on stderr when the index could not be written; the ledger has the line and `router stats` rebuilds the index."""
+    for text in dict.fromkeys(store.errors):
+        print(f"warning: the index was not updated ({text}); `router stats` rebuilds it from the ledger", file=sys.stderr)
+    store.errors.clear()
+
+
 def _add_backend_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--backend", choices=("auto", "api", "cli"), default="auto",
                    help="api = SDK with ANTHROPIC_API_KEY; cli = `claude -p` with your account; "
@@ -192,9 +200,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
     client = _with_providers(_live_client(args))
     task, cls = _task_from(args, prompt, client)
     feedback = FeedbackStore(home() / "feedback.json")
-    ledger = Ledger(home() / "ledger.jsonl", store=_store())
+    store = _store()
+    ledger = Ledger(home() / "ledger.jsonl", store=store)
     router = Router(client, policy=Policy(feedback=feedback), ledger=ledger, feedback=feedback)
     result = router.run(task)
+    _warn_index(store)
     if args.json:
         print(json.dumps({**result.to_dict(), "answer": result.answer}, ensure_ascii=False, indent=1))
         return 0 if result.solved else 1
@@ -218,8 +228,10 @@ def _cmd_judge(args: argparse.Namespace) -> int:
     client = _with_providers(_live_client(args))
     task, cls = _task_from(args, prompt, client)
     policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
-    router = Router(client, policy=policy, ledger=Ledger(home() / "ledger.jsonl", store=_store()))
+    store = _store()
+    router = Router(client, policy=policy, ledger=Ledger(home() / "ledger.jsonl", store=store))
     result = router.judge(task, answer, worker=parse_cell(args.cell) if args.cell else None)
+    _warn_index(store)
     if args.json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=1))
         return 0 if result.solved else 1
@@ -286,13 +298,20 @@ def _bench_estimate(tasks: list[Task], strategies: list[tuple[str, PolicyProtoco
     return estimate
 
 
+def _simulate(args: argparse.Namespace) -> int:
+    from .simulate import format_report, run_simulation
+
+    if args.strategies != "router" or args.repeat != 1 or args.verify or args.dry_run:
+        print("simulation: --strategies, --repeat, --verify and --dry-run apply to a file of tasks; "
+              "the simulation runs its own strategies", file=sys.stderr)
+    tasks, reports = run_simulation(args.tasks, args.seed)
+    print(format_report(tasks, reports, args.seed, detail=args.detail))
+    return 0
+
+
 def _cmd_bench(args: argparse.Namespace) -> int:
     if args.file is None or args.simulate:
-        from .simulate import format_report, run_simulation
-
-        tasks, reports = run_simulation(args.tasks, args.seed)
-        print(format_report(tasks, reports, args.seed, detail=args.detail))
-        return 0
+        return _simulate(args)
     path = Path(args.file)
     specs = _load_specs(path)
     tasks = [_spec_task(s) for s in specs]
@@ -319,9 +338,10 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     client = _with_providers(_live_client(args))
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     jobs = [(replace(t, id=f"{t.id}.r{k}") if repeat > 1 else t, k) for k in range(1, repeat + 1) for t in tasks]
+    store = _store()
     for name, policy in strategies:
         ledger = Ledger(home() / "bench" / f"{stamp}-{name.replace('/', '-').replace('>', '_')}.jsonl",
-                        store=_store(), strategy=name)
+                        store=store, strategy=name)
         ledger.note(strategy=name, eval_id=eval_id, file=str(path), repeat=repeat, started=stamp)
         router = Router(client, policy=policy, ledger=ledger)
 
@@ -334,6 +354,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         print(f"\n== {name} ==")
         print(summarize(ledger.tasks()).text())
         print(f"ledger: {ledger.path}\n")
+        _warn_index(store)
     return 0
 
 
@@ -374,7 +395,11 @@ def _cmd_db(args: argparse.Namespace) -> int:
     if not store.path.exists():
         print(f"{store.path}: not built yet (`router stats` or `router db rebuild` build it)")
         return 0
-    counts = ", ".join(f"{v} {k}" for k, v in store.counts().items())
+    try:
+        counts = ", ".join(f"{v} {k}" for k, v in store.counts().items())
+    except sqlite3.DatabaseError as exc:
+        print(f"{store.path}: not a readable index ({exc}); `router db rebuild` makes a new one")
+        return 1
     state = "behind the ledger: run `router db rebuild`" if store.stale(_ledger_files()) else "in sync with the ledger"
     print(f"{store.path}: {counts} · {state}")
     return 0
@@ -521,7 +546,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
 
 
 def _cmd_feedback(args: argparse.Namespace) -> int:
-    ledger = Ledger(home() / "ledger.jsonl", store=_store())
+    store = _store()
+    ledger = Ledger(home() / "ledger.jsonl", store=store)
     record = ledger.find(args.task_id)
     if record is None:
         raise SystemExit(f"no task {args.task_id} in {ledger.path}")
@@ -534,6 +560,7 @@ def _cmd_feedback(args: argparse.Namespace) -> int:
         feedback = FeedbackStore(home() / "feedback.json")
         feedback.apply_override(record["kind"], record["final_cell"], passed, first=_was_first_verdict(record))
         feedback.save()
+    _warn_index(store)
     print(f"{args.task_id}: marked as {'pass' if passed else 'fail'}")
     return 0
 
@@ -747,6 +774,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(f"invalid value: {exc}") from exc
     except OSError as exc:
         raise SystemExit(f"cannot access {exc.filename or 'a file'}: {exc.strerror or exc}") from exc
+    except sqlite3.Error as exc:
+        raise SystemExit(f"the index cannot be used ({exc}): `router db rebuild`, or `router stats --source ledger`") from exc
 
 
 if __name__ == "__main__":

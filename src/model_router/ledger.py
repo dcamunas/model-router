@@ -57,30 +57,32 @@ class Ledger:
                 self.store.record(record, source=self.path, strategy=self.strategy)
 
     def load(self) -> list[dict[str, Any]]:
-        """Return every record in file order. Lines that are not JSON (a write cut short by another
-        process) are skipped and counted in `corrupt`.
+        """Return every record in file order. Lines that are not UTF-8 JSON objects (a write cut short by
+        another process) are skipped and counted in `corrupt`.
         """
         if self.path is None or not self.path.exists():
             return list(self._memory)
         out: list[dict[str, Any]] = []
         self.corrupt = 0
-        with self.path.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
+        with self.path.open("rb") as fh:
+            for raw in fh:
                 try:
-                    out.append(json.loads(line))
-                except ValueError:
+                    record = json.loads(raw.decode("utf-8"))
+                except ValueError:  # not UTF-8 or not JSON; a blank line is neither
+                    self.corrupt += bool(raw.strip())
+                    continue
+                if isinstance(record, dict):
+                    out.append(record)
+                else:
                     self.corrupt += 1
         return out
 
     def tasks(self) -> list[dict[str, Any]]:
         """Return the task records with human overrides applied; the last override wins."""
         records = self.load()
-        by_id = {r["task_id"]: dict(r) for r in records if r.get("type") == "task"}  # copies: the originals stay as written
+        by_id = {r["task_id"]: dict(r) for r in records if r.get("type") == "task" and r.get("task_id")}  # copies
         for r in records:
-            if r.get("type") == "override" and r["task_id"] in by_id:
+            if r.get("type") == "override" and r.get("task_id") in by_id:
                 t = by_id[r["task_id"]]
                 t["status"] = "solved" if r["passed"] else "unsolved"
                 t["overridden"] = True

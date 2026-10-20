@@ -2,6 +2,20 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.8.1] - 2026-10-20
+
+### Fixed
+
+- The index kept one row per task id, so the same eval task under two bench strategies, or the same bench run twice, left only the last record in `router.db`; the ledger files had them all, and `router stats`, which reads the main ledger, was not affected. Rows are now keyed by ledger file and task id, overrides included. An index built by 0.8.0 is replaced on first use.
+- A `router.db` that could not be written (a file that is no database, a lock held for too long) stopped `router run` after the answer had been paid for and written to the ledger. The index is best effort now: the command finishes, warns on stderr, and the next `router stats` rebuilds it.
+- A rebuild stopped on a line that was valid JSON but no record (no task id, a list instead of attempts) or on a line cut inside a multibyte character. Such lines are skipped and counted as unreadable, as the README said they were; a null count reads as zero.
+- `router db` notices a ledger file that was deleted or rewritten in place: it compares size and modification time, not size alone.
+
+### Changed
+
+- README, "What leaves your machine": the ledger and the index keep the judges' reasons, which may quote a few words of the task or the answer; "only a hash" said too much.
+- `router bench` in simulation says on stderr which flags it ignores: `--strategies`, `--repeat`, `--verify` and `--dry-run` apply to a file of tasks.
+
 ## [0.8.0] - 2026-10-20
 
 ### Added

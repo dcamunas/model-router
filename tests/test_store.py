@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
@@ -107,3 +108,82 @@ def test_rebuild_skips_lines_that_are_not_json(tmp_path):
     store = Store(tmp_path / "router.db")
     assert store.rebuild([(path, None), (tmp_path / "missing.jsonl", None)])["tasks"] == 1
     assert not store.stale([(path, None)])
+
+
+def _run_ok(ledger: Ledger, task_id: str) -> None:
+    task = Task(prompt="say ok", kind="chat", risk="low", id=task_id)
+    Router(FakeClient(script={"*": [Reply("ok")]}), ledger=ledger).run(task)
+
+
+def test_the_same_task_id_in_two_files_keeps_both_records_and_an_override_stays_in_its_file(tmp_path):
+    store = Store(tmp_path / "router.db")
+    files = [(tmp_path / "bench" / f"20261020-{name}.jsonl", None) for name in ("a", "b")]
+    for (path, _), name in zip(files, ("a", "b"), strict=True):
+        _run_ok(Ledger(path, store=store, strategy=name), "t1")  # the eval's id, the same under every strategy
+    Ledger(files[0][0], store=store).override("t1", False, note="a's answer was wrong")
+    expected = {"tasks": 2, "attempts": 2, "verdicts": 0, "overrides": 1, "sources": 2}
+    for _ in range(2):  # live, then rebuilt
+        assert store.counts() == expected
+        assert store.task_records(source="20261020-a.jsonl")[0]["status"] == "unsolved"
+        assert store.task_records(source="20261020-b.jsonl")[0]["status"] == "solved"
+        assert len(store.task_records()) == 2
+        store.rebuild(files)
+
+
+def test_a_file_that_is_no_database_never_stops_a_task_and_a_sync_replaces_it(tmp_path):
+    db = tmp_path / "router.db"
+    db.write_bytes(b"this is not a database\n")
+    store = Store(db)
+    path = tmp_path / "ledger.jsonl"
+    ledger = Ledger(path, store=store)
+    _run_ok(ledger, "t1")  # no exception: the ledger line is what matters
+    assert len(ledger.tasks()) == 1
+    assert len(store.errors) == 1 and "not a database" in store.errors[0]
+    assert store.sync([(path, None)]) and store.counts()["tasks"] == 1 and not store.stale([(path, None)])
+
+
+def test_rebuild_skips_records_it_cannot_read_and_lines_that_are_not_utf8(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    no_id = json.dumps({"type": "task", "kind": "chat"})
+    bad_attempts = json.dumps({**OLD_RECORD, "task_id": "old2", "attempts": "nope"})
+    null_counts = json.dumps({**OLD_RECORD, "task_id": "old3", "retries": None, "work_cost_usd": None})
+    lines = [json.dumps(OLD_RECORD), no_id, bad_attempts, null_counts, "[1, 2]", ""]
+    path.write_bytes("\n".join(lines).encode() + b"\xff\xfe{}\n")
+    store = Store(tmp_path / "router.db")
+    counts = store.rebuild([(path, None)])
+    assert counts["tasks"] == 2 and counts["attempts"] == 2  # old1 and old3; nothing half-written for old2
+    assert store.corrupt == 4
+    assert not store.stale([(path, None)])
+    assert sorted(t["task_id"] for t in store.task_records()) == ["old1", "old3"]
+
+
+def test_stale_sees_a_deleted_file_and_a_rewrite_that_keeps_the_size(tmp_path):
+    store = Store(tmp_path / "router.db")
+    files = [(tmp_path / f"l{i}.jsonl", None) for i in range(2)]
+    for path, _ in files:
+        _run_ok(Ledger(path, store=store), "t1")
+    assert not store.stale(files)
+    files[1][0].unlink()
+    assert store.stale(files)  # a file the index knows is gone
+    assert store.rebuild(files)["sources"] == 1 and not store.stale(files)
+    path = files[0][0]
+    path.write_text(path.read_text().replace('"status": "solved"', '"status": "failed"'))  # the same byte count
+    os.utime(path, ns=(10**9, 10**9))
+    assert store.stale(files)
+
+
+def test_an_index_from_an_older_schema_is_replaced_on_first_use(tmp_path):
+    db = tmp_path / "router.db"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                           "INSERT INTO meta VALUES ('schema', '1');"
+                           "CREATE TABLE task (task_id TEXT PRIMARY KEY, record TEXT NOT NULL);")
+    conn.close()
+    store = Store(db)
+    path = tmp_path / "ledger.jsonl"
+    path.write_text(json.dumps(OLD_RECORD) + "\n")
+    assert store.stale([(path, None)])
+    assert store.sync([(path, None)]) and store.counts()["tasks"] == 1
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == ("2",)
+    conn.close()

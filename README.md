@@ -382,8 +382,9 @@ structured output goes through `parse`; above 16K tokens the call streams.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
   or your Claude Code account. With a judge or an arbiter from another provider (`router config --external`), the
   task and the answer go to that provider too, with its key. To nobody else.
-- The ledger and its SQLite index keep tokens, cost, cell, verdict and reason for every attempt; they
-  keep neither the prompt nor the answer, only a hash of the task.
+- The ledger and its SQLite index keep tokens, cost, cell, verdict and the judges' reasons for every
+  attempt; they keep neither the prompt nor the answer, only a hash of the task. A reason may quote a
+  few words of either.
 - `router plan`, `router stats`, `router cells` and `router doctor` without `--live` call nothing.
 
 ## Assumptions (read them before you believe a number)

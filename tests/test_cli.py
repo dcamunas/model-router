@@ -468,3 +468,14 @@ def test_db_status_and_rebuild(home, monkeypatch, capsys):
     assert main(["db"]) == 0
     out = capsys.readouterr().out
     assert "1 tasks" in out and "in sync" in out
+
+
+def test_a_broken_index_does_not_stop_a_run_and_stats_rebuilds_it(home, monkeypatch, capsys):
+    (home / "router.db").write_bytes(b"garbage")
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVE")]}))
+    assert main(["run", "classify", "--kind", "classify", "--risk", "low", "--check-regex", "POSITIVE"]) == 0
+    captured = capsys.readouterr()
+    assert "1: POSITIVE" in captured.out and "warning: the index was not updated" in captured.err
+    assert main(["stats"]) == 0
+    assert "tasks 1 · solved 1" in capsys.readouterr().out
+    assert main(["db"]) == 0 and "in sync" in capsys.readouterr().out
