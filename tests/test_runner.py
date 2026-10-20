@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from model_router.catalog import Usage, parse_cell
 from model_router.client import ClientUnavailableError
 from model_router.feedback import FeedbackStore
@@ -46,6 +48,45 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
     assert result.verify_cost_usd > 0
     judge_calls = [c for c in client.calls if c["output_format"] == "Verdict"]
     assert len(judge_calls) == 2 and "<answer>" in judge_calls[0]["prompt"]
+
+
+def test_panel_needs_both_judges_and_a_split_escalates():
+    client = FakeClient(
+        script={"opus/medium": [Reply("draft")], "fable/low": [Reply("better draft")]},
+        judge={"opus/medium": [ok()], "fable/low": [ko("thin"), ok()], "fable/medium": [ok()]},
+    )
+    result = Router(client).run(Task(prompt="write the incident report", kind="write", risk="critical"))
+    assert result.verify == "panel" and result.solved
+    first, second = result.attempts
+    assert first.cell.label == "opus/medium" and first.verdict is False and first.verdict_source == "panel"
+    assert [j.label for j in first.judges] == ["opus/medium", "fable/low"] and first.verifier == parse_cell("fable/low")
+    assert "panel split: opus/medium passed, fable/low failed" in first.reason and "thin" in first.reason
+    assert second.cell.label == "fable/low" and second.verdict is True
+    assert [j.label for j in second.judges] == ["fable/low", "fable/medium"] and "panel agreed" in second.reason
+    judge_calls = [c["cell"] for c in client.calls if c["output_format"] == "Verdict"]
+    assert judge_calls == ["opus/medium", "fable/low", "fable/low", "fable/medium"]
+    assert first.verify_cost_usd == pytest.approx(0.035)  # opus/medium 0.010 + fable/low 0.025 on Usage(2000, 100)
+    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.085)
+    assert result.to_dict()["attempts"][0]["judges"] == ["opus/medium", "fable/low"]
+
+
+def test_panel_stops_at_the_first_failing_judge():
+    client = FakeClient(script={"*": [Reply("draft")]}, judge={"opus/medium": [ko("vague")], "*": [ok()]})
+    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1))
+    assert result.status == "unsolved"
+    attempt = result.attempts[0]
+    assert attempt.verdict is False and attempt.verdict_source == "panel"
+    assert [j.label for j in attempt.judges] == ["opus/medium"] and "was not asked" in attempt.reason
+    assert len([c for c in client.calls if c["output_format"] == "Verdict"]) == 1
+
+
+def test_panel_reduced_to_one_judge_is_reported_as_a_judge(monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
+    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
+    router = Router(client, policy=LadderPolicy([parse_cell("opus/max")], verify="panel"))
+    result = router.run(Task(prompt="x", kind="analysis", risk="critical"))
+    attempt = result.attempts[0]
+    assert result.solved and attempt.verdict_source == "judge" and [j.label for j in attempt.judges] == ["opus/max"]
 
 
 def test_low_risk_without_checker_accepts_first_answer():

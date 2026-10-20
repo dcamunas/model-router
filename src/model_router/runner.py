@@ -26,7 +26,8 @@ STATUSES: tuple[str, ...] = ("solved", "unsolved", "refused", "budget", "error")
 @dataclass
 class Attempt:
     """One call to a worker cell and what came of it: usage and cost, whether it was refused or cut short,
-    the verdict with its source (checker, judge, none) and, for judged attempts, the verifier's cell and cost.
+    the verdict with its source (checker, judge, panel, none) and, for judged attempts, the deciding
+    judge's cell, every judge asked and what they cost.
     """
 
     n: int
@@ -44,6 +45,7 @@ class Attempt:
     verifier: Cell | None = None
     verify_usage: Usage = field(default_factory=Usage)
     verify_cost_usd: float = 0.0
+    judges: list[Cell] = field(default_factory=list)
 
     @property
     def fallback_ran(self) -> bool:
@@ -56,7 +58,7 @@ class Attempt:
             "request_id": self.request_id, "refused": self.refused, "verdict": self.verdict,
             "verdict_source": self.verdict_source, "reason": self.reason,
             "verifier": self.verifier.label if self.verifier else None, "verify_usage": self.verify_usage.to_dict(),
-            "verify_cost_usd": round(self.verify_cost_usd, 6),
+            "verify_cost_usd": round(self.verify_cost_usd, 6), "judges": [j.label for j in self.judges],
         }
 
 
@@ -193,7 +195,8 @@ class Router:
             verdict = self.verifier.verify(task, completion.text, plan.verify, cell)
             spent += verdict.cost_usd
             attempts.append(replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
-                                    verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd))
+                                    verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
+                                    judges=verdict.judges))
             answer, parsed, final = completion.text, completion.parsed, cell
             if verdict.passed:
                 status = "solved"

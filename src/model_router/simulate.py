@@ -4,7 +4,9 @@ What it shows is how the router's economics move with verifier accuracy, task di
 hard tail, and it exercises the real Router, Policy and Verifier code paths end to end.
 
 The worker's answer carries its own ground truth (`SIM|task|cell|ok`), so a programmatic checker is
-perfect and a judge is wrong with the configured false-pass / false-fail rates.
+perfect and a judge is wrong with the configured false-pass / false-fail rates. Judges of one answer
+share their random draw JUDGE_CORRELATION of the time: models of one family err together, so a panel
+of two is worth less here than two independent judges would be.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ TAIL_BUMP = 0.25
 DIFFICULTY_SPREAD = 8.0  # concentration of the beta distribution around the kind's mean
 STEEPNESS = 12.0  # how sharply pass probability falls once difficulty exceeds capability
 JUDGE_ERROR: dict[str, tuple[float, float]] = {"light": (0.10, 0.05), "full": (0.03, 0.03)}  # (false pass, false fail)
+JUDGE_CORRELATION = 0.5  # share of judge calls that use the draw shared by every judge of that answer
 
 
 @dataclass(frozen=True)
@@ -139,7 +142,9 @@ class SimClient:
         task, worker, truth = self.tasks[m.group(1)], parse_cell(m.group(2)), m.group(3) == "ok"
         mode = "full" if cell.capability >= worker.capability + FULL_VERIFY_GAIN - 1e-9 else "light"
         false_pass, false_fail = self.judge_error[mode]
-        r = _draw(self.seed, "judge", task.id, cell.label, worker.label)
+        own = _draw(self.seed, "judge", task.id, cell.label, worker.label)
+        shared = _draw(self.seed, "judge-shared", task.id, worker.label)
+        r = shared if _draw(self.seed, "judge-corr", task.id, cell.label, worker.label) < JUDGE_CORRELATION else own
         passed = (r >= false_fail) if truth else (r < false_pass)
         # the judge reads the task and the answer (about half the high-effort output) and writes a short verdict
         usage = Usage(task.input_tokens + round(task.output_high * 0.5) + JUDGE_PROMPT_OVERHEAD_TOKENS, 120)
@@ -149,7 +154,7 @@ class SimClient:
 
 def default_strategies() -> dict[str, PolicyProtocol]:
     """Return the strategies the simulation compares: single cells, a two-step rerun and the router with
-    and without feedback.
+    one judge everywhere, with the panel at critical risk, and with feedback.
     """
     return {
         "fable/xhigh": LadderPolicy([parse_cell("fable/xhigh")]),
@@ -157,6 +162,7 @@ def default_strategies() -> dict[str, PolicyProtocol]:
         "sonnet/high": LadderPolicy([parse_cell("sonnet/high")]),
         "fable/low": LadderPolicy([parse_cell("fable/low")]),
         "sonnet>opus": LadderPolicy([parse_cell("sonnet/medium"), parse_cell("opus/high")], verify="light"),
+        "router (no panel)": Policy(panel_kinds=frozenset()),
         "router": Policy(),
         "router+feedback": Policy(feedback=FeedbackStore(min_n=10)),
     }
@@ -251,7 +257,8 @@ def format_report(tasks: list[SimTask], reports: list[StrategyReport], seed: int
             f"{k} {v}" for k, v in sorted(risks.items(), key=lambda kv: ["low", "medium", "high", "critical"].index(kv[0]))
         ),
         f"judge: false pass light {JUDGE_ERROR['light'][0]:.0%} / full {JUDGE_ERROR['full'][0]:.0%}; "
-        f"false fail light {JUDGE_ERROR['light'][1]:.0%} / full {JUDGE_ERROR['full'][1]:.0%}",
+        f"false fail light {JUDGE_ERROR['light'][1]:.0%} / full {JUDGE_ERROR['full'][1]:.0%}; "
+        f"judges share a draw {JUDGE_CORRELATION:.0%} of the time",
         "",
     ]
     tbl = table(["strategy", "solved", "false passes", "retries", "tokens", "cost", "verif.", "$/solved",

@@ -21,6 +21,13 @@ def test_plan_command_needs_no_api(capsys):
     assert "start:" in out and "ladder:" in out and "verifier" in out
 
 
+def test_plan_prints_both_judges_of_a_panel(capsys):
+    argv = ["plan", "Assess whether we should migrate the billing database", "--kind", "analysis", "--risk", "critical"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "verification panel" in out and "verifier (panel): fable/low then fable/medium" in out
+
+
 def test_plan_claude_code_prints_frontmatter_values(capsys):
     main(["plan", "summarise this text", "--kind", "summarize", "--risk", "low", "--claude-code"])
     assert capsys.readouterr().out == "model: haiku\neffort: medium\n"

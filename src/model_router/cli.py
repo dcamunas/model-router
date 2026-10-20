@@ -28,7 +28,7 @@ from .runner import Router, TaskResult
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
-JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02}  # per verified attempt, rough, for the bench estimate
+JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02, "panel": 0.025}  # per verified attempt, rough, for the bench
 REASON_COLUMN_CHARS = 70  # keeps the attempts table on one line per attempt
 PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
 
@@ -94,9 +94,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     print(f"start: {plan.start}  -> Claude Code {plan.start.claude_code()}")
     for line in plan.rationale:
         print("  - " + line)
-    verifier = policy.verifier_for(plan.start, plan.verify)
-    if verifier is not None:
-        print(f"verifier ({plan.verify}): {verifier}")
+    judges = policy.judges_for(plan.start, plan.verify)
+    if judges:
+        print(f"verifier ({plan.verify}): {' then '.join(map(str, judges))}")
     first = plan.start.expected_cost(task.estimated_input_tokens, task.planned_output_tokens)
     print(f"estimated cost of the first attempt: {money(first)}"
           f"  (prices {PRICES_AS_OF})")
@@ -108,8 +108,9 @@ def _attempts_table(result: TaskResult) -> str:
     for a in result.attempts:
         verdict = "-" if a.verdict is None else ("pass" if a.verdict else "fail")
         served = a.served_model if a.fallback_ran else ""
+        judged = "+".join(j.label for j in a.judges)
         rows.append([a.n, a.cell.label, served, a.stop_reason, f"{a.usage.input_tokens:,}/{a.usage.output_tokens:,}",
-                     money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + a.verifier.label if a.verifier else ''})",
+                     money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + judged if judged else ''})",
                      money(a.verify_cost_usd), a.reason[:REASON_COLUMN_CHARS]])
     return table(["#", "cell", "fallback", "stop", "tok in/out", "cost", "verdict", "verif.", "reason"], rows)
 

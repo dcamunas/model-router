@@ -22,6 +22,16 @@ def test_frontier_solves_at_least_as_much_as_sonnet_and_costs_more():
     assert by["router"].verify_cost > 0
 
 
+def test_panel_router_is_compared_with_the_single_judge_router():
+    tasks, reports = run_simulation(100, seed=1)  # five critical analysis/write/review tasks in this draw
+    by = {r.name: r for r in reports}
+    assert by["router (no panel)"].verify_cost > 0 and by["router"].verify_cost > 0
+    panels = [a for t in by["router"].ledger.tasks() for a in t["attempts"] if a["verdict_source"] == "panel"]
+    assert panels and all(len(a["judges"]) in (1, 2) for a in panels)
+    assert not any(a["verdict_source"] == "panel" for t in by["router (no panel)"].ledger.tasks() for a in t["attempts"])
+    assert "share a draw" in format_report(tasks, reports, 1)
+
+
 def test_pass_probability_moves_with_capability_and_difficulty():
     easy, hard = 0.2, 0.9
     assert pass_probability(parse_cell("haiku/low"), easy) > 0.8

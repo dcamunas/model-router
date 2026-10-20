@@ -17,7 +17,7 @@ things are different here, and each one has its reason in the table.
 | Reel | Here | Why |
 |---|---|---|
 | A ladder of models: Sonnet ×1, then Opus ×2, then Fable ×5 | A lattice of (model, effort) cells sorted by cost, with an estimated capability per cell | Anthropic's cost guidance says Fable at `low` often costs less per solved task than Opus at `high`. A ladder of models never tries that cell; the lattice does. |
-| Verify "by risk" | Verify by risk with an order of trust: a programmatic checker first (free, and final when it fails), then a `light` judge (the cheapest cell at least as capable as the worker), then a `full` judge (another model, clearly more capable, fresh context) | A code checker beats any judge. And the `full` judge is a blind cross-check between models. |
+| Verify "by risk" | Verify by risk with an order of trust: a programmatic checker first (free, and final when it fails), then a `light` judge (the cheapest cell at least as capable as the worker), then a `full` judge (another model, clearly more capable, fresh context); at critical risk, when no checker can decide, a `panel` of two judges that must both pass | A code checker beats any judge. The `full` judge is a blind cross-check between models, and the panel is what is left of an LLM council once you drop the parts that do not pay. |
 | "Feedback" | First-attempt pass rate per (kind, cell), kept apart from escalated attempts; it moves the start cell once there are 10 verdicts or more; a human can override it with `router feedback` | Escalated attempts only see the tasks the cheap cell already failed. Mixing them inflates the failure rate of the expensive cell. |
 | "Simulated workload · real prices" | The same, but the simulation states its assumptions, includes the hard tail and the judge's false passes, and adds the honest cell the reel leaves out: Fable at low | A router that is never compared with "the best cheap model" proves nothing. |
 
@@ -54,7 +54,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.3.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.4.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -65,7 +65,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.3.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.4.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -229,11 +229,35 @@ print(result.answer)
 4. Verification. `low` and `medium` none, `high` light, `critical` full (full verification was the
    biggest cost sink; raise `high` to `full` with `--verify full`, or in `policy.py` once your bench
    justifies it). When the task has a checker, the checker goes first and is final when it fails.
+   At `critical`, an `analysis`, `write` or `review` task with no checker gets a `panel` instead of
+   one full judge (see below); `--verify full` forces one judge, `--verify panel` forces two on any
+   task.
 5. Stopping. A passing verdict, the ladder exhausted, the budget by risk (0.10 / 0.50 / 2 / 10 USD),
    two refusals in the same task, or the API down. An answer cut by `max_tokens` is retried once on
    the same cell with twice the room.
 6. Ledger. `~/.model-router/ledger.jsonl` (`MODEL_ROUTER_HOME` moves it): every attempt with its
    real tokens, cost, the model that served it (when a fallback ran), verdict and reason.
+
+## Two judges, not a council
+
+Karpathy's `llm-council` sends one question to several models, has each one rank the others'
+answers and lets a chairman write the final one. With four members that is nine calls per
+question, and the value comes from mixing providers. Here every model is Claude and the number that
+matters is the cost per solved task, so the router keeps the one part that pays: a second,
+independent opinion.
+
+The `panel` mode asks two judges on different cells, cheapest first, blind to each other: the
+`full` judge (another model, clearly more capable) and the cheapest cell at least as capable as the
+worker on a different model from the first judge. The answer passes only when both pass. If the
+first judge fails, the second is never asked, so a panel costs one judge more than `full` only when
+the first judge agrees. A split sends the task up the ladder like any failed verdict. The policy uses it on
+its own at critical risk for analysis, writing and review tasks without a checker; `Policy(panel_kinds=...)`
+changes that list, and a task can force `verify="panel"` anywhere.
+
+`router bench --simulate` compares `router` with `router (no panel)`. The simulation assumes the
+judges of one answer share their random draw half the time (`JUDGE_CORRELATION`): models of one
+family err together, which is the honest reason a panel of Claude cells buys less than a council of
+different providers would. Measure it on your own tasks before trusting either number.
 
 API details that are deliberate: `output_config.effort` carries the effort; `thinking` is not sent
 (adaptive by default, and `disabled` returns 400 on the 5.5 family); the models that accept it get
@@ -257,7 +281,7 @@ structured output goes through `parse`; above 16K tokens the call streams.
 - `CAPABILITY_TIER` + `CAPABILITY_EFFORT`: capability 0-1 per cell. Haiku 0.40, Sonnet 0.60,
   Opus 0.75, Fable 0.90; effort adds between −0.06 and +0.05. It is an opinion, not a measurement.
 - The simulation adds: difficulty per kind, a 15 % hard tail, a `light` judge with 10 % false
-  passes and a `full` one with 3 %.
+  passes and a `full` one with 3 %, and judges that share their draw half the time.
 - Prompt caches are per model: every model change in the ladder loses the cache. For a long
   conversation, change cells between conversations, not inside one.
 

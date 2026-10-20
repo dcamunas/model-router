@@ -2,8 +2,8 @@ import pytest
 
 from model_router.catalog import lattice, parse_cell
 from model_router.feedback import FeedbackStore
-from model_router.policy import Policy, choose_verifier
-from model_router.task import Task
+from model_router.policy import Policy, choose_panel, choose_verifier
+from model_router.task import Task, contains_checker
 
 
 def test_start_cell_follows_kind_and_risk():
@@ -77,6 +77,47 @@ def test_full_verifier_is_another_model_clearly_more_capable():
     assert choose_verifier(parse_cell("opus/low"), "none", cells) is None
 
 
+def test_panel_pairs_the_full_judge_with_the_cheapest_judge_on_another_model():
+    cells = lattice()
+    panel = choose_panel(parse_cell("opus/high"), cells)
+    assert [c.label for c in panel] == ["opus/high", "fable/low"]  # cheapest first; a fresh context on the worker's cell counts
+    panel = choose_panel(parse_cell("sonnet/medium"), cells)
+    assert [c.label for c in panel] == ["sonnet/medium", "opus/low"]
+    assert len({c.model for c in panel}) == 2
+
+
+def test_panel_with_one_model_uses_two_cells_and_degrades_to_one_at_the_top(monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
+    cells = lattice()
+    panel = choose_panel(parse_cell("opus/medium"), cells)
+    assert len(panel) == 2 and len(set(panel)) == 2 and all(c.spec.short == "opus" for c in panel)
+    assert choose_panel(parse_cell("opus/max"), cells) == [parse_cell("opus/max")]
+
+
+def test_panel_is_automatic_at_critical_risk_for_judgement_kinds_without_checker():
+    policy = Policy()
+    assert policy.plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "panel"
+    assert policy.plan(Task(prompt="x", kind="write", risk="critical")).verify == "panel"
+    assert policy.plan(Task(prompt="x", kind="code", risk="critical")).verify == "full"
+    assert policy.plan(Task(prompt="x", kind="analysis", risk="high")).verify == "light"
+    with_checker = Task(prompt="x", kind="analysis", risk="critical", checker=contains_checker("42"))
+    assert policy.plan(with_checker).verify == "full"
+    assert policy.plan(Task(prompt="x", kind="analysis", risk="critical", verify="full")).verify == "full"
+    assert policy.plan(Task(prompt="x", kind="code", risk="low", verify="panel")).verify == "panel"
+    assert Policy(panel_kinds=frozenset()).plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "full"
+    plan = policy.plan(Task(prompt="x", kind="review", risk="critical"))
+    assert any(r.startswith("panel:") for r in plan.rationale)
+
+
+def test_judges_for_lists_every_judge_and_the_panel_cost_counts_both():
+    policy = Policy()
+    cell = parse_cell("opus/high")
+    assert policy.judges_for(cell, "none") == []
+    assert policy.judges_for(cell, "full") == [choose_verifier(cell, "full", policy.cells)]
+    assert policy.judges_for(cell, "panel") == choose_panel(cell, policy.cells)
+    assert policy.attempt_cost(cell, "panel", 2000, 1500) > policy.attempt_cost(cell, "full", 2000, 1500)
+
+
 def test_invalid_task_values_are_rejected():
     with pytest.raises(ValueError):
         Task(prompt="x", kind="poem")
@@ -84,6 +125,8 @@ def test_invalid_task_values_are_rejected():
         Task(prompt="x", risk="huge")
     with pytest.raises(ValueError):
         Task(prompt="   ")
+    with pytest.raises(ValueError):
+        Task(prompt="x", verify="council")
 
 
 def test_policy_falls_back_when_the_table_names_a_missing_model(monkeypatch):

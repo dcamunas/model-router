@@ -1,6 +1,8 @@
 """Routing policy: which cell starts a task, how it escalates, how it is verified and what it may
 spend. Everything is a table you can read and edit; the feedback store nudges the start cell once
-it has seen enough verdicts for a kind.
+it has seen enough verdicts for a kind. Verification has four modes: none, one light judge, one full
+judge on another model, or a panel of two judges that must agree (critical risk, no checker, kinds
+where only judgement can decide).
 """
 
 from __future__ import annotations
@@ -31,6 +33,9 @@ START: dict[str, dict[str, str]] = {
 # A task never starts below this capability, whatever the feedback store suggests.
 FLOOR: dict[str, str] = {"high": "sonnet/low", "critical": "opus/medium"}
 VERIFY_BY_RISK: dict[str, str] = {"low": "none", "medium": "none", "high": "light", "critical": "full"}
+# Kinds where no checker can decide: when the risk calls for a full judge and the task has no checker,
+# the policy asks a panel of two judges instead of one.
+PANEL_KINDS: frozenset[str] = frozenset({"analysis", "write", "review"})
 BUDGET_USD_BY_RISK: dict[str, float] = {"low": 0.10, "medium": 0.50, "high": 2.00, "critical": 10.00}
 MAX_ATTEMPTS_BY_RISK: dict[str, int] = {"low": 2, "medium": 3, "high": 4, "critical": 5}
 BUDGET_ATTEMPTS = 3.0  # the budget is at least this many first attempts, so big prompts are not starved
@@ -66,25 +71,51 @@ class PolicyProtocol(Protocol):
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None: ...
 
+    def judges_for(self, worker: Cell, mode: str) -> list[Cell]: ...
+
 
 def _judge_cost(cell: Cell) -> float:
     return cell.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
 
 
-def choose_verifier(worker: Cell, mode: str, cells: list[Cell]) -> Cell | None:
-    """light: the cheapest cell at least as capable as the worker (may be the worker's own cell, in
-    a fresh context). full: the cheapest cell clearly more capable AND on another model, so the
-    check is a blind cross-check; when no other model qualifies, a fresh context on the same model.
-    """
-    if mode == "none":
-        return None
-    if mode == "light":
-        cands = [c for c in cells if c.capability >= worker.capability - 1e-9]
-        return min(cands, key=_judge_cost)
+def _light_judge(worker: Cell, cells: list[Cell]) -> Cell:
+    cands = [c for c in cells if c.capability >= worker.capability - 1e-9]
+    return min(cands, key=_judge_cost) if cands else worker
+
+
+def _full_judge(worker: Cell, cells: list[Cell]) -> Cell:
     cands = [c for c in cells if c.capability >= worker.capability + FULL_VERIFY_GAIN - 1e-9 and c.model != worker.model]
     if not cands:
         cands = [c for c in cells if c.capability >= worker.capability - 1e-9 and c != worker]
     return min(cands, key=_judge_cost) if cands else worker
+
+
+def choose_verifier(worker: Cell, mode: str, cells: list[Cell]) -> Cell | None:
+    """Return the judge for `mode`. light: the cheapest cell at least as capable as the worker (may be
+    the worker's own cell, in a fresh context). full (also one of the two judges of a panel): the
+    cheapest cell clearly more capable AND on another model, so the check is a blind cross-check;
+    when no other model qualifies, a fresh context on the same model.
+    """
+    if mode == "none":
+        return None
+    if mode == "light":
+        return _light_judge(worker, cells)
+    return _full_judge(worker, cells)
+
+
+def choose_panel(worker: Cell, cells: list[Cell]) -> list[Cell]:
+    """Return the judges of a panel for `worker`, cheapest first: the full judge (another model, clearly
+    more capable) and, from the remaining models, the cheapest cell at least as capable as the worker
+    (a fresh context on the worker's own cell counts). With one model available the second judge is
+    the cheapest other cell at least as capable as the worker; with none, the panel has one judge.
+    """
+    full = _full_judge(worker, cells)
+    others = [c for c in cells if c.capability >= worker.capability - 1e-9 and c.model != full.model]
+    if not others:
+        others = [c for c in cells if c.capability >= worker.capability - 1e-9 and c != full]
+    if not others:
+        return [full]
+    return sorted({full, min(others, key=_judge_cost)}, key=_judge_cost)
 
 
 class Policy:
@@ -97,12 +128,14 @@ class Policy:
         start_table: dict[str, dict[str, str]] | None = None,
         feedback: FeedbackStore | None = None,
         min_gain: float = 0.08,
+        panel_kinds: frozenset[str] = PANEL_KINDS,
     ) -> None:
         self.cells = cells or lattice()
         self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
         self.start_table = start_table or START
         self.feedback = feedback
         self.min_gain = min_gain
+        self.panel_kinds = panel_kinds
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
         """Replace a cell whose model this installation does not have with the nearest available one."""
@@ -121,6 +154,9 @@ class Policy:
         rationale = [f"table {kind} x {risk} -> {start}"]
         start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
+        if task.verify is None and verify == "full" and kind in self.panel_kinds and task.checker is None:
+            verify = "panel"
+            rationale.append(f"panel: {risk} {kind} with no checker, two judges must agree")
         est_input = task.estimated_input_tokens
         out_tokens = task.planned_output_tokens
         if self.feedback is not None:
@@ -145,14 +181,23 @@ class Policy:
         return Plan(cells, verify, budget, max_attempts, rationale)
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
-        """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`."""
+        """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`; for `panel` it is the
+        full judge alone, `judges_for` has both.
+        """
         return choose_verifier(worker, mode, self.cells)
 
+    def judges_for(self, worker: Cell, mode: str) -> list[Cell]:
+        """Return every judge `mode` consults on `worker`'s answer, cheapest first: none for `none`, one
+        for `light` and `full`, two for `panel`.
+        """
+        return _judges(worker, mode, self.cells)
+
     def attempt_cost(self, cell: Cell, verify: str, est_input: int, out_tokens: int) -> float:
-        """Return the expected cost of one attempt on `cell` including its verification call."""
+        """Return the expected cost of one attempt on `cell` including its verification calls (both judges
+        of a panel, although the second is skipped when the first fails).
+        """
         cost = cell.expected_cost(est_input, out_tokens)
-        judge = self.verifier_for(cell, verify)
-        if judge is not None:
+        for judge in self.judges_for(cell, verify):
             cost += judge.expected_cost(est_input + out_tokens + JUDGE_PROMPT_OVERHEAD_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
         return cost
 
@@ -188,3 +233,14 @@ class LadderPolicy:
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
         """Return the cell that verifies `worker`'s answer in `mode`, chosen from the whole lattice."""
         return choose_verifier(worker, mode, self._all)
+
+    def judges_for(self, worker: Cell, mode: str) -> list[Cell]:
+        """Return every judge `mode` consults on `worker`'s answer, chosen from the whole lattice."""
+        return _judges(worker, mode, self._all)
+
+
+def _judges(worker: Cell, mode: str, cells: list[Cell]) -> list[Cell]:
+    if mode == "panel":
+        return choose_panel(worker, cells)
+    judge = choose_verifier(worker, mode, cells)
+    return [] if judge is None else [judge]

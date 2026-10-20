@@ -1,7 +1,9 @@
 """Verification by risk. Order of trust: the task's programmatic checker (free, authoritative when
 it fails), then a judge model with a structured verdict. `light` uses the cheapest cell at least as
 capable as the worker; `full` uses a clearly more capable cell on another model, a blind
-cross-check in a fresh context.
+cross-check in a fresh context; `panel` asks two judges on different cells, cheapest first, and
+passes only when both pass. The second judge is not asked when the first fails, and no judge sees
+another's verdict.
 """
 
 from __future__ import annotations
@@ -55,20 +57,23 @@ def judge_prompt(task: Task, answer: str) -> str:
 
 @dataclass
 class VerifyResult:
-    """What verification decided and what it cost; `source` says who decided (checker, judge, none, judge-error)."""
+    """What verification decided and what it cost; `source` says who decided (checker, judge, panel, none,
+    judge-error). `cell` is the judge that decided; `judges` lists every judge asked, in order.
+    """
 
     passed: bool
-    source: str  # checker | judge | none | judge-error
+    source: str  # checker | judge | panel | none | judge-error
     reason: str = ""
     cell: Cell | None = None
     usage: Usage = field(default_factory=Usage)
     cost_usd: float = 0.0
     confidence: float | None = None
+    judges: list[Cell] = field(default_factory=list)
 
 
 class Verifier:
-    """Verifies answers by mode: the task's checker first, then a judge cell chosen by the policy; a judge
-    verdict under `min_confidence` fails.
+    """Verifies answers by mode: the task's checker first, then the judge cells the policy chooses; a judge
+    verdict under `min_confidence` fails, and a panel fails as soon as one of its judges fails.
     """
 
     def __init__(self, client: ClaudeClient, policy: PolicyProtocol, *, min_confidence: float = 0.5) -> None:
@@ -77,8 +82,9 @@ class Verifier:
         self.min_confidence = min_confidence
 
     def verify(self, task: Task, answer: str, mode: str, worker: Cell) -> VerifyResult:
-        """Verify `answer` to `task` in `mode` (none, light, full); `worker` is the cell that answered, so
-        the judge is chosen relative to it.
+        """Verify `answer` to `task` in `mode` (none, light, full, panel); `worker` is the cell that answered,
+        so the judges are chosen relative to it. A panel that the policy reduces to one judge is reported
+        as that one judge.
         """
         if task.checker is not None:
             check = task.checker(answer)
@@ -88,9 +94,14 @@ class Verifier:
                 return VerifyResult(True, "checker", check.reason)
         elif mode == "none":
             return VerifyResult(True, "none", "no verification requested")
-        cell = self.policy.verifier_for(worker, mode)
-        if cell is None:
+        judges = self.policy.judges_for(worker, mode)
+        if not judges:
             return VerifyResult(True, "none", "no verifier cell")
+        if mode != "panel" or len(judges) == 1:
+            return self._ask(task, answer, judges[0])
+        return self._panel(task, answer, judges)
+
+    def _ask(self, task: Task, answer: str, cell: Cell) -> VerifyResult:
         completion = self.client.complete(
             cell, prompt=judge_prompt(task, answer), system=JUDGE_SYSTEM, max_tokens=JUDGE_MAX_TOKENS, output_format=Verdict
         )
@@ -98,9 +109,38 @@ class Verifier:
         verdict = completion.parsed
         if completion.refused or not isinstance(verdict, Verdict):
             why = f"refused ({completion.refusal_category})" if completion.refused else "no structured verdict"
-            return VerifyResult(False, "judge-error", f"verifier returned no verdict: {why}", cell, completion.usage, cost)
+            return VerifyResult(False, "judge-error", f"verifier returned no verdict: {why}", cell, completion.usage, cost,
+                                judges=[cell])
         confidence = max(0.0, min(1.0, verdict.confidence))
         passed = verdict.passed and confidence >= self.min_confidence
         issues = "; ".join(verdict.issues[:MAX_ISSUES_SHOWN])
         reason = verdict.reason if passed or not verdict.issues else f"{verdict.reason} | {issues}"
-        return VerifyResult(passed, "judge", reason, cell, completion.usage, cost, confidence)
+        return VerifyResult(passed, "judge", reason, cell, completion.usage, cost, confidence, judges=[cell])
+
+    def _panel(self, task: Task, answer: str, judges: list[Cell]) -> VerifyResult:
+        """Ask the judges in order and stop at the first fail: the panel passes only when every judge passes."""
+        asked: list[VerifyResult] = []
+        for cell in judges:
+            asked.append(self._ask(task, answer, cell))
+            if not asked[-1].passed:
+                break
+        last = asked[-1]
+        usage = Usage()
+        for r in asked:
+            usage = usage + r.usage
+        cost = sum(r.cost_usd for r in asked)
+        confidences = [r.confidence for r in asked if r.confidence is not None]
+        confidence = min(confidences) if confidences else None
+        cells = [r.cell for r in asked if r.cell is not None]
+        names = " + ".join(map(str, cells))
+        if last.source == "judge-error":
+            reason = f"panel ({names}): {last.reason}"
+            return VerifyResult(False, "judge-error", reason, last.cell, usage, cost, confidence, cells)
+        if last.passed:
+            reason = f"panel agreed ({names}): {last.reason}"
+        elif len(asked) == 1:
+            reason = f"panel: {last.cell} failed, the other judge was not asked: {last.reason}"
+        else:
+            passed_by = ", ".join(map(str, cells[:-1]))
+            reason = f"panel split: {passed_by} passed, {last.cell} failed: {last.reason}"
+        return VerifyResult(last.passed, "panel", reason, last.cell, usage, cost, confidence, cells)
