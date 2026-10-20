@@ -2,6 +2,12 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `evals/v1.yaml`: a starter evaluation set of fifteen made-up tasks for `router bench`, reviewed so that a correct answer passes each checker and a lazy one does not.
+
 ## [0.4.0] - 2026-10-20
 
 ### Added

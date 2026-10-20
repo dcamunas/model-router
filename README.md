@@ -289,7 +289,9 @@ structured output goes through `parse`; above 16K tokens the call streams.
 
 An evaluation set of your own: 20 to 30 real tasks, frozen, with a checker or a reference answer,
 run through `router bench tasks.yaml` with several strategies. Until then, the only reliable number
-this gives you is the real cost per solved task in the ledger.
+this gives you is the real cost per solved task in the ledger. `evals/v1.yaml` is a starter set of
+fifteen made-up tasks (ten with a checker, two critical ones without so the panel runs): copy it and
+replace the tasks with yours.
 
 ## Development
 
