@@ -69,7 +69,7 @@ class Ledger:
     def tasks(self) -> list[dict[str, Any]]:
         """Return the task records with human overrides applied; the last override wins."""
         records = self.load()
-        by_id = {r["task_id"]: r for r in records if r.get("type") == "task"}
+        by_id = {r["task_id"]: dict(r) for r in records if r.get("type") == "task"}  # copies: the originals stay as written
         for r in records:
             if r.get("type") == "override" and r["task_id"] in by_id:
                 t = by_id[r["task_id"]]
@@ -78,11 +78,19 @@ class Ledger:
         return list(by_id.values())
 
     def find(self, task_id: str) -> dict[str, Any] | None:
-        """Return the task record with `task_id`, or None."""
+        """Return the task record with `task_id` as it was written (overrides not applied), or None."""
         for r in self.load():
             if r.get("type") == "task" and r["task_id"] == task_id:
-                return r
+                return dict(r)
         return None
+
+    def last_override(self, task_id: str) -> bool | None:
+        """Return the verdict of the last human override of `task_id`, or None when it was never overridden."""
+        last = None
+        for r in self.load():
+            if r.get("type") == "override" and r.get("task_id") == task_id:
+                last = bool(r["passed"])
+        return last
 
 
 @dataclass

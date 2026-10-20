@@ -121,6 +121,71 @@ def test_truncated_answer_is_retried_once_on_the_same_cell_with_more_room():
     assert [c["max_tokens"] for c in client.calls] == [1000, 2000]
 
 
+def test_judge_outage_keeps_the_attempt_and_ends_the_task_as_error(tmp_path: Path):
+    class JudgeDown(FakeClient):
+        def complete(self, cell, **kw):
+            if kw.get("output_format") is not None:
+                raise ClientUnavailableError("rate limited")
+            return super().complete(cell, **kw)
+
+    client = JudgeDown(script={"*": [Reply("draft")]})
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    store = FeedbackStore(tmp_path / "fb.json")
+    result = Router(client, ledger=ledger, feedback=store).run(Task(prompt="x", kind="write", risk="high"))
+    assert result.status == "error" and result.answer == "draft" and result.final_cell == parse_cell("opus/low")
+    attempt = result.attempts[0]
+    assert attempt.verdict is None and attempt.verdict_source == "judge-error" and "rate limited" in attempt.reason
+    assert attempt.cost_usd > 0 and result.verify_cost_usd == 0
+    assert ledger.tasks()[0]["status"] == "error"
+    assert store.data == {}  # a judge that could not answer is no evidence against the worker
+
+
+def test_feedback_learns_only_from_verified_verdicts(tmp_path: Path):
+    store = FeedbackStore(tmp_path / "fb.json")
+    client = FakeClient(script={"*": [Reply("hello")]}, judge={"*": [Reply("{}", parsed=None)]})
+    router = Router(client, feedback=store)
+    router.run(Task(prompt="hi", kind="chat", risk="low"))  # accepted without verification
+    assert store.data == {}
+    result = router.run(Task(prompt="x", kind="write", risk="high", max_attempts=1))  # judge returns no verdict
+    assert result.attempts[0].verdict_source == "judge-error"
+    assert store.data == {}
+    router.run(Task(prompt="x", kind="chat", risk="low", checker=contains_checker("hello")))
+    assert store.first_attempt_stats("chat", parse_cell("sonnet/low")) == (1, 1.0)
+
+
+def test_first_attempt_flag_belongs_to_the_start_cell_only(tmp_path: Path):
+    store = FeedbackStore(tmp_path / "fb.json")
+    refusal = Reply("", refused=True, refusal_category="x", stop_reason="refusal")
+    client = FakeClient(script={"opus/low": [refusal], "fable/low": [Reply("42")]})
+    result = Router(client, feedback=store).run(Task(prompt="f", kind="code", risk="medium", checker=contains_checker("42")))
+    assert result.solved and [a.cell.label for a in result.attempts] == ["opus/low", "fable/low"]
+    assert store.first_attempt_stats("code", parse_cell("fable/low")) == (0, None)  # escalated, not a first attempt
+    assert store.data["code"]["fable/low"] == {"n": 1, "pass": 1, "n_first": 0, "pass_first": 0}
+    client = FakeClient(script={"sonnet/low": [Reply("half", stop_reason="max_tokens"), Reply("42")]})
+    Router(client, feedback=store).run(Task(prompt="f", kind="chat", risk="low", max_tokens=1000, checker=contains_checker("42")))
+    assert store.first_attempt_stats("chat", parse_cell("sonnet/low")) == (1, 1.0)  # the retry on the start cell is first
+
+
+def test_truncation_retry_stops_at_the_models_output_cap():
+    client = FakeClient(script={"sonnet/low": [Reply("half", stop_reason="max_tokens"), Reply("whole")]})
+    result = Router(client).run(Task(prompt="chat", kind="chat", risk="low", max_tokens=100_000))
+    assert result.solved and [c["max_tokens"] for c in client.calls] == [100_000, 128_000]
+    client = FakeClient(script={"sonnet/low": [Reply("half", stop_reason="max_tokens")]})
+    result = Router(client).run(Task(prompt="chat", kind="chat", risk="low", max_tokens=128_000))
+    assert len(client.calls) == 1 and result.attempts[0].verdict_source == "none"  # no room left: no retry
+
+
+def test_in_memory_ledger_keeps_the_original_record_after_an_override():
+    ledger = Ledger(None)
+    client = FakeClient(script={"*": [Reply("42")]})
+    Router(client, ledger=ledger).run(Task(prompt="f", kind="code", risk="medium", checker=contains_checker("42"), id="m1"))
+    ledger.override("m1", passed=False)
+    assert ledger.tasks()[0]["status"] == "unsolved"
+    found = ledger.find("m1")
+    assert found is not None and found["status"] == "solved" and "overridden" not in found
+    assert ledger.last_override("m1") is False and ledger.last_override("nope") is None
+
+
 def test_api_unavailable_is_recorded_and_not_escalated():
     class Down:
         def complete(self, cell, **kw):

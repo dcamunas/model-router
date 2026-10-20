@@ -12,6 +12,21 @@ def test_rules_place_common_spanish_and_english_prompts():
     assert classify_rules("Es crítico: borra los duplicados").risk == "critical"
 
 
+def test_risk_keywords_do_not_fire_inside_other_words():
+    assert classify_rules("Escribe un borrador del post sobre migraciones").risk == "medium"
+    assert classify_rules("Mejora la medición de latencia del script").risk == "medium"
+    assert classify_rules("Bórralo todo de la tabla de clientes").risk == "high"
+    assert classify_rules("Es una decisión crítica para el equipo").risk == "critical"
+    assert classify_rules("Revisa el historial médico del paciente").risk == "high"
+
+
+def test_accented_forms_and_bug_fixes_land_on_their_kind():
+    assert classify_rules("Haz un análisis de ventas por región").kind == "analysis"
+    assert classify_rules("Revísalo, por favor").kind == "review"
+    assert classify_rules("Fix this bug in the parser").kind == "code"
+    assert classify_rules("Find bugs in this module").kind == "review"
+
+
 def test_search_prompts_are_their_own_kind():
     assert classify_rules("Explora el repo y lista los módulos que tocan la base de datos").kind == "search"
     assert classify_rules("Find where the config is loaded").kind == "search"

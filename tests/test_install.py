@@ -22,6 +22,39 @@ def _settings(home):
     return json.loads((home / "profile" / "settings.json").read_text())
 
 
+def test_settings_of_an_unexpected_shape_stop_install_with_one_line(home):
+    profile = home / "profile"
+    profile.mkdir()
+    settings = profile / "settings.json"
+    settings.write_text("[]")
+    with pytest.raises(SystemExit, match="not a JSON object"):
+        install(settings, no_skill=True)
+    settings.write_text(json.dumps({"hooks": []}))
+    with pytest.raises(SystemExit, match="`hooks`.*not an object"):
+        install(settings, no_skill=True)
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": "x"}}))
+    with pytest.raises(SystemExit, match="not a list"):
+        uninstall(settings, no_skill=True)
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": ["x", {"hooks": "y"}]}}))
+    assert install(settings, no_skill=True) == 0  # odd entries are kept as they are, the router's are added
+    assert _settings(home)["hooks"]["PreToolUse"][:2] == ["x", {"hooks": "y"}]
+
+
+def test_uninstall_leaves_the_hooks_when_a_foreign_skill_is_in_the_way(home, capsys):
+    profile = home / "profile"
+    profile.mkdir()
+    settings = profile / "settings.json"
+    settings.write_text("{}")
+    assert install(settings, no_skill=True) == 0
+    foreign = profile / "skills" / "router"
+    foreign.mkdir(parents=True)
+    (foreign / "SKILL.md").write_text("---\nname: other\n---\n")
+    with pytest.raises(SystemExit, match="not the router skill"):
+        uninstall(settings)
+    assert "PreToolUse" in _settings(home)["hooks"]  # nothing was removed
+    assert (foreign / "SKILL.md").exists()
+
+
 def test_install_writes_hooks_copies_skill_and_remembers_profile_and_models(home, capsys):
     profile = home / "profile"
     profile.mkdir()

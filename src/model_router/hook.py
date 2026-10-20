@@ -74,9 +74,12 @@ def main_model(transcript_path: str | None) -> str | None:
             entry = json.loads(line)
         except ValueError:  # the first line of the tail is usually cut
             continue
-        if entry.get("type") != "assistant" or entry.get("isSidechain"):
+        if not isinstance(entry, dict) or entry.get("type") != "assistant" or entry.get("isSidechain"):
             continue
-        model_id = str((entry.get("message") or {}).get("model") or "")
+        message = entry.get("message")
+        model_id = str(message.get("model") or "") if isinstance(message, dict) else ""
+        if not model_id:
+            continue  # an assistant entry without a model (or of an odd shape) says nothing; look further back
         if model_id in MODELS:
             return MODELS[model_id].short
         return next((spec.short for spec in MODELS.values() if spec.short in model_id), None)
@@ -142,7 +145,10 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
     updated, record = decide(event.get("tool_input") or {}, main_model(event.get("transcript_path")))
     if updated is None:
         return None
-    _log(event, record)
+    try:
+        _log(event, record)
+    except OSError as exc:  # a log that cannot be written must not cost the routing
+        sys.stderr.write(f"router-hook: decision not logged: {exc}\n")
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": updated}}
     if os.environ.get(HOOK_QUIET_ENV) != "1":
         out["systemMessage"] = f"router: {record['cell']} ({record['kind']}/{record['risk']})" + (

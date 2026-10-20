@@ -205,10 +205,11 @@ class Policy:
             if start.capability < floor_cell.capability:
                 rationale.append(f"risk floor {risk}: {start} -> {floor_cell}")
                 start = floor_cell
-        max_attempts = task.max_attempts or MAX_ATTEMPTS_BY_RISK[risk]
+        max_attempts = task.max_attempts if task.max_attempts is not None else MAX_ATTEMPTS_BY_RISK[risk]
         cells = ladder(start, self.cells, max_attempts, min_gain=self.min_gain)
         first_attempt = start.expected_cost(est_input, out_tokens)
-        budget = task.budget_usd or max(BUDGET_USD_BY_RISK[risk], BUDGET_ATTEMPTS * first_attempt)
+        default_budget = max(BUDGET_USD_BY_RISK[risk], BUDGET_ATTEMPTS * first_attempt)
+        budget = task.budget_usd if task.budget_usd is not None else default_budget
         rationale.append(f"ladder: {' -> '.join(map(str, cells))}")
         rationale.append(f"verification {verify} (risk {risk}); budget ${budget:.2f}; max {max_attempts} attempts")
         return Plan(cells, verify, budget, max_attempts, rationale)
@@ -264,7 +265,8 @@ class LadderPolicy:
 
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)
-        return Plan(cells, task.verify or self.verify, task.budget_usd or self.budget_usd, len(cells),
+        budget = task.budget_usd if task.budget_usd is not None else self.budget_usd
+        return Plan(cells, task.verify or self.verify, budget, len(cells),
                     [f"fixed ladder: {' -> '.join(map(str, cells))}"])
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:

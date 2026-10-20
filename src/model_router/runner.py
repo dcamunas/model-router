@@ -14,7 +14,7 @@ from .catalog import PLAN_OUTPUT_TOKENS_AT_HIGH, Cell, Usage, cost_usd
 from .client import ClaudeClient, ClientUnavailableError
 from .policy import Policy, PolicyProtocol
 from .task import Task
-from .verify import Verifier
+from .verify import VERIFIED_SOURCES, Verifier
 
 if TYPE_CHECKING:
     from .feedback import FeedbackStore
@@ -148,7 +148,8 @@ class Router:
 
     def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
         """Run `task` through its plan and return the result. Side effects: the result is appended to the
-        ledger and, with a feedback store, every verdict is recorded and the store saved.
+        ledger and, with a feedback store, every verified verdict (checker, judge or panel) is recorded
+        and the store saved; a judge that cannot be reached ends the task with status `error`.
         """
         plan = self.policy.plan(task)
         est_input = task.estimated_input_tokens
@@ -186,13 +187,20 @@ class Router:
                     break
                 i += 1
                 continue
-            if completion.stop_reason == "max_tokens" and not truncated_retry and max_tokens * 2 <= cell.spec.max_output:
+            if completion.stop_reason == "max_tokens" and not truncated_retry and max_tokens < cell.spec.max_output:
                 truncated_retry = True
+                room = min(max_tokens * 2, cell.spec.max_output)
                 attempts.append(replace(base, verdict_source="truncated",
-                                        reason=f"cut at max_tokens={max_tokens}; retrying with {max_tokens * 2}"))
-                max_tokens *= 2
+                                        reason=f"cut at max_tokens={max_tokens}; retrying with {room}"))
+                max_tokens = room
                 continue
-            verdict = self.verifier.verify(task, completion.text, plan.verify, cell)
+            try:
+                verdict = self.verifier.verify(task, completion.text, plan.verify, cell)
+            except ClientUnavailableError as exc:
+                attempts.append(replace(base, verdict_source="judge-error", reason=f"verifier unavailable: {exc}"))
+                answer, parsed, final = completion.text, completion.parsed, cell
+                status = "error"
+                break
             spent += verdict.cost_usd
             attempts.append(replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
                                     verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
@@ -215,9 +223,10 @@ class Router:
         if self.feedback is not None:
             first = True
             for a in attempts:
-                if a.verdict is not None:
-                    self.feedback.record(task.kind, a.cell, a.verdict, first=first)
-                    first = False
+                if a.verdict is None or a.verdict_source not in VERIFIED_SOURCES:
+                    continue  # refusals, truncations, judge errors and unverified passes are not evidence
+                self.feedback.record(task.kind, a.cell, a.verdict, first=first and a.cell == plan.ladder[0])
+                first = False
             self.feedback.save()
         self.ledger.append(result)
         return result

@@ -26,6 +26,7 @@ from .paths import CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config
 from .policy import DEFAULT_JUDGE, LadderPolicy, Policy, PolicyProtocol, default_judge
 from .runner import Router, TaskResult
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
+from .verify import VERIFIED_SOURCES
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02, "panel": 0.025}  # per verified attempt, rough, for the bench
@@ -219,7 +220,10 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     print(f"{len(tasks)} tasks x {len(strategies)} strategies · estimate {money(estimate)} "
           "(a rough one; it may fall short)")
     if not args.yes:
-        answer = input("Make real calls? [y/N] ").strip().lower()
+        try:
+            answer = input("Make real calls? [y/N] ").strip().lower()
+        except EOFError:  # no terminal to answer from: that is a no
+            answer = ""
         if answer not in ("y", "yes"):
             print("cancelled")
             return 1
@@ -283,23 +287,29 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
         data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
     except ValueError:
         return [(False, f"{settings} is not valid JSON: Claude Code ignores the whole file")]
+    if not isinstance(data, dict):
+        return [(False, f"{settings} is not a JSON object: Claude Code ignores the whole file")]
     checks: list[tuple[bool, str]] = []
-    if (data.get("enabledPlugins") or {}).get(PLUGIN_ID):
+    plugins = data.get("enabledPlugins")
+    if isinstance(plugins, dict) and plugins.get(PLUGIN_ID):
         checks.append((True, f"plugin {PLUGIN_ID} enabled in {settings}: hooks and skill come from the plugin"))
         venv_hook = profile / "plugins" / "data" / PLUGIN_ID.replace("@", "-") / "venv" / "bin" / "router-hook"
         ready = venv_hook.exists()
         note = "" if ready else " (built when a session starts; needs uv)"
         checks.append((ready, f"plugin environment: {venv_hook}{note}"))
     else:
-        hooks = data.get("hooks", {})
+        hooks = data.get("hooks")
+        hooks = hooks if isinstance(hooks, dict) else {}
 
         def wired(event: str, matcher: str | None = None) -> bool:
-            for entry in hooks.get(event, []):
-                if matcher and entry.get("matcher") != matcher:
+            entries = hooks.get(event)
+            for entry in entries if isinstance(entries, list) else []:
+                if not isinstance(entry, dict) or (matcher and entry.get("matcher") != matcher):
                     continue
-                for h in entry.get("hooks", []):
-                    if "router-hook" in str(h.get("command", "")):
-                        return Path(h["command"]).exists()
+                commands = entry.get("hooks")
+                for h in commands if isinstance(commands, list) else []:
+                    if isinstance(h, dict) and "router-hook" in str(h.get("command", "")):
+                        return Path(str(h["command"])).exists()
             return False
 
         fix = " (missing: the plugin or router install)"
@@ -310,7 +320,9 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
         checks.append((link.is_dir(), f"skill router: {link}" + ("" if link.is_dir() else fix)))
     model = str(data.get("model", "default"))
     model_id = SHORT_TO_ID.get(model, model)  # settings may name the model by its short name
-    effort = (data.get("modelSettings") or {}).get(model_id, {}).get("effortLevel")
+    model_settings = data.get("modelSettings")
+    per_model = model_settings.get(model_id) if isinstance(model_settings, dict) else None
+    effort = per_model.get("effortLevel") if isinstance(per_model, dict) else None
     checks.append((True, f"main chat: model {model}" + (f", effort {effort}" if effort else "")))
     return checks
 
@@ -381,13 +393,39 @@ def _cmd_feedback(args: argparse.Namespace) -> int:
     if record is None:
         raise SystemExit(f"no task {args.task_id} in {ledger.path}")
     passed = bool(args.ok)
+    prior = ledger.last_override(args.task_id)
+    if prior is None:
+        prior = _verified_verdict(record)
     ledger.override(args.task_id, passed, note=args.note or "")
-    if record.get("final_cell"):
+    if record.get("final_cell") and prior is not None and prior != passed:
         feedback = FeedbackStore(home() / "feedback.json")
-        feedback.apply_override(record["kind"], record["final_cell"], passed, first=len(record["attempts"]) == 1)
+        feedback.apply_override(record["kind"], record["final_cell"], passed, first=_was_first_verdict(record))
         feedback.save()
     print(f"{args.task_id}: marked as {'pass' if passed else 'fail'}")
     return 0
+
+
+def _verified_verdict(record: dict[str, Any]) -> bool | None:
+    """Return the final attempt's verdict when a checker or a judge gave it, else None: there is nothing in
+    the feedback store to correct.
+    """
+    attempts = record.get("attempts") or []
+    if not attempts:
+        return None
+    last = attempts[-1]
+    if last.get("verdict") is None or last.get("verdict_source") not in VERIFIED_SOURCES:
+        return None
+    return bool(last["verdict"])
+
+
+def _was_first_verdict(record: dict[str, Any]) -> bool:
+    """Return whether the final attempt is the one the feedback store counted as a first attempt: on the
+    start cell, with no verified verdict before it.
+    """
+    attempts, plan = record.get("attempts") or [], record.get("plan") or []
+    if not attempts or not plan or attempts[-1].get("cell") != plan[0]:
+        return False
+    return all(a.get("verdict") is None or a.get("verdict_source") not in VERIFIED_SOURCES for a in attempts[:-1])
 
 
 def _cmd_cells(_args: argparse.Namespace) -> int:
@@ -524,6 +562,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                          f"(check {MODELS_ENV}, config.json or --models)") from exc
     except ValueError as exc:
         raise SystemExit(f"invalid value: {exc}") from exc
+    except OSError as exc:
+        raise SystemExit(f"cannot access {exc.filename or 'a file'}: {exc.strerror or exc}") from exc
 
 
 if __name__ == "__main__":

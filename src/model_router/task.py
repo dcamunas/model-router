@@ -64,6 +64,12 @@ class Task:
             raise ValueError(f"unknown verify mode {self.verify!r}; known: {', '.join(VERIFY_MODES)}")
         if not self.prompt.strip():
             raise ValueError("empty prompt")
+        if self.max_tokens < 1:
+            raise ValueError("max_tokens must be at least 1")
+        if self.max_attempts is not None and self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if self.budget_usd is not None and self.budget_usd <= 0:
+            raise ValueError("budget_usd must be positive")
 
     @property
     def estimated_input_tokens(self) -> int:
@@ -98,16 +104,20 @@ def contains_checker(*needles: str, all_of: bool = True) -> Checker:
     return check
 
 
+FENCED_BLOCK = re.compile(r"```[\w-]*[ \t]*\r?\n(.*?)\r?\n?[ \t]*```", re.DOTALL)
+
+
 def _json_payload(answer: str) -> object:
     text = answer.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n|\n```$", "", text)
+    fenced = FENCED_BLOCK.search(text)
+    if fenced:
+        text = fenced.group(1)
     return json.loads(text)
 
 
 def json_checker(required_keys: tuple[str, ...] = ()) -> Checker:
-    """Return a checker that passes when the answer is JSON (a fenced block is unwrapped) and, with
-    `required_keys`, an object that has all of them.
+    """Return a checker that passes when the answer is JSON (the first fenced block, when there is one,
+    is what gets parsed) and, with `required_keys`, an object that has all of them.
     """
     def check(answer: str) -> CheckResult:
         try:

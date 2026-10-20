@@ -100,6 +100,64 @@ def test_feedback_overrides_the_verdict_in_the_ledger_and_the_feedback_store(hom
         main(["feedback", "nope", "--ok"])
 
 
+def _task_id(run_output: str) -> str:
+    match = re.search(r"· id (\w+)", run_output)
+    assert match is not None
+    return match.group(1)
+
+
+def test_feedback_override_moves_a_count_only_when_the_verdict_changes(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVE")]}))
+    main(["run", "classify", "--kind", "classify", "--risk", "low", "--check-regex", "POSITIVE"])
+    task_id = _task_id(capsys.readouterr().out)
+    counts = lambda: json.loads((home / "feedback.json").read_text())["classify"]["haiku/low"]  # noqa: E731
+    assert counts() == {"n": 1, "pass": 1, "n_first": 1, "pass_first": 1}
+    main(["feedback", task_id, "--ok"])  # already a pass: nothing moves
+    assert counts() == {"n": 1, "pass": 1, "n_first": 1, "pass_first": 1}
+    main(["feedback", task_id, "--ko"])
+    main(["feedback", task_id, "--ko"])  # repeating a correction does not drain other tasks' passes
+    assert counts() == {"n": 1, "pass": 0, "n_first": 1, "pass_first": 0}
+    main(["feedback", task_id, "--ok"])
+    assert counts() == {"n": 1, "pass": 1, "n_first": 1, "pass_first": 1}
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("hello")]}))
+    main(["run", "hi", "--kind", "chat", "--risk", "low"])  # accepted without any verification
+    task_id = _task_id(capsys.readouterr().out)
+    main(["feedback", task_id, "--ko"])
+    assert "chat" not in json.loads((home / "feedback.json").read_text())  # nothing was ever counted for it
+
+
+def test_a_missing_task_or_system_file_is_a_one_line_error(home):
+    with pytest.raises(SystemExit, match="cannot access"):
+        main(["plan", "--file", str(home / "nope.md")])
+    with pytest.raises(SystemExit, match="cannot access"):
+        main(["plan", "x", "--system", str(home / "nope.txt")])
+
+
+def test_bench_without_a_terminal_to_confirm_is_cancelled(home, monkeypatch, capsys):
+    spec = home / "t.json"
+    spec.write_text(json.dumps({"tasks": [{"id": "c1", "kind": "chat", "risk": "low", "prompt": "hi"}]}))
+
+    def no_terminal(_prompt=""):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", no_terminal)
+    assert main(["bench", str(spec)]) == 1
+    assert "cancelled" in capsys.readouterr().out
+
+
+def test_doctor_survives_a_profile_whose_settings_have_an_odd_shape(home, monkeypatch, capsys):
+    profile = home / "p"
+    profile.mkdir()
+    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(profile))
+    (profile / "settings.json").write_text("[]")
+    main(["doctor"])
+    assert "not a JSON object" in capsys.readouterr().out
+    (profile / "settings.json").write_text(json.dumps({"hooks": [], "enabledPlugins": [], "modelSettings": 3, "model": "opus"}))
+    main(["doctor"])
+    out = capsys.readouterr().out
+    assert "hook PreToolUse(Agent)" in out and "main chat: model opus" in out
+
+
 def test_bench_file_runs_tasks_in_parallel(home, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVE")] * 6}))
     spec = home / "t.json"

@@ -67,6 +67,20 @@ def resolve_config_dir() -> Path:
     return resolve_profile()[0]
 
 
+def _served_model(model_usage: Any, requested: str) -> str:
+    """Return the model that answered according to `modelUsage`: the requested one when it is listed, else
+    the one with the most output tokens (a fallback), else the requested one.
+    """
+    if not isinstance(model_usage, dict) or not model_usage or requested in model_usage:
+        return requested
+
+    def output_tokens(name: str) -> int:
+        usage = model_usage.get(name)
+        return int(usage.get("outputTokens") or 0) if isinstance(usage, dict) else 0
+
+    return str(max(model_usage, key=output_tokens))
+
+
 class CliClient:
     """Completions through `claude -p`. Satisfies `client.ClaudeClient`."""
 
@@ -112,11 +126,15 @@ class CliClient:
         except subprocess.TimeoutExpired as exc:
             raise ClientUnavailableError(f"claude -p exceeded {self.timeout:.0f}s") from exc
         seconds = time.monotonic() - t0
+        detail = (proc.stderr or proc.stdout).strip()[:ERROR_DETAIL_CHARS]
         try:
             data = json.loads(proc.stdout)
-        except ValueError as exc:
-            detail = (proc.stderr or proc.stdout).strip()[:ERROR_DETAIL_CHARS]
-            raise ClientUnavailableError(f"claude -p exited with code {proc.returncode} and no JSON: {detail}") from exc
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            raise ClientUnavailableError(f"claude -p exited with code {proc.returncode} and no JSON object: {detail}")
+        if proc.returncode != 0 and not data.get("is_error"):
+            raise ClientUnavailableError(f"claude -p exited with code {proc.returncode}: {detail}")
         return self.to_completion(data, cell, output_format, seconds)
 
     def to_completion(self, data: dict[str, Any], cell: Cell, output_format: type[BaseModel] | None,
@@ -134,8 +152,7 @@ class CliClient:
             cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
             cache_write_tokens=int(u.get("cache_creation_input_tokens") or 0),
         )
-        model_usage = data.get("modelUsage") or {}
-        served = next(iter(model_usage), None) or cell.model
+        served = _served_model(data.get("modelUsage"), cell.model)
         parsed = None
         structured = data.get("structured_output")
         if output_format is not None and structured is not None:

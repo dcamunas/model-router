@@ -25,6 +25,10 @@ if prompt.strip() == "LOGOUT":
     out.update(is_error=True, result="Not logged in · Please run /login")
 elif prompt.strip() == "GARBAGE":
     sys.stdout.write("not json"); sys.exit(1)
+elif prompt.strip() == "LIST":
+    sys.stdout.write("[]"); sys.exit(0)
+elif prompt.strip() == "CRASH":
+    json.dump(out, sys.stdout); sys.exit(2)
 elif opt("--json-schema"):
     out["structured_output"] = {"passed": True, "confidence": 0.9, "reason": "ok", "issues": []}
     out["stop_reason"] = "tool_use"
@@ -69,6 +73,25 @@ def test_errors_become_client_unavailable(fake):
         client.complete(parse_cell("haiku/low"), prompt="LOGOUT")
     with pytest.raises(ClientUnavailableError, match="no JSON"):
         client.complete(parse_cell("haiku/low"), prompt="GARBAGE")
+
+
+def test_unexpected_json_or_a_non_zero_exit_become_client_unavailable(fake):
+    client, _ = fake
+    with pytest.raises(ClientUnavailableError, match="no JSON object"):
+        client.complete(parse_cell("haiku/low"), prompt="LIST")
+    with pytest.raises(ClientUnavailableError, match="exited with code 2"):
+        client.complete(parse_cell("haiku/low"), prompt="CRASH")
+
+
+def test_served_model_is_the_requested_one_when_listed_else_the_busiest():
+    from model_router.cli_client import _served_model
+
+    two = {"claude-opus-5-5": {"outputTokens": 5}, "claude-haiku-5-5": {"outputTokens": 900}}
+    assert _served_model(two, "claude-opus-5-5") == "claude-opus-5-5"
+    fallback = {"claude-haiku-5-5": {"outputTokens": 900}, "claude-sonnet-5-5": {"outputTokens": 10}}
+    assert _served_model(fallback, "claude-opus-5-5") == "claude-haiku-5-5"
+    assert _served_model(None, "claude-opus-5-5") == "claude-opus-5-5"
+    assert _served_model({}, "claude-opus-5-5") == "claude-opus-5-5"
 
 
 def test_profile_must_be_explicit(monkeypatch, tmp_path):

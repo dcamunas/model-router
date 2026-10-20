@@ -15,18 +15,18 @@ from .task import KINDS, RISKS
 
 # Order matters: the first rule that matches wins.
 KIND_RULES: list[tuple[str, str]] = [
-    ("review", r"\b(revisa|revisar|review|audita|auditar|audit|code review|busca (bugs|errores)|find bugs|bug)\b"),
+    ("review", r"\b(rev[ií]sa\w*|revisar|review|audita|auditar|audit|code review|busca (bugs|errores)|find bugs)\b"),
     ("agentic", r"\b(paso a paso|multi-?step|pipeline|migra(r|me|lo|la|los|las)?|migrate|orquest\w*|orchestrat\w*|end-to-end|de principio a fin|varios ficheros|several files)\b"),
     ("classify", r"\b(clasifica\w*|classif\w*|etiqueta\w*|label\w*|categor[ií]za\w*|categori[sz]e|sentimiento|sentiment|spam|triage|triaje)\b"),
     ("extract", r"\b(extrae\w*|extract\w*|parsea\w*|parse|campos|fields|a json|to json|en json|as json|csv|tabla de|table of)\b"),
     ("summarize", r"\b(resume\w*|resumen|summar\w*|tl;?dr|s[ií]ntesis)\b"),
     ("search", r"\b(explora\w*|explore|busca\w*|buscar|search (for|in|the)|find (the|all|every|where|which)|encuentra\w*|localiza\w*|locate|lista (los|las|todos|todas|qu[eé])|list (the|all|every|which)|d[oó]nde est[aá]\w*|where (is|are)|qu[eé] ficheros|which files|inventar\w*|inventory)\b"),
     ("code", r"\b(c[oó]digo|code|funci[oó]n|function|script|implementa\w*|implement\w*|refactor\w*|tests?|sql|python|typescript|javascript|bash|regex|query|consulta|bug ?fix|arregla|fix)\b"),
-    ("analysis", r"\b(analiza\w*|analy[sz]\w*|compara\w*|compar\w*|investiga\w*|research|eval[uú]a\w*|evaluat\w*|por qu[eé]|why|estrategia|strategy|riesgos?|risks?|pros y contras|trade-?offs?)\b"),
+    ("analysis", r"\b(an[aá]lisis|analiza\w*|analy[sz]\w*|compara\w*|compar\w*|investiga\w*|research|eval[uú]a\w*|evaluat\w*|por qu[eé]|why|estrategia|strategy|riesgos?|risks?|pros y contras|trade-?offs?)\b"),
     ("write", r"\b(escribe\w*|write|redacta\w*|draft|post|email|correo|art[ií]culo|article|carta|letter|descripci[oó]n|description|copy|gui[oó]n)\b"),
 ]
-HIGH_RISK = r"\b(producci[oó]n|production|dinero|money|pago\w*|payment\w*|factura\w*|invoice\w*|legal|contrato|contract|cliente\w*|customer\w*|borra\w*|delete|elimina\w*|irreversible|m[eé]dic\w*|medical|salud|health|seguridad|security|credencial\w*|password|contrase[ñn]a)\b"
-CRITICAL_RISK = r"\b(cr[ií]tic\w*|critical|urgente|urgent|sin vuelta atr[aá]s|no undo)\b"
+HIGH_RISK = r"\b(producci[oó]n|production|dinero|money|pago\w*|payment\w*|factura\w*|invoice\w*|legal|contrato|contract|cliente\w*|customer\w*|b[oó]rra(r|rl[oa]s?|l[oa]s?|d[oa]s?)?|delete|elimina\w*|irreversible|m[eé]dic[oa]s?|medicina|medicamento\w*|medical|salud|health|seguridad|security|credencial\w*|password|contrase[ñn]a)\b"
+CRITICAL_RISK = r"\b(cr[ií]tic[oa]s?|critical|urgente|urgent|sin vuelta atr[aá]s|no undo)\b"
 
 
 @dataclass(frozen=True)

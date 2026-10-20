@@ -112,6 +112,27 @@ def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, monkey
     assert record["cell"] == "fable/low" and "another model than the chat (opus)" in record["cross"]
 
 
+def test_a_strange_transcript_line_does_not_stop_the_routing(tmp_path, monkeypatch):
+    from model_router.hook import main_model
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    path = _transcript(tmp_path, {"type": "assistant", "message": {"model": "claude-opus-5-5"}},
+                       {"type": "assistant", "message": "assistant"}, ["assistant"])
+    assert main_model(path) == "opus"  # the odd lines are skipped, the last good one counts
+    event = agent_event()
+    event["transcript_path"] = path
+    assert routed(event)["hookSpecificOutput"]["updatedInput"]["model"] == "opus"
+
+
+def test_a_log_that_cannot_be_written_does_not_stop_the_routing(tmp_path, monkeypatch, capsys):
+    blocker = tmp_path / "state"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(blocker))
+    out = routed(agent_event())
+    assert out["hookSpecificOutput"]["updatedInput"]["model"] == "opus"
+    assert "not logged" in capsys.readouterr().err
+
+
 def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp_path):
     critical = "Review this critical design of the payments migration"
     updated, record = decided({"prompt": critical}, chat_model="fable")

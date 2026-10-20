@@ -52,23 +52,36 @@ def hook_entries(hook_bin: Path) -> dict[str, list[dict[str, Any]]]:
     }
 
 
-def _is_router(entry: dict[str, Any]) -> bool:
-    return any(HOOK_NAME in str(h.get("command", "")) for h in entry.get("hooks", []))
+def _is_router(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):
+        return False
+    return any(isinstance(h, dict) and HOOK_NAME in str(h.get("command", "")) for h in hooks)
 
 
 def _read_settings(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except ValueError as exc:
         raise SystemExit(f"{path} is not valid JSON ({exc}); fix it first, Claude Code ignores the whole file") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"{path} is not a JSON object; fix it first, Claude Code ignores the whole file")
+    return data
 
 
 def _rewrite_hooks(path: Path, entries: dict[str, list[dict[str, Any]]] | None) -> None:
     """Replace the router's hook entries in `path` with `entries`, or remove them when `entries` is None."""
     data = _read_settings(path)
     hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise SystemExit(f"`hooks` in {path} is not an object; fix it first")
     for event in HOOK_EVENTS:
-        kept = [e for e in hooks.get(event, []) if not _is_router(e)]
+        present = hooks.get(event, [])
+        if not isinstance(present, list):
+            raise SystemExit(f"`hooks.{event}` in {path} is not a list; fix it first")
+        kept = [e for e in present if not _is_router(e)]
         if entries is not None:
             kept += entries.get(event, [])
         if kept:
@@ -224,7 +237,10 @@ def uninstall(settings: Path, *, skills_dir: Path | None = None, no_skill: bool 
     return 0. config.json is kept, so a later `install` finds the same profile and models.
     """
     settings = settings.expanduser()
+    skills = (skills_dir or settings.parent / "skills").expanduser()
+    if not no_skill:
+        _check_replaceable(skills / "router")  # before touching the settings, so a foreign skill stops everything
     remove_hooks(settings)
     if not no_skill:
-        remove_skill((skills_dir or settings.parent / "skills").expanduser())
+        remove_skill(skills)
     return 0
