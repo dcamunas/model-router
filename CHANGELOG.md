@@ -2,6 +2,16 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.7.0] - 2026-10-20
+
+### Added
+
+- `router judge "<task>" --answer FILE [--cell CELL]`: verify an answer written elsewhere (a Claude Code subagent, a person) with the plan's judges, light to tribunal, judges from other providers included. It is recorded in the ledger as one attempt with no worker cost and the stop reason `external`, so `router feedback` and the judges' scoreboard see it; the feedback store is left alone. Exit 1 on a fail; `--json` prints every judge's verdict. `Router.judge` is the library call. The skill now verifies subagent results this way by default and launches judge subagents only when the verdict needs tools.
+
+### Fixed
+
+- `router run` never reached a judge from another provider: only `router bench` wrapped the client. Both do now.
+
 ## [0.6.1] - 2026-10-20
 
 ### Added
