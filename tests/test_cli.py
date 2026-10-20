@@ -39,6 +39,11 @@ def test_bench_without_a_file_runs_the_simulation_and_prints_the_table(capsys):
     assert "SIMULATION" in out and "router" in out
 
 
+def test_bench_with_a_missing_file_is_a_one_line_error(tmp_path):
+    with pytest.raises(SystemExit, match="cannot read"):
+        main(["bench", str(tmp_path / "nope.yaml"), "--yes"])
+
+
 def test_cells_lists_every_cell_of_the_lattice(capsys):
     assert main(["cells"]) == 0
     assert "fable/max" in capsys.readouterr().out

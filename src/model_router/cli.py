@@ -160,7 +160,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _load_specs(path: Path) -> list[dict[str, Any]]:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"cannot read {path}: {exc.strerror or exc}") from exc
     if path.suffix.lower() in (".yaml", ".yml"):
         import yaml
 
