@@ -5,6 +5,8 @@ verifies the answer according to the risk, escalates when the answer fails, and 
 every solved task cost. You can use it from the command line, as a Python library and inside Claude
 Code, where a hook picks model and effort for every subagent launched without one.
 
+![A critical task on trial: the task reaches a worker on opus/medium, two judges read the answer blind to each other and split, the arbiter sides with the fail, a second attempt on fable/low passes, and the ledger keeps every verdict with its cost](docs/showcase/trial.gif)
+
 Status: experimental. The capability of each cell is a stated assumption, not a measurement; the
 ledger and the feedback store exist to replace those assumptions with real verdicts (see
 "Assumptions").
@@ -22,6 +24,14 @@ things are different here, and each one has its reason in the table.
 | "Simulated workload · real prices" | The same, but the simulation states its assumptions, includes the hard tail and the judge's false passes, and adds the honest cell the reel leaves out: Fable at low | A router that is never compared with "the best cheap model" proves nothing. |
 
 What it does not do: it decides nothing from real data until you have real verdicts.
+
+Compared with learned routers: [RouteLLM](https://lmsys.org/blog/2024-07-01-routellm/) trains a router on
+preference data to send each query to a strong or a weak model, [LLMRouter](https://huggingface.co/papers/2608.06867)
+collects more than a dozen routers of that kind, and [RouterArena](https://openreview.net/pdf/03e5d4326116c387dbd69c38e194211db0736cda.pdf)
+ranks them. This is not one of those. Nothing is trained: the start cell comes from a table by kind and risk,
+and a cell is model and effort inside one provider. The difference is what happens after the answer: a checker
+or a judge verifies it, a failure climbs the ladder, and every verdict feeds the table. If you want a learned
+router across providers, take one of those; this one picks the effort inside Claude Code and verifies by risk.
 
 ![router run on a critical writing task: the answer, one attempt on opus/medium judged by a tribunal of two, status solved](docs/showcase/router-run.gif)
 
@@ -265,7 +275,7 @@ With judges from other providers, register them and wrap the client: `load_exter
 
 ## Tribunal: two judges and an arbiter, not a council
 
-![The tribunal, step by step: the worker answers, two judges read it blind to each other, they split, the arbiter reads both reasoned verdicts and decides, the ledger keeps every verdict](docs/showcase/tribunal.gif)
+The figure at the top of this README walks through one case: a split, the arbiter, a retry on the next cell, the ledger.
 
 ```mermaid
 flowchart LR
@@ -387,7 +397,7 @@ replace the tasks with yours.
 uv run pytest -q
 uv run ruff check src tests   # style, types on signatures, docstrings on the public API, complexity
 uv run pyright                # types
-uv run --with pillow docs/showcase/build.py   # the README's GIFs, from docs/showcase/router-run.txt (a real run)
+uv run --with pillow docs/showcase/build.py   # the README's GIFs: the trial, and the terminal from docs/showcase/router-run.txt (a real run)
 ```
 
 GitHub Actions runs the same on every push, checks that the skill ships inside the wheel and

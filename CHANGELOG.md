@@ -2,6 +2,13 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The README opens with a new figure, a critical task on trial: the tribunal told as a courtroom, every seat labelled with its cell (worker, two blind judges, arbiter, you), a split, a retry on the next cell and the ledger. Built by `docs/showcase/build.py`, which also keeps the frames (`--frames`) and the carousel; it replaces `tribunal.gif`.
+- The README says how this differs from learned routers (RouteLLM, LLMRouter, RouterArena): nothing is trained, and the work is in what happens after the answer.
+
 ## [0.7.0] - 2026-10-20
 
 ### Added
