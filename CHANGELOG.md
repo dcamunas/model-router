@@ -2,11 +2,17 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.4.1] - 2026-10-20
+
+### Changed
+
+- The `full` judge is one fixed cell, `opus/high` by default, set with `router config --judge` or `MODEL_ROUTER_JUDGE`, in a fresh context. When the worker is on the judge's model, the judge moves to the next model up at low effort, or to the model below when there is nothing above. It was the cheapest cell clearly more capable than the worker, which at the top of the lattice meant Fable at xhigh or max judging Fable: one verdict cost $0.42 in the first real bench. No judge runs above `high` effort. The `light` judge is the worker's own cell in a fresh context, capped the same way, and the panel is those two.
+- The hook's cross-check for critical reviews never moves the review to a lower tier than the planned cell.
 
 ### Added
 
 - `evals/v1.yaml`: a starter evaluation set of fifteen made-up tasks for `router bench`, reviewed so that a correct answer passes each checker and a lazy one does not.
+- `router config --judge` and a `judge for full verification` line in `router doctor` and `router config`.
 
 ## [0.4.0] - 2026-10-20
 
