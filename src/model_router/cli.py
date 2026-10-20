@@ -13,7 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -39,6 +39,7 @@ from .catalog import (
     MODELS_ENV,
     PRICES_AS_OF,
     SHORT_TO_ID,
+    ModelSpec,
     UnknownModelError,
     available_models,
     external_models,
@@ -48,7 +49,7 @@ from .catalog import (
     parse_external,
 )
 from .classify import Classification, classify_llm, classify_rules
-from .client import ClaudeClient, ClientUnavailableError
+from .client import ClaudeClient, ClientUnavailableError, Completion
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
 from .paths import (
@@ -611,27 +612,22 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     except ValueError as exc:
         checks.append((False, f"arbiter for a tribunal split: {exc} (check {ARBITER_ENV} or `router config --arbiter`)"))
     checks.append(_calibration_check())
-    if external_models():
-        from .providers import PROVIDERS
-
-        for spec in external_models():
-            key_env = PROVIDERS[spec.provider].key_env
-            has_key = bool(os.environ.get(key_env))
-            checks.append((has_key, f"judge {spec.short}: {spec.provider} {spec.id}, "
-                                    + (f"{key_env} set" if has_key else f"{key_env} missing (export it)")))
+    checks += [_external_check(spec) for spec in external_models()]
     if profile is not None and profile.is_dir():
         checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
     checks.append((True, f"state in {home()}: {ledger_n} tasks in the ledger, {hook_n} hook decisions"))
     if args.live and claude and profile is not None:
-        try:
-            c = CliClient(config_dir=profile).complete(parse_cell("haiku/low"), prompt="Answer only OK.",
-                                                      system="Answer only what is asked.")
-            summary = f"{c.model} answered {c.text.strip()[:20]!r} in {c.seconds:.1f}s, {c.usage.total} tokens"
-            checks.append((True, f"live call: {summary}"))
-        except ClientUnavailableError as exc:
-            checks.append((False, f"live call: {exc}"))
+        checks.append(_live_check("claude", lambda: CliClient(config_dir=profile).complete(
+            parse_cell("haiku/low"), prompt="Answer only OK.", system="Answer only what is asked.")))
+    if args.live:
+        from .providers import PROVIDERS, build_client
+
+        for spec in external_models():
+            if PROVIDERS[spec.provider].transport != "api":  # the CLIs: one cheap call each, on the account configured
+                checks.append(_live_check(spec.short, lambda spec=spec: build_client(PROVIDERS[spec.provider]).complete(
+                    parse_cell(spec.short), prompt="Answer only OK.", system="Answer only what is asked.")))
     for ok_, text in checks:
         print(("ok     " if ok_ else "FAIL   ") + text)
     return 0 if all(ok_ for ok_, _ in checks) else 1
@@ -649,6 +645,42 @@ def _calibration_check() -> tuple[bool, str]:
         return False, f"calibration {name} (via {source}): cannot be loaded ({exc}); `router config --calibration none`"
     return True, (f"calibration: {cal.id} (made {cal.created[:10]} from {cal.evidence} verified first attempts, "
                   f"{len(cal.changes)} changes to the table) via {source}")
+
+
+def _live_check(name: str, call: Callable[[], Completion]) -> tuple[bool, str]:
+    """Make one real call through `call` and report it as one doctor line."""
+    try:
+        c = call()
+    except ClientUnavailableError as exc:
+        return False, f"live call ({name}): {exc}"
+    return True, f"live call ({name}): {c.model} answered {c.text.strip()[:20]!r} in {c.seconds:.1f}s, {c.usage.total} tokens"
+
+
+def _external_check(spec: ModelSpec) -> tuple[bool, str]:
+    """Return the doctor's line for one declared model: its role here, and whether its door can open (key set,
+    Codex home configured and signed in, Gemini CLI installed).
+    """
+    from .providers import PROVIDERS, resolve_codex_home
+
+    provider = PROVIDERS[spec.provider]
+    role = "works and judges" if spec.id in available_models() else "judges"
+    head = f"{spec.short} ({role}): {spec.provider} {spec.id}, "
+    if provider.transport == "api":
+        has_key = bool(os.environ.get(provider.key_env))
+        return has_key, head + (f"{provider.key_env} set" if has_key else f"{provider.key_env} missing (export it)")
+    binary = shutil.which(spec.provider)
+    if binary is None:
+        return False, head + f"the `{spec.provider}` executable is not on the PATH"
+    if provider.transport == "gemini":
+        signed = "GEMINI_API_KEY set" if os.environ.get(provider.key_env) else "sign-in not checked (`--live` makes one call)"
+        return True, head + f"{binary}, {signed}"
+    try:
+        home_dir, source = resolve_codex_home()
+    except ClientUnavailableError as exc:
+        return False, head + str(exc)
+    signed = (home_dir / "auth.json").exists()
+    state = "signed in" if signed else f"not signed in: run `CODEX_HOME={home_dir} codex login`"
+    return signed, head + f"home {home_dir} (via {source}), {state}"
 
 
 def _cmd_feedback(args: argparse.Namespace) -> int:
@@ -701,15 +733,13 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
           f" · prices {PRICES_AS_OF}")
     off = [spec.short for m, spec in MODELS.items() if spec.provider == "anthropic" and m not in available_models()]
     if off:
-        print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router install --models`)")
+        print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router config --models`)")
     if external_models():
-        from .providers import PROVIDERS
-
-        rows = [[spec.short, spec.provider, spec.id, spec.input, spec.output,
-                 "set" if os.environ.get(PROVIDERS[spec.provider].key_env) else f"{PROVIDERS[spec.provider].key_env} missing"]
-                for spec in external_models()]
-        print("\njudges from other providers (never do the work; prices as you declared them)")
-        print(table(["name", "provider", "model id", "$/M in", "$/M out", "key"], rows))
+        rows = [[spec.short, spec.provider, spec.id, "/".join(spec.efforts), spec.input, spec.output,
+                 "yes" if spec.id in available_models() else "no"] for spec in external_models()]
+        print("\nmodels from other providers (they judge; they work when `router config --models` lists them; "
+              "prices as you declared them; `router doctor` says whether each door opens)")
+        print(table(["name", "door", "model id", "efforts", "$/M in", "$/M out", "works"], rows))
     return 0
 
 
@@ -730,7 +760,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
     if (args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None
-            and args.calibration is None and not args.external):
+            and args.calibration is None and args.codex_home is None and not args.external):
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
         anthropic = [m.short for m in MODELS.values() if m.provider == "anthropic"]
@@ -739,7 +769,8 @@ def _cmd_config(args: argparse.Namespace) -> int:
         print(f"arbiter for a tribunal split: {cfg.get('arbiter') or 'by rule (the next model up from the judge)'}")
         print(f"calibration: {cfg.get('calibration') or 'none (the built-in tables decide)'}")
         shown = ", ".join(f"{s.short}={s.provider}/{s.id}@{s.input:g}/{s.output:g}" for s in external_models()) or "none"
-        print(f"judges from other providers: {shown}")
+        print(f"models from other providers: {shown}")
+        print(f"Codex home for `codex` cells: {cfg.get('codex_home') or 'not set'}")
         print(f"(in {config_path()})")
         return 0
     for text in args.external or []:
@@ -750,7 +781,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
         else:
             external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output}
         path = write_config(external=external)
-        print(f"judges from other providers: {', '.join(external) or 'none'} (in {path})")
+        print(f"models from other providers: {', '.join(external) or 'none'} (in {path})")
         load_external(read_config())
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
@@ -763,8 +794,9 @@ def _cmd_config(args: argparse.Namespace) -> int:
         calibration = "" if args.calibration.strip().lower() in NO_CALIBRATION else args.calibration.strip()
         if calibration:
             load_calibration(calibration)  # OSError or ValueError when it cannot be used; main() makes them one line
+    codex_home = args.codex_home.expanduser().resolve() if args.codex_home is not None else None
     remember(profile, names, reset_models=args.models is not None and names is None, judge=judge, arbiter=arbiter,
-             calibration=calibration)
+             calibration=calibration, codex_home=codex_home)
     return 0
 
 
@@ -865,8 +897,9 @@ def build_parser() -> argparse.ArgumentParser:
     sf.add_argument("--note", help="why, for the ledger")
     sf.set_defaults(func=_cmd_feedback)
 
-    sd = sub.add_parser("doctor", help="check claude, profile, hooks, skill and state; --live makes one Haiku call")
-    sd.add_argument("--live", action="store_true", help="also make one real Haiku call to test the account")
+    sd = sub.add_parser("doctor", help="check claude, profile, hooks, skill, declared models and state; --live calls them")
+    sd.add_argument("--live", action="store_true",
+                    help="also make one real cheap call on Claude and on each model declared through a CLI")
     sd.set_defaults(func=_cmd_doctor)
 
     sc = sub.add_parser("cells", help="the lattice of cells with their cost and assumed capability")
@@ -877,7 +910,8 @@ def build_parser() -> argparse.ArgumentParser:
     si.add_argument("--link", action="store_true", help="symlink the skill instead of copying it (development)")
     si.add_argument("--profile-dir", type=Path,
                     help="Claude profile `router run` will use (default: the settings file's, when it is a profile)")
-    si.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
+    si.add_argument("--models", help="models that may do the work, e.g. haiku,sonnet,opus, plus any declared external "
+                                     "name; all = every Anthropic model")
     si.set_defaults(func=_cmd_install)
 
     su = sub.add_parser("uninstall", help="remove the hooks and the skill from the profile")
@@ -887,14 +921,18 @@ def build_parser() -> argparse.ArgumentParser:
     sg = sub.add_parser("config", help="show or set the profile for `router run`, the available models, the judge "
                                        "and the calibration (hooks untouched)")
     sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
-    sg.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
+    sg.add_argument("--models", help="models that may do the work, e.g. haiku,sonnet,opus, plus any declared external "
+                                     "name; all = every Anthropic model")
+    sg.add_argument("--codex-home", type=Path, help="Codex home signed in with the ChatGPT account `codex` cells may use, "
+                                                    "e.g. ~/.codex-personal (never the ambient ~/.codex)")
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--arbiter", help="cell that settles a tribunal split, e.g. fable/low; `rule` goes back to the default")
     sg.add_argument("--calibration", help="the calibration that decides: an id from `router calibrate --apply`, or a "
                                           "file; `none` goes back to the built-in tables")
     sg.add_argument("--external", action="append", metavar="NAME=PROVIDER/MODEL_ID@IN/OUT",
-                    help="declare a judge from another provider (openai, deepseek, xai) with its prices in USD per "
-                         "million tokens, e.g. gpt=openai/gpt-5.5@5/30; NAME= removes it")
+                    help="declare a model of another provider with its API list prices in USD per million tokens, e.g. "
+                         "gpt=openai/gpt-5.5@5/30 or luna=codex/gpt-5.5@5/30 (doors: openai, codex, deepseek, xai, "
+                         "gemini); it judges, and works once --models lists it; NAME= removes it")
     sg.set_defaults(func=_cmd_config)
     return p
 

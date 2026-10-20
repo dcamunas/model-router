@@ -136,18 +136,18 @@ def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monk
         assert cfg["external"] == {"deepseek": {"provider": "deepseek", "id": "deepseek-reasoner", "input": 0.55, "output": 2.19}}
         assert cfg["judge"] == "deepseek/high"
         main(["config"])
-        assert "judges from other providers: deepseek=deepseek/deepseek-reasoner@0.55/2.19" in capsys.readouterr().out
+        assert "models from other providers: deepseek=deepseek/deepseek-reasoner@0.55/2.19" in capsys.readouterr().out
         main(["cells"])
         out = capsys.readouterr().out
-        assert "judges from other providers" in out and "DEEPSEEK_API_KEY missing" in out
+        assert "models from other providers" in out and "deepseek  deepseek  deepseek-reasoner  medium" in out and "  no" in out
         main(["doctor"])
-        assert "judge deepseek: deepseek deepseek-reasoner, DEEPSEEK_API_KEY missing" in capsys.readouterr().out
+        assert "deepseek (judges): deepseek deepseek-reasoner, DEEPSEEK_API_KEY missing" in capsys.readouterr().out
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
         main(["doctor"])
         assert "DEEPSEEK_API_KEY set" in capsys.readouterr().out
         main(["plan", "Assess the migration", "--kind", "analysis", "--risk", "critical"])
         out = capsys.readouterr().out
-        assert "verifier (tribunal): deepseek/high then fable/low" in out and "arbiter on a split: fable/medium" in out
+        assert "verifier (tribunal): deepseek/high then fable/low" in out and "arbiter on a split: deepseek/xhigh" in out
         with pytest.raises(SystemExit, match="invalid value"):
             main(["config", "--external", "gpt=openai/x"])
         assert main(["config", "--external", "deepseek="]) == 0
@@ -566,3 +566,35 @@ def test_calibrate_classifier_compares_rules_and_haiku_with_the_eval_labels(home
     assert main(["calibrate", "--classifier", str(spec), "--llm"]) == 0
     out = capsys.readouterr().out
     assert "haiku: kind right on 3/3, risk right on 3/3; 0 misses" in out and "cost of the Haiku calls" in out
+
+
+def test_config_declares_a_codex_door_and_doctor_says_whether_it_opens(home, monkeypatch, capsys):
+    from model_router.catalog import load_external
+
+    monkeypatch.delenv("MODEL_ROUTER_CODEX_HOME", raising=False)
+    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    try:
+        assert main(["config", "--external", "luna=codex/gpt-5.5@5/30"]) == 0
+        assert "models from other providers: luna" in capsys.readouterr().out
+        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "luna"))
+        assert not ok and "luna (judges): codex gpt-5.5" in line and "Codex home not set" in line
+        codex_home = home / "codex-personal"
+        codex_home.mkdir()
+        assert main(["config", "--codex-home", str(codex_home)]) == 0
+        assert "Codex home for `codex` cells" in capsys.readouterr().out
+        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "luna"))
+        assert not ok and "not signed in" in line and "codex login" in line
+        (codex_home / "auth.json").write_text("{}")
+        assert main(["config", "--models", "haiku,sonnet,opus,fable,luna"]) == 0
+        capsys.readouterr()
+        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "luna"))
+        assert ok and line.startswith("luna (works and judges): codex gpt-5.5, home ") and "signed in" in line
+        assert main(["cells"]) == 0
+        out = capsys.readouterr().out
+        assert "luna/xhigh" in out and "low/medium/high/xhigh" in out and "works" in out
+        assert main(["config"]) == 0
+        out = capsys.readouterr().out
+        assert "models from other providers: luna=codex/gpt-5.5@5/30" in out
+        assert f"Codex home for `codex` cells: {codex_home}" in out
+    finally:
+        load_external({})

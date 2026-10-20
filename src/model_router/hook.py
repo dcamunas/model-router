@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .catalog import MODELS, load_external
+from .catalog import MODELS, lattice, load_external, worker_cell
 from .classify import classify_rules
 from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home, read_config
@@ -101,9 +101,12 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
         return None, {"skipped": "empty prompt"}
     description = str(tool_input.get("description") or "")
     cls = classify_rules(f"{description}\n{prompt}")
-    policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
+    claude = [c for c in lattice() if c.spec.provider == "anthropic"]  # the Agent tool runs Claude models only
+    if not claude:  # `--models` lists declared models only: the hook still has every Claude model to choose from
+        claude = lattice([m for m, spec in MODELS.items() if spec.provider == "anthropic"])
+    policy = Policy(cells=claude, feedback=FeedbackStore(home() / "feedback.json"))
     plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=cls.risk))
-    cell, cross = plan.start, None
+    cell, cross = worker_cell(plan.start, [c.model for c in claude]), None
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
         other = policy.verifier_for(cell, "full")
         if (other is not None and other.spec.provider == "anthropic" and other.claude_code()["model"] != chat_model

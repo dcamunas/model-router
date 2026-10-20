@@ -256,7 +256,7 @@ print(result.status, result.final_cell, f"${result.total_cost_usd:.4f}")
 print(result.answer)
 ```
 
-With judges from other providers, register them and wrap the client: `load_external(read_config())`
+With models from other providers, register them and wrap the client: `load_external(read_config())`
 (from `model_router.catalog` and `model_router.paths`), then `Router(MultiClient(LiveClient()))` with
 `MultiClient` from `model_router.providers`.
 
@@ -361,26 +361,36 @@ judges buy less than two providers would. A judge from another provider should l
 correlation; the scoreboard in `router stats` is where to see whether it does. Measure on your own
 tasks before trusting either number.
 
-## Judges from other providers
+## Other providers: judges, and workers when you list them
 
-The judges and the arbiter can come from OpenAI, DeepSeek or xAI, which is where a tribunal earns its
-keep: two providers err in different places. Declare the model with its prices, point the judge at
-it, and export the key:
+A model from another provider judges and arbitrates, which is where a tribunal earns its keep: two
+companies err in different places. It also does the work once you list it among the models that
+may. Five doors: `openai`, `deepseek` and `xai` by API key; `codex` (ChatGPT through the Codex CLI)
+and `gemini` (Google through its CLI) by subscription, as `claude -p` does for Anthropic.
 
 ```bash
-router config --external gpt=openai/gpt-5.5@5/30       # NAME=PROVIDER/MODEL_ID@$ per M in/$ per M out
-router config --judge gpt/high --arbiter deepseek/high  # after declaring deepseek the same way
-export OPENAI_API_KEY=...                                # DEEPSEEK_API_KEY, XAI_API_KEY
-router doctor                                            # says which keys are set
+router config --external gpt=openai/gpt-5.5@5/30        # NAME=DOOR/MODEL_ID@$ per M in/$ per M out
+router config --external luna=codex/gpt-5.5@5/30        # the same model through your ChatGPT account
+router config --codex-home ~/.codex-personal             # a Codex home signed in with that account; never ~/.codex by accident
+router config --judge gpt/high --arbiter deepseek/high   # after declaring deepseek the same way
+router config --models haiku,sonnet,opus,fable,luna      # now luna may take tasks too; without this it only judges
+router doctor                                            # per model: key set, home signed in; --live makes one call each
 ```
 
 The ids and the prices are yours to type, on purpose: they change, and a wrong number in the ledger
-is worse than none. External models judge and arbitrate; they never do the work, the hook never sends
-a subagent to them, and the ladder stays on Anthropic cells. Their cached tokens are priced at the
-input rate. One client speaks to the three providers (the same chat-completions API; a structured
-verdict is asked for as a JSON object and validated here), so adding a fourth is one line in
-`providers.py`. Not covered yet: subscription access through a provider's CLI, as `claude -p` does
-for Anthropic.
+is worse than none. Declare the API list price even when you pay by subscription: the ledger prices
+every call at list price, so strategies stay comparable. A declared model enters the lattice with the
+efforts its door accepts (one cell for Gemini, four for Codex) and the same assumed tier as Opus until
+`router calibrate` measures it; a start table that names it while it is not listed hands the task to
+the Claude of its tier and says so. The Claude Code hook keeps choosing among Claude models only: the
+Agent tool runs nothing else. The arbiter of a split prefers a company that is neither the worker's nor
+the full judge's, then one that is not the worker's: an arbiter with the worker's blind spots passes
+what the worker got wrong. Through a
+CLI, a verdict is asked for with the CLI's own schema option (Codex) or in the prompt (Gemini), is
+validated here, gets one more try when it does not come back as JSON, and otherwise counts as a judge
+error: the router never invents a verdict. Each CLI call runs in an empty directory with read-only
+tools and nothing persisted. Codex runs only on the home you configured (it must exist and be signed
+in); Gemini has no such switch, so that door runs on the machine's own `~/.gemini` sign-in and settings.
 
 API details that are deliberate: `output_config.effort` carries the effort; `thinking` is not sent
 (adaptive by default, and `disabled` returns 400 on the 5.5 family); the models that accept it get
@@ -392,8 +402,9 @@ structured output goes through `parse`; above 16K tokens the call streams.
 - The hook calls no API: it classifies by rules, locally. It saves every decision in
   `~/.model-router/hook.jsonl` with the first 60 characters of the subagent's prompt.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
-  or your Claude Code account. With a judge or an arbiter from another provider (`router config --external`), the
-  task and the answer go to that provider too, with its key. To nobody else.
+  or your Claude Code account. With a model from another provider declared (`router config --external`),
+  the task and the answer go to that provider too: by its API with your key, or through the Codex or
+  Gemini CLI with your account there. To nobody else.
 - The ledger and its SQLite index keep tokens, cost, cell, verdict and the judges' reasons for every
   attempt; they keep neither the prompt nor the answer, only a hash of the task. A reason may quote a
   few words of either.

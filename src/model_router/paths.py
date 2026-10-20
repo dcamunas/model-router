@@ -20,6 +20,7 @@ CONFIG_DIR_ENV = "MODEL_ROUTER_CLAUDE_CONFIG_DIR"  # Claude profile for the cli 
 JUDGE_ENV = "MODEL_ROUTER_JUDGE"  # the cell that judges in `full` mode, e.g. "opus/xhigh"
 ARBITER_ENV = "MODEL_ROUTER_ARBITER"  # the cell that settles a tribunal's split; unset = the rule in policy.py
 CALIBRATION_ENV = "MODEL_ROUTER_CALIBRATION"  # the calibration that decides: an id or a file; "none" = the code tables
+CODEX_HOME_ENV = "MODEL_ROUTER_CODEX_HOME"  # the Codex home (ChatGPT account) for `codex` cells; never the ambient ~/.codex
 HOOK_ENV = "MODEL_ROUTER_HOOK"  # "0" disables the Claude Code hook without uninstalling it
 HOOK_LOG_ENV = "MODEL_ROUTER_HOOK_LOG"  # "0" stops the hook's decisions log
 HOOK_QUIET_ENV = "MODEL_ROUTER_HOOK_QUIET"  # "1" hides the hook's one-line notice in the UI

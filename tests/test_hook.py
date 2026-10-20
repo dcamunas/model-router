@@ -164,3 +164,27 @@ def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch)
     assert updated["model"] == "opus" and record["cell"] == "opus/medium"  # fable/low degraded, then the floor
     updated, record = decided({"prompt": "Review this critical design of the payments migration"}, chat_model="opus")
     assert updated["model"] == "opus" and "cross" not in record  # no other model can take the cross-check
+
+
+def test_the_hook_never_names_a_model_claude_code_cannot_run(monkeypatch, tmp_path):
+    from model_router.calibration import measure
+    from model_router.catalog import load_external
+    from model_router.hook import decide
+    from model_router.paths import write_config
+    from model_router.policy import FLOOR, START
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    load_external({"external": {"luna": {"provider": "codex", "id": "gpt-5.5", "input": 5, "output": 30}}})
+    try:
+        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,luna")
+        cal = measure([], current=START, floors=FLOOR)
+        cal.start["write"]["medium"] = "luna/medium"  # a calibration (or a table) that sends writing to ChatGPT
+        cal.save(tmp_path / "calibrations")
+        write_config(calibration=cal.id)
+        updated, record = decide({"subagent_type": "general-purpose", "prompt": "Write the release notes for 2.0"})
+        assert updated is not None and updated["model"] == "opus" and record["cell"] == "opus/medium"
+        monkeypatch.setenv("MODEL_ROUTER_MODELS", "luna")  # only a declared model may work: the hook still picks Claude
+        updated, record = decide({"subagent_type": "general-purpose", "prompt": "Write the release notes for 2.0"})
+        assert updated is not None and updated["model"] == "opus" and record["cell"] == "opus/medium"
+    finally:
+        load_external({})

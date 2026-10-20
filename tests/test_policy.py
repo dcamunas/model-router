@@ -184,7 +184,7 @@ def test_external_models_judge_and_arbitrate_but_never_route(monkeypatch, tmp_pa
         policy = Policy(judge=gpt)
         worker = parse_cell("fable/low")
         assert choose_panel(worker, policy.cells, judge=gpt) == [gpt, worker]  # gpt/high judges for less than fable/low
-        assert policy.arbiter_for(worker) == parse_cell("fable/medium")  # another provider than the full judge, not a judge
+        assert policy.arbiter_for(worker) == parse_cell("gpt/xhigh")  # not the worker's company, not a judge
         assert policy.attempt_cost(worker, "full", 2000, 1500) > worker.expected_cost(2000, 1500)
         assert load_external({"external": {"gpt": {"provider": "openai", "id": "gpt-6", "input": 1, "output": 2}}}) == ["gpt"]
         assert parse_cell("gpt").spec.id == "gpt-6" and "gpt-5.5" not in MODELS
@@ -238,3 +238,27 @@ def test_policy_falls_back_when_the_table_names_a_missing_model(monkeypatch):
     plan = policy.plan(Task(prompt="x", kind="code", risk="critical"))  # floor opus/medium still applies
     assert plan.start.capability >= parse_cell("opus/medium").capability
     assert all(c.spec.short != "fable" for c in plan.ladder)
+
+
+def test_a_declared_model_works_only_when_listed_and_the_plan_says_so(monkeypatch, tmp_path):
+    from model_router.catalog import load_external
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    load_external({"external": {"luna": {"provider": "codex", "id": "gpt-5.5", "input": 5, "output": 30}}})
+    try:
+        table = {kind: dict(row) for kind, row in __import__("model_router.policy", fromlist=["START"]).START.items()}
+        table["write"]["medium"] = "luna/medium"
+        monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+        plan = Policy(start_table=table, calibration=None).plan(Task(prompt="x", kind="write", risk="medium"))
+        assert plan.start.label == "opus/medium"
+        assert any("luna not listed to work (router config --models): luna/medium -> opus/medium" in r for r in plan.rationale)
+        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,luna")
+        policy = Policy(start_table=table, calibration=None)
+        plan = policy.plan(Task(prompt="x", kind="write", risk="medium"))
+        assert plan.start.label == "luna/medium" and plan.ladder[0].label == "luna/medium"
+        full = policy.verifier_for(plan.start, "full")
+        assert full is not None and full.label == "opus/xhigh"  # another model judges the ChatGPT worker
+        assert set(policy.judges_for(plan.start, "tribunal")) == {parse_cell("luna/medium"), parse_cell("opus/xhigh")}
+        assert policy.arbiter_for(plan.start) == parse_cell("fable/low")  # not luna/high: the worker's own company
+    finally:
+        load_external({})

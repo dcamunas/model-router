@@ -80,3 +80,51 @@ def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
     assert nearest_available(parse_cell("fable/low"), ["haiku", "sonnet", "opus"]).label == "opus/low"
     assert nearest_available(parse_cell("haiku/medium"), ["sonnet", "opus"]).label == "sonnet/medium"
     assert nearest_available(parse_cell("opus/high"), ["opus"]).label == "opus/high"
+
+
+def test_declared_models_get_their_doors_efforts_and_family_and_work_only_when_listed(monkeypatch, tmp_path):
+    from model_router.catalog import (
+        MODELS,
+        available_models,
+        external_models,
+        lattice,
+        load_external,
+        nearest_available,
+        nearest_effort,
+        parse_external,
+        worker_cell,
+    )
+
+    name, luna = parse_external("luna=codex/gpt-5.5@5/30")
+    assert name == "luna" and luna is not None and (luna.provider, luna.family) == ("codex", "openai")
+    assert luna.efforts == ("low", "medium", "high", "xhigh") and luna.default_effort == "medium"
+    _, gem = parse_external("gem=gemini/gemini-3-pro@2/12")
+    assert gem is not None and (gem.family, gem.efforts, gem.default_effort) == ("google", ("medium",), "medium")
+    _, grok = parse_external("grok=xai/grok-4.7@2/6")
+    assert grok is not None and grok.default_effort == "low"  # xAI knows low and high only
+    with pytest.raises(ValueError, match="known: openai, codex, deepseek, xai, gemini"):
+        parse_external("x=mistral/m@1/1")
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    load_external({"external": {"luna": {"provider": "codex", "id": "gpt-5.5", "input": 5, "output": 30},
+                                "gem": {"provider": "gemini", "id": "gemini-3-pro", "input": 2, "output": 12}}})
+    try:
+        anthropic = [m for m, s in MODELS.items() if s.provider == "anthropic"]
+        assert available_models() == anthropic and len(lattice()) == 20  # declared, not listed: judges only
+        assert [s.short for s in external_models()] == ["luna", "gem"]
+        cell = parse_cell("luna/high")
+        assert nearest_available(cell, anthropic) == cell  # a judge is always available
+        assert worker_cell(cell, anthropic).label == "opus/high"  # a worker is not: the Claude of its tier takes over
+        assert worker_cell(parse_cell("gem"), ["haiku", "sonnet"]).label == "sonnet/medium"
+        assert worker_cell(parse_cell("opus/xhigh"), ["gem", "haiku"]).label == "gem/medium"  # gem's only effort
+        assert worker_cell(parse_cell("opus/xhigh"), ["gem", "opus"]).label == "opus/xhigh"  # Claude first at a tier
+        assert worker_cell(parse_cell("opus/xhigh"), []) == parse_cell("opus/xhigh")  # nothing to choose from
+        assert nearest_effort("max", ("low", "high")) == "high" and nearest_effort("low", ("medium",)) == "medium"
+        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,luna,gem")
+        assert available_models()[-2:] == ["gpt-5.5", "gemini-3-pro"]
+        cells = lattice()
+        assert len(cells) == 25 and sum(c.spec.short == "luna" for c in cells) == 4
+        assert sum(c.spec.short == "gem" for c in cells) == 1
+        assert worker_cell(cell).label == "luna/high"
+    finally:
+        load_external({})

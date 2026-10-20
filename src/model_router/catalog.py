@@ -15,11 +15,16 @@ with real verdicts:
   and effort fine-tunes within the tier, following Anthropic's published guidance that a frontier
   model at low effort often beats a lower tier at high effort.
 
-Models of other providers (OpenAI, DeepSeek, xAI) are not shipped here: their ids and prices change
-and a wrong number is worse than none. The user declares them in config.json with `router config
---external NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT` and `load_external` registers them at start-up. They
-judge and arbitrate; they never do the work (the routing lattice is Anthropic only), so their tier is
-a fixed assumption (EXTERNAL_TIER) and their cached tokens are priced at the input rate.
+Models of other providers are not shipped here: their ids and prices change and a wrong number is
+worse than none. The user declares them in config.json with `router config --external
+NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT` and `load_external` registers them at start-up. PROVIDER is the
+door: `openai`, `deepseek` and `xai` by API key, `codex` (ChatGPT through the Codex CLI) and `gemini`
+(Google through its CLI) by subscription; PROVIDER_FAMILY says which doors lead to the same company, so
+a judge and an arbiter can be kept on different ones. A declared model judges and arbitrates; it does
+the work too once `router config --models` lists it. Its tier is a fixed assumption (EXTERNAL_TIER)
+until a calibration measures it, its efforts are the ones its door accepts (PROVIDER_EFFORTS), and its
+cached tokens are priced at the input rate. Declare the API list price even when you pay by
+subscription: the ledger prices every call at list price, so strategies stay comparable.
 """
 
 from __future__ import annotations
@@ -33,12 +38,19 @@ from typing import Any
 from .paths import MODELS_ENV, read_config
 
 PRICES_AS_OF = "2026-10-06"
-KNOWN_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "deepseek", "xai")
-EXTERNAL_TIER = 2  # an external judge is assumed as capable as Opus; it is never routed, so this only orders cells
+KNOWN_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "codex", "deepseek", "xai", "gemini")
+PROVIDER_FAMILY: dict[str, str] = {"anthropic": "anthropic", "openai": "openai", "codex": "openai", "deepseek": "deepseek",
+                                   "xai": "xai", "gemini": "google"}  # which doors lead to the same company
+EXTERNAL_TIER = 2  # a declared model is assumed as capable as Opus until a calibration measures it
 TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}
 EXTERNAL_SYNTAX = re.compile(r"^([a-z][a-z0-9-]*)=(?:([a-z]+)/([^@\s]+)@([0-9.]+)/([0-9.]+))?$")
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+# The efforts each door accepts: one cell per effort in the lattice, so a door without an effort setting gets one cell.
+PROVIDER_EFFORTS: dict[str, tuple[str, ...]] = {
+    "openai": ("low", "medium", "high"), "codex": ("low", "medium", "high", "xhigh"), "xai": ("low", "high"),
+    "deepseek": ("medium",), "gemini": ("medium",),
+}
 EFFORT_OUTPUT_MULT: dict[str, float] = {"low": 0.5, "medium": 0.75, "high": 1.0, "xhigh": 1.6, "max": 2.5}
 CAPABILITY_TIER: dict[str, float] = {"haiku": 0.40, "sonnet": 0.60, "opus": 0.75, "fable": 0.90}
 CAPABILITY_EFFORT: dict[str, float] = {"low": -0.06, "medium": -0.03, "high": 0.0, "xhigh": 0.03, "max": 0.05}
@@ -66,7 +78,13 @@ class ModelSpec:
     max_output: int = 128_000
     long_prompt_from: int | None = None  # prompt tokens above which `long_prompt_mult` applies
     long_prompt_mult: float = 1.0
-    provider: str = "anthropic"  # who serves it; only Anthropic models do the work, the rest judge
+    provider: str = "anthropic"  # the door that serves it
+    efforts: tuple[str, ...] = EFFORTS  # the efforts this door accepts: the cells the lattice makes of the model
+
+    @property
+    def family(self) -> str:
+        """Return the company behind the door: `codex` and `openai` are both OpenAI, `gemini` is Google."""
+        return PROVIDER_FAMILY.get(self.provider, self.provider)
 
 
 MODELS: dict[str, ModelSpec] = {
@@ -99,8 +117,10 @@ def parse_external(text: str) -> tuple[str, ModelSpec | None]:
     if provider not in KNOWN_PROVIDERS or provider == "anthropic":
         raise ValueError(f"unknown provider {provider!r}; known: {', '.join(p for p in KNOWN_PROVIDERS if p != 'anthropic')}")
     cost_in, cost_out = float(price_in), float(price_out)
-    return name, ModelSpec(model_id, name, EXTERNAL_TIER, cost_in, cost_out, cost_in, cost_in, "medium", False,
-                           provider=provider)
+    efforts = PROVIDER_EFFORTS[provider]
+    default = "medium" if "medium" in efforts else efforts[0]
+    return name, ModelSpec(model_id, name, EXTERNAL_TIER, cost_in, cost_out, cost_in, cost_in, default, False,
+                           provider=provider, efforts=efforts)
 
 
 def load_external(config: dict[str, Any]) -> list[str]:
@@ -128,7 +148,7 @@ def load_external(config: dict[str, Any]) -> list[str]:
 
 
 def external_models() -> list[ModelSpec]:
-    """Return the registered models of other providers, the ones that may judge but never do the work."""
+    """Return the declared models of other providers: they judge, and work when `available_models` lists them."""
     return [spec for spec in MODELS.values() if spec.provider != "anthropic"]
 
 
@@ -216,14 +236,18 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
 
 
 def available_models() -> list[str]:
-    """Return the models this installation may route to, in catalogue order: Anthropic models only. The
-    MODEL_ROUTER_MODELS variable wins, then `models` in config.json (written by `router install --models`),
-    else every Anthropic model in the catalogue. Use it when a plan or an account lacks a model (no Fable, say).
+    """Return the models this installation may route work to, in catalogue order. The MODEL_ROUTER_MODELS
+    variable wins, then `models` in config.json (`router config --models`): whatever they list, declared models
+    of other providers included; with neither, every Anthropic model in the catalogue and nothing else. Use it
+    when a plan or an account lacks a model (no Fable, say), or to let a ChatGPT model take tasks.
     """
     raw = os.environ.get(MODELS_ENV)
+    if raw:
+        return parse_models(raw)
     configured = read_config().get("models")
-    ids = parse_models(raw) if raw else parse_models(configured) if configured else list(MODELS)
-    return [m for m in ids if MODELS[m].provider == "anthropic"]
+    if configured:
+        return parse_models(configured)
+    return [m for m, spec in MODELS.items() if spec.provider == "anthropic"]
 
 
 @dataclass(frozen=True)
@@ -287,24 +311,43 @@ def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None =
     """Return every (model, effort) cell of the available models (or of `models`), cheapest first on the
     reference request.
     """
-    cells = [Cell(m, e) for m in (models or available_models()) for e in (efforts or EFFORTS)]
+    cells = [Cell(m, e) for m in (models or available_models()) for e in (efforts or MODELS[resolve_model(m)].efforts)]
     return sorted(cells, key=lambda c: (c.expected_cost(), c.capability))
 
 
 def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
-    """Return `cell` itself when its model is available (an external judge always is: its availability is
-    its API key, checked when it is called); otherwise the same effort on the most capable available
-    model below it, or the least capable one above it when nothing is below. The ladder then escalates
-    from there as usual.
+    """Return the cell a judge runs on: `cell` itself when its model is in `models` or belongs to another
+    provider (a declared judge is always available: its key or its sign-in is checked when it is called);
+    otherwise what `worker_cell` picks.
     """
     if cell.spec.provider != "anthropic":
         return cell
-    avail = [resolve_model(m) for m in (models or available_models())]
-    if cell.model in avail:
+    return worker_cell(cell, models)
+
+
+def worker_cell(cell: Cell, models: Iterable[str] | None = None) -> Cell:
+    """Return the cell a worker runs on: `cell` itself when its model is in `models` (the available ones when
+    None; an empty list leaves `cell` as it is); otherwise the available model of its tier (a Claude model
+    before a declared one), else the most capable one below it, else the least capable one above, at the
+    nearest effort that model accepts. A declared model that is not listed to work keeps judging but never
+    takes a task; a missing Claude model hands its tasks to the next one down.
+    """
+    avail = [resolve_model(m) for m in (available_models() if models is None else models)]
+    if cell.model in avail or not avail:
         return cell
-    specs = sorted((MODELS[m] for m in avail), key=lambda spec: spec.tier)
+    specs = sorted((MODELS[m] for m in avail), key=lambda spec: (spec.tier, spec.provider != "anthropic"))
+    same = [spec for spec in specs if spec.tier == cell.tier]
     below = [spec for spec in specs if spec.tier < cell.tier]
-    return Cell((below[-1] if below else specs[0]).id, cell.effort)
+    chosen = same[0] if same else (below[-1] if below else specs[0])
+    return Cell(chosen.id, nearest_effort(cell.effort, chosen.efforts))
+
+
+def nearest_effort(effort: str, accepted: tuple[str, ...]) -> str:
+    """Return `effort` when `accepted` has it, else the highest accepted effort below it, else the lowest accepted."""
+    if effort in accepted:
+        return effort
+    below = [e for e in EFFORTS[: EFFORTS.index(effort)] if e in accepted]
+    return below[-1] if below else min(accepted, key=EFFORTS.index)
 
 
 def step_up(current: Cell, cells: Iterable[Cell], *, min_gain: float = 0.08, tie: float = 0.10) -> Cell | None:
