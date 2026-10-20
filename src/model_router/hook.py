@@ -49,7 +49,8 @@ SESSION_CONTEXT = (
     "this chat (a blind cross-check): if you designed something critical here, launch a review subagent "
     "with the brief and the design and let the hook choose. Text-only subtasks (classify, extract, "
     "summarise, draft, review a pasted text) go through `router run \"...\"` instead of a subagent: a "
-    "hundred times less context, verified and recorded. To verify and escalate by risk, use the `router` "
+    "hundred times less context, verified and recorded. `router judge \"<task>\" --answer FILE` verifies a "
+    "subagent's result with the plan's judges and records it. To verify and escalate by risk, use the `router` "
     "skill."
 )
 

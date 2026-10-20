@@ -49,22 +49,27 @@ fails, `router doctor` says so.
 
 2. Launch the subagent with the `model` and `effort` of the start cell and the full brief.
 
-3. Verify as the plan says:
+3. Verify as the plan says. The default is the router itself: save the subagent's result to a file
+   and run
+
+   ```bash
+   router judge "<the same subtask>" --kind <kind> --risk <risk> --cell <start cell> --answer result.md
+   ```
+
+   It runs the plan's judges (light, full, panel or tribunal, including a judge from another
+   provider), records every verdict in the ledger for the scoreboard, prints the reasons and exits
+   1 on a fail. About 900 tokens of context per judge instead of a subagent.
+
+   Launch judge subagents instead only when the verdict needs tools (run the tests, read the repo):
    - `none`: accept.
    - `light`: check the result against the brief yourself, or with a checker (tests, valid JSON).
    - `full`: launch **another** subagent on the verifier's cell, fresh context, with the brief and
      the result, and ask it for `passed / reason / issues`. Never the subagent that did the work.
-   - `panel`: the same, twice, on the two cells the plan prints, cheaper one first. Each judge gets
-     the brief and the result in a fresh context and never sees the other's verdict. If the first
-     fails, do not launch the second. The result passes only when both pass.
-   - `tribunal`: both judges, always, each in a fresh context and blind to the other. If they agree,
-     that is the verdict. If they split, launch a third subagent on the arbiter cell the plan prints
-     with the brief, the result and both verdicts (as judge A and judge B, no model names) and ask it
-     to decide for itself; its verdict is final. Say in the final message who split and who was
-     backed.
-   - A judge from another provider (declared with `router config --external`) is not a Claude Code
-     model, so it cannot be a subagent: for that seat use the Anthropic cell the plan prints for the
-     other judge, and know that the cross-provider check only happens in `router run`.
+   - `panel` and `tribunal`: one subagent per judge cell the plan prints, each in a fresh context and
+     blind to the other. A panel passes only when both pass. A tribunal that splits sends the brief,
+     the result and both verdicts (as judge A and judge B, no model names) to a third subagent on
+     the arbiter cell; its verdict is final. Say in the final message who split and who was backed.
+   - A judge from another provider is not a Claude Code model: it only sits through `router judge`.
 
 4. On failure, relaunch on the next cell of the ladder with the reason for the failure in the brief.
    Stop when it passes, when the ladder runs out, or when the cost is not worth it.

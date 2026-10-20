@@ -174,6 +174,47 @@ def test_attempts_table_fits_the_terminal_width(monkeypatch):
     assert cli._attempts_table(result) == narrow  # the terminal's width, through COLUMNS
 
 
+def test_judge_command_verifies_a_file_and_exits_1_on_a_fail(home, monkeypatch, capsys):
+    answer = home / "answer.md"
+    answer.write_text("The notice.")
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(judge={"*": [Reply(parsed=_verdict(True))]}))
+    assert main(["judge", "write the notice", "--kind", "write", "--risk", "critical", "--answer", str(answer)]) == 0
+    out = capsys.readouterr().out
+    assert "verdict pass" in out and "external" in out and "tribunal" in out
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(judge={"*": [Reply(parsed=_verdict(False))]}))
+    assert main(["judge", "write the notice", "--kind", "write", "--risk", "high", "--answer", str(answer), "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["status"] == "unsolved" and data["attempts"][0]["verdicts"][0]["passed"] is False
+    main(["stats"])
+    assert "tasks 2 · solved 1" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="cannot access"):
+        main(["judge", "x", "--answer", str(home / "nope.md")])
+    answer.write_text("   ")
+    with pytest.raises(SystemExit, match="answer is empty"):
+        main(["judge", "x", "--answer", str(answer)])
+
+
+def _verdict(passed: bool):
+    from model_router.verify import Verdict
+
+    return Verdict(passed=passed, confidence=0.9, reason="because")
+
+
+def test_run_reaches_a_judge_from_another_provider(home, monkeypatch, capsys):
+    from model_router.catalog import load_external
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    (home / "config.json").write_text(json.dumps({
+        "judge": "gpt/high", "external": {"gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}))
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("draft")]}))
+    try:
+        assert main(["run", "write it", "--kind", "write", "--risk", "high", "--verify", "full", "--max-attempts", "1"]) == 1
+        out = capsys.readouterr().out
+        assert "judge-error" in out and "OPENAI_API_KEY is not set" in out  # the provider client was reached
+    finally:
+        load_external({})
+
+
 def test_a_missing_task_or_system_file_is_a_one_line_error(home):
     with pytest.raises(SystemExit, match="cannot access"):
         main(["plan", "--file", str(home / "nope.md")])

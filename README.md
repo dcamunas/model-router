@@ -69,7 +69,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.6.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.7.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -80,7 +80,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.6.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.7.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -136,6 +136,9 @@ router plan "classify these tickets" --claude-code
 # Run it for real, with a programmatic checker
 router run "Return a JSON object with the keys name, tax_id and date from: ..." \
     --kind extract --risk high --check-json name,tax_id,date
+
+# Judge an answer written elsewhere (a subagent, a person) with the task's judges; exit 1 on a fail
+router judge "Write the incident notice for ..." --kind write --risk critical --answer notice.md
 
 # Compare strategies (offline, no API)
 router bench --simulate --tasks 200 --seed 1
@@ -193,7 +196,7 @@ and by `router install`:
   calls no API, takes a few tenths of a second and never blocks: on any error it exits quietly.
 - Skill `router`: what a hook cannot do. Verify with a second subagent, escalate, and send text-only
   subtasks (classify, extract, summarise, draft) through `router run` instead of a subagent, which
-  drags the whole session context along.
+  drags the whole session context along, and to verify a subagent's result with `router judge`.
 
 Nobody changes the model of the main session: `settings.json` or `/model` set it. What the hook does
 do for the orchestrator: a review whose risk asks for `full` verification (today only `critical`)
@@ -352,8 +355,8 @@ structured output goes through `parse`; above 16K tokens the call streams.
 
 - The hook calls no API: it classifies by rules, locally. It saves every decision in
   `~/.model-router/hook.jsonl` with the first 60 characters of the subagent's prompt.
-- `router run` and `router bench` send the prompt to Anthropic, through your API key or your Claude
-  Code account. With a judge or an arbiter from another provider (`router config --external`), the
+- `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
+  or your Claude Code account. With a judge or an arbiter from another provider (`router config --external`), the
   task and the answer go to that provider too, with its key. To nobody else.
 - The ledger keeps tokens, cost, cell, verdict and reason for every attempt; it keeps neither the
   prompt nor the answer.

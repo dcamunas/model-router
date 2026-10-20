@@ -1,5 +1,6 @@
-"""`router` on the command line: plan (no API), run (live), bench (simulated or a file of real tasks),
-stats, feedback, doctor, cells, config, install and uninstall. The README documents each command.
+"""`router` on the command line: plan (no API), run (live), judge (verify an answer written elsewhere),
+bench (simulated or a file of real tasks), stats, feedback, doctor, cells, config, install and uninstall.
+The README documents each command.
 """
 
 from __future__ import annotations
@@ -174,7 +175,7 @@ def _with_providers(client: ClaudeClient) -> ClaudeClient:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     prompt = _prompt_from(args)
-    client = _live_client(args)
+    client = _with_providers(_live_client(args))
     task, cls = _task_from(args, prompt, client)
     feedback = FeedbackStore(home() / "feedback.json")
     router = Router(client, policy=Policy(feedback=feedback), ledger=Ledger(home() / "ledger.jsonl"), feedback=feedback)
@@ -191,6 +192,27 @@ def _cmd_run(args: argparse.Namespace) -> int:
           f" · retries {result.retries} · id {task.id}")
     if not result.solved:
         print("the last answer did not pass verification; review it before using it", file=sys.stderr)
+    return 0 if result.solved else 1
+
+
+def _cmd_judge(args: argparse.Namespace) -> int:
+    prompt = _prompt_from(args)
+    answer = sys.stdin.read() if args.answer == "-" else Path(args.answer).read_text(encoding="utf-8")
+    if not answer.strip():
+        raise SystemExit("the answer is empty")
+    client = _with_providers(_live_client(args))
+    task, cls = _task_from(args, prompt, client)
+    policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
+    router = Router(client, policy=policy, ledger=Ledger(home() / "ledger.jsonl"))
+    result = router.judge(task, answer, worker=parse_cell(args.cell) if args.cell else None)
+    if args.json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=1))
+        return 0 if result.solved else 1
+    if cls is not None:
+        print(f"classification: {cls.kind} / {cls.risk}  ({cls.reason})")
+    print(_attempts_table(result))
+    verdict = {"solved": "pass", "unsolved": "fail"}.get(result.status, result.status)
+    print(f"verdict {verdict} · cost {money(result.verify_cost_usd)} · id {task.id}")
     return 0 if result.solved else 1
 
 
@@ -570,6 +592,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_backend_args(sr)
     sr.add_argument("--json", action="store_true", help="JSON output with the answer and the attempts")
     sr.set_defaults(func=_cmd_run)
+
+    sj = sub.add_parser("judge", help="verify an answer written elsewhere (a subagent, a person) with the task's judges")
+    _add_task_args(sj)
+    _add_backend_args(sj)
+    sj.add_argument("--answer", required=True, metavar="FILE",
+                    help="the answer to judge; `-` reads it from stdin (then give the task as an argument or with --file)")
+    sj.add_argument("--cell", help="the cell that produced the answer, e.g. opus/medium (default: the plan's start cell)")
+    sj.add_argument("--json", action="store_true", help="JSON output with every judge's verdict")
+    sj.set_defaults(func=_cmd_judge)
 
     sb = sub.add_parser("bench", help="compare strategies: offline simulation or a file of real tasks")
     sb.add_argument("file", nargs="?", help="YAML/JSON with tasks (no file: simulation)")

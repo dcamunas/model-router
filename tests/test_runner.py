@@ -152,6 +152,32 @@ def test_panel_reduced_to_one_judge_is_reported_as_a_judge(monkeypatch):
     assert result.solved and attempt.verdict_source == "judge" and [j.label for j in attempt.judges] == ["opus/xhigh"]
 
 
+def test_judge_records_an_external_answer_without_worker_cost(tmp_path: Path):
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    store = FeedbackStore(tmp_path / "fb.json")
+    client = FakeClient(judge={"*": [ok("solid")]})
+    router = Router(client, ledger=ledger, feedback=store)
+    result = router.judge(Task(prompt="write the notice", kind="write", risk="critical", id="ext1"), "the notice")
+    assert result.solved and result.verify == "tribunal" and result.answer == "the notice"
+    attempt = result.attempts[0]
+    assert attempt.stop_reason == "external" and attempt.cost_usd == 0 and attempt.usage.total == 0
+    assert attempt.verdict is True and attempt.verdict_source == "tribunal" and len(attempt.judges) == 2
+    assert result.verify_cost_usd > 0 and "judged only" in result.rationale[-1]
+    assert all(c["output_format"] == "Verdict" for c in client.calls)  # no worker call
+    assert ledger.tasks()[0]["attempts"][0]["stop_reason"] == "external" and store.data == {}
+    light = router.judge(Task(prompt="x", kind="chat", risk="low"), "hi", worker=parse_cell("sonnet/low"), mode="light")
+    assert light.attempts[0].verdict_source == "judge" and light.attempts[0].judges == [parse_cell("sonnet/low")]
+    failed = router.judge(Task(prompt="x", kind="code", risk="low", checker=contains_checker("42")), "41")
+    assert failed.status == "unsolved" and failed.attempts[0].verdict_source == "checker"
+
+    class Down(FakeClient):
+        def complete(self, cell, **kw):
+            raise ClientUnavailableError("rate limited")
+
+    broken = Router(Down(), ledger=ledger).judge(Task(prompt="x", kind="write", risk="high"), "draft")
+    assert broken.status == "error" and "rate limited" in broken.attempts[0].reason
+
+
 def test_low_risk_without_checker_accepts_first_answer():
     client = FakeClient(script={"*": [Reply("hello")]})
     result = Router(client).run(Task(prompt="hello?", kind="chat", risk="low"))

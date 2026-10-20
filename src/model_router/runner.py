@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .ledger import Ledger
 
 STATUSES: tuple[str, ...] = ("solved", "unsolved", "refused", "budget", "error")
+EXTERNAL_STOP = "external"  # the stop reason of an attempt whose answer was produced outside the router (`Router.judge`)
 
 
 @dataclass
@@ -232,5 +233,37 @@ class Router:
                 self.feedback.record(task.kind, a.cell, a.verdict, first=first and a.cell == plan.ladder[0])
                 first = False
             self.feedback.save()
+        self.ledger.append(result)
+        return result
+
+    def judge(self, task: Task, answer: str, *, worker: Cell | None = None, mode: str | None = None) -> TaskResult:
+        """Verify an `answer` produced outside the router (a subagent, a person) as one attempt on `worker` (the
+        plan's start cell when None) in `mode` (the plan's when None), with no worker cost, and record it in
+        the ledger so `router feedback` and the judges' scoreboard see it. The feedback store is left alone:
+        the answer was not made under the router's conditions.
+        """
+        plan = self.policy.plan(task)
+        worker = worker or plan.start
+        mode = mode or plan.verify
+        started_at = datetime.now(UTC).isoformat(timespec="seconds")
+        t0 = time.monotonic()
+        base = Attempt(1, worker, Usage(), 0.0, 0.0, EXTERNAL_STOP, worker.model, None, refused=False, verdict=None,
+                       verdict_source="", reason="")
+        try:
+            verdict = self.verifier.verify(task, answer, mode, worker)
+        except ClientUnavailableError as exc:
+            attempt = replace(base, verdict_source="judge-error", reason=f"verifier unavailable: {exc}")
+            status = "error"
+        else:
+            attempt = replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
+                              verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
+                              judges=verdict.judges, verdicts=verdict.verdicts, arbiter=verdict.arbiter)
+            status = "solved" if verdict.passed else "unsolved"
+        result = TaskResult(
+            task_id=task.id, kind=task.kind, risk=task.risk, plan=[c.label for c in plan.ladder], verify=mode,
+            budget_usd=plan.budget_usd, attempts=[attempt], answer=answer, status=status, final_cell=worker,
+            started_at=started_at, elapsed=time.monotonic() - t0,
+            rationale=[*plan.rationale, "answer produced outside the router: judged only"],
+        )
         self.ledger.append(result)
         return result
