@@ -17,12 +17,24 @@ from pathlib import Path
 from typing import Any
 
 from ._fmt import money, table
-from .catalog import MODELS, MODELS_ENV, PRICES_AS_OF, SHORT_TO_ID, UnknownModelError, available_models, lattice, parse_cell
+from .catalog import (
+    MODELS,
+    MODELS_ENV,
+    PRICES_AS_OF,
+    SHORT_TO_ID,
+    UnknownModelError,
+    available_models,
+    external_models,
+    lattice,
+    load_external,
+    parse_cell,
+    parse_external,
+)
 from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
-from .paths import ARBITER_ENV, CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config
+from .paths import ARBITER_ENV, CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config, write_config
 from .policy import DEFAULT_JUDGE, LadderPolicy, Policy, PolicyProtocol, default_arbiter, default_judge
 from .runner import Router, TaskResult
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
@@ -141,6 +153,15 @@ def _live_client(args: argparse.Namespace) -> ClaudeClient:
     return CliClient(config_dir=config_dir)
 
 
+def _with_providers(client: ClaudeClient) -> ClaudeClient:
+    """Wrap the Anthropic backend so cells of other providers reach theirs; nothing changes without externals."""
+    if not external_models():
+        return client
+    from .providers import MultiClient
+
+    return MultiClient(client)
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     prompt = _prompt_from(args)
     client = _live_client(args)
@@ -230,7 +251,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         if answer not in ("y", "yes"):
             print("cancelled")
             return 1
-    client = _live_client(args)
+    client = _with_providers(_live_client(args))
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     for name, policy in strategies:
         ledger = Ledger(home() / "bench" / f"{stamp}-{name.replace('/', '-').replace('>', '_')}.jsonl")
@@ -379,6 +400,14 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
                        "arbiter for a tribunal split: by rule (the next model up from the judge, at low effort)"))
     except ValueError as exc:
         checks.append((False, f"arbiter for a tribunal split: {exc} (check {ARBITER_ENV} or `router config --arbiter`)"))
+    if external_models():
+        from .providers import PROVIDERS
+
+        for spec in external_models():
+            key_env = PROVIDERS[spec.provider].key_env
+            has_key = bool(os.environ.get(key_env))
+            checks.append((has_key, f"judge {spec.short}: {spec.provider} {spec.id}, "
+                                    + (f"{key_env} set" if has_key else f"{key_env} missing (export it)")))
     if profile is not None and profile.is_dir():
         checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
@@ -443,9 +472,17 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
     print(table(["cell", "tier", "capability*", "ref. cost", "$/M in", "$/M out"], rows))
     print(f"\n* assumed capability (catalog.py), not measured · ref. cost = 2,000 tokens in, 1,500 out at effort high"
           f" · prices {PRICES_AS_OF}")
-    off = [MODELS[m].short for m in MODELS if m not in available_models()]
+    off = [spec.short for m, spec in MODELS.items() if spec.provider == "anthropic" and m not in available_models()]
     if off:
         print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router install --models`)")
+    if external_models():
+        from .providers import PROVIDERS
+
+        rows = [[spec.short, spec.provider, spec.id, spec.input, spec.output,
+                 "set" if os.environ.get(PROVIDERS[spec.provider].key_env) else f"{PROVIDERS[spec.provider].key_env} missing"]
+                for spec in external_models()]
+        print("\njudges from other providers (never do the work; prices as you declared them)")
+        print(table(["name", "provider", "model id", "$/M in", "$/M out", "key"], rows))
     return 0
 
 
@@ -465,14 +502,27 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
-    if args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None:
+    if args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None and not args.external:
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
-        print(f"available models: {', '.join(cfg.get('models') or [m.short for m in MODELS.values()])}")
+        anthropic = [m.short for m in MODELS.values() if m.provider == "anthropic"]
+        print(f"available models: {', '.join(cfg.get('models') or anthropic)}")
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
         print(f"arbiter for a tribunal split: {cfg.get('arbiter') or 'by rule (the next model up from the judge)'}")
+        shown = ", ".join(f"{s.short}={s.provider}/{s.id}@{s.input:g}/{s.output:g}" for s in external_models()) or "none"
+        print(f"judges from other providers: {shown}")
         print(f"(in {config_path()})")
         return 0
+    for text in args.external or []:
+        name, spec = parse_external(text)
+        external = dict(read_config().get("external") or {})
+        if spec is None:
+            external.pop(name, None)
+        else:
+            external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output}
+        path = write_config(external=external)
+        print(f"judges from other providers: {', '.join(external) or 'none'} (in {path})")
+        load_external(read_config())
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
     judge = parse_cell(args.judge).label if args.judge is not None else None
@@ -561,6 +611,9 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--arbiter", help="cell that settles a tribunal split, e.g. fable/low; `rule` goes back to the default")
+    sg.add_argument("--external", action="append", metavar="NAME=PROVIDER/MODEL_ID@IN/OUT",
+                    help="declare a judge from another provider (openai, deepseek, xai) with its prices in USD per "
+                         "million tokens, e.g. gpt=openai/gpt-5.5@5/30; NAME= removes it")
     sg.set_defaults(func=_cmd_config)
     return p
 
@@ -571,6 +624,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     try:
+        load_external(read_config())
         return int(args.func(args) or 0)
     except UnknownModelError as exc:
         raise SystemExit(f"unknown model {exc.name!r}; valid: {', '.join(exc.known)} "

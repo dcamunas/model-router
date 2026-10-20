@@ -30,10 +30,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .catalog import MODELS
+from .catalog import MODELS, load_external
 from .classify import classify_rules
 from .feedback import FeedbackStore
-from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home
+from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home, read_config
 from .policy import VERIFY_BY_RISK, Policy
 from .task import Task
 
@@ -105,7 +105,8 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     cell, cross = plan.start, None
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
         other = policy.verifier_for(cell, "full")
-        if other is not None and other.claude_code()["model"] != chat_model and other.tier >= cell.tier:
+        if (other is not None and other.spec.provider == "anthropic" and other.claude_code()["model"] != chat_model
+                and other.tier >= cell.tier):
             cross = f"{cls.risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
             cell = other
     cc = cell.claude_code()
@@ -161,6 +162,7 @@ def main() -> int:
     if os.environ.get(HOOK_ENV, "1") == "0":
         return 0
     try:
+        load_external(read_config())  # a configured external judge must resolve, or Policy() would not build
         event = json.load(sys.stdin)
         out = handle(event)
         if out is not None:

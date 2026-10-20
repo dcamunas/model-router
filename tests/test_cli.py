@@ -127,6 +127,36 @@ def test_feedback_override_moves_a_count_only_when_the_verdict_changes(home, mon
     assert "chat" not in json.loads((home / "feedback.json").read_text())  # nothing was ever counted for it
 
 
+def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monkeypatch, capsys):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    try:
+        assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19", "--judge", "deepseek/high"]) == 0
+        cfg = json.loads((home / "config.json").read_text())
+        assert cfg["external"] == {"deepseek": {"provider": "deepseek", "id": "deepseek-reasoner", "input": 0.55, "output": 2.19}}
+        assert cfg["judge"] == "deepseek/high"
+        main(["config"])
+        assert "judges from other providers: deepseek=deepseek/deepseek-reasoner@0.55/2.19" in capsys.readouterr().out
+        main(["cells"])
+        out = capsys.readouterr().out
+        assert "judges from other providers" in out and "DEEPSEEK_API_KEY missing" in out
+        main(["doctor"])
+        assert "judge deepseek: deepseek deepseek-reasoner, DEEPSEEK_API_KEY missing" in capsys.readouterr().out
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+        main(["doctor"])
+        assert "DEEPSEEK_API_KEY set" in capsys.readouterr().out
+        main(["plan", "Assess the migration", "--kind", "analysis", "--risk", "critical"])
+        out = capsys.readouterr().out
+        assert "verifier (tribunal): deepseek/high then fable/low" in out and "arbiter on a split: fable/medium" in out
+        with pytest.raises(SystemExit, match="invalid value"):
+            main(["config", "--external", "gpt=openai/x"])
+        assert main(["config", "--external", "deepseek="]) == 0
+        assert json.loads((home / "config.json").read_text())["external"] == {}
+    finally:
+        from model_router.catalog import load_external
+
+        load_external({})
+
+
 def test_a_missing_task_or_system_file_is_a_one_line_error(home):
     with pytest.raises(SystemExit, match="cannot access"):
         main(["plan", "--file", str(home / "nope.md")])

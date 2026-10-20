@@ -1,6 +1,6 @@
 import pytest
 
-from model_router.catalog import lattice, parse_cell
+from model_router.catalog import MODELS, SHORT_TO_ID, lattice, parse_cell
 from model_router.feedback import FeedbackStore
 from model_router.policy import LadderPolicy, Policy, choose_arbiter, choose_panel, choose_verifier, default_judge
 from model_router.task import Task, contains_checker
@@ -160,6 +160,37 @@ def test_arbiter_is_the_next_model_up_from_the_judge_else_one_effort_up(monkeypa
     cells = lattice()
     assert choose_arbiter(parse_cell("opus/medium"), cells) == parse_cell("opus/high")  # judges opus/medium + opus/xhigh
     assert choose_arbiter(parse_cell("opus/high"), cells) is None  # judges opus/high + opus/xhigh: nothing is left
+
+
+def test_external_models_judge_and_arbitrate_but_never_route(monkeypatch, tmp_path):
+    from model_router.catalog import available_models, external_models, load_external, nearest_available, parse_external
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    name, spec = parse_external("gpt=openai/gpt-5.5@5/30")
+    assert name == "gpt" and spec is not None
+    assert (spec.id, spec.provider, spec.input, spec.output) == ("gpt-5.5", "openai", 5.0, 30.0)
+    assert parse_external("gpt=") == ("gpt", None)
+    for bad in ("opus=openai/x@1/2", "gpt=mistral/x@1/2", "gpt=openai/x", "GPT=openai/x@1/2"):
+        with pytest.raises(ValueError):
+            parse_external(bad)
+    try:
+        assert load_external({"external": {"gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}) == ["gpt"]
+        gpt = parse_cell("gpt/high")
+        assert gpt.tier == 2 and gpt.capability == parse_cell("opus/high").capability and gpt.spec.provider == "openai"
+        assert "gpt-5.5" not in available_models() and all(c.spec.provider == "anthropic" for c in lattice())
+        assert nearest_available(gpt, ["claude-opus-5-5"]) == gpt
+        assert [s.short for s in external_models()] == ["gpt"]
+        policy = Policy(judge=gpt)
+        worker = parse_cell("fable/low")
+        assert choose_panel(worker, policy.cells, judge=gpt) == [gpt, worker]  # gpt/high judges for less than fable/low
+        assert policy.arbiter_for(worker) == parse_cell("fable/medium")  # another provider than the full judge, not a judge
+        assert policy.attempt_cost(worker, "full", 2000, 1500) > worker.expected_cost(2000, 1500)
+        assert load_external({"external": {"gpt": {"provider": "openai", "id": "gpt-6", "input": 1, "output": 2}}}) == ["gpt"]
+        assert parse_cell("gpt").spec.id == "gpt-6" and "gpt-5.5" not in MODELS
+    finally:
+        load_external({})
+    assert "gpt" not in SHORT_TO_ID
 
 
 def test_arbiter_comes_from_the_environment_or_config(monkeypatch, tmp_path):

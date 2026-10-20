@@ -54,7 +54,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.5.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.6.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -65,7 +65,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.5.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.6.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -285,6 +285,27 @@ judge)`. The simulation assumes the
 judges of one answer share their random draw half the time (`JUDGE_CORRELATION`): models of one
 family err together, which is the honest reason a panel of Claude cells buys less than a council of
 different providers would. Measure it on your own tasks before trusting either number.
+
+## Judges from other providers
+
+The judges and the arbiter can come from OpenAI, DeepSeek or xAI, which is where a tribunal earns its
+keep: two providers err in different places. Declare the model with its prices, point the judge at
+it, and export the key:
+
+```bash
+router config --external gpt=openai/gpt-5.5@5/30       # NAME=PROVIDER/MODEL_ID@$ per M in/$ per M out
+router config --judge gpt/high --arbiter deepseek/high  # after declaring deepseek the same way
+export OPENAI_API_KEY=...                                # DEEPSEEK_API_KEY, XAI_API_KEY
+router doctor                                            # says which keys are set
+```
+
+The ids and the prices are yours to type, on purpose: they change, and a wrong number in the ledger
+is worse than none. External models judge and arbitrate; they never do the work, the hook never sends
+a subagent to them, and the ladder stays on Anthropic cells. Their cached tokens are priced at the
+input rate. One client speaks to the three providers (the same chat-completions API; a structured
+verdict is asked for as a JSON object and validated here), so adding a fourth is one line in
+`providers.py`. Not covered yet: subscription access through a provider's CLI, as `claude -p` does
+for Anthropic.
 
 API details that are deliberate: `output_config.effort` carries the effort; `thinking` is not sent
 (adaptive by default, and `disabled` returns 400 on the 5.5 family); the models that accept it get

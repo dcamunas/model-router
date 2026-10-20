@@ -14,17 +14,29 @@ with real verdicts:
 * CAPABILITY_TIER / CAPABILITY_EFFORT - a 0-1 capability score per cell. The model tier dominates
   and effort fine-tunes within the tier, following Anthropic's published guidance that a frontier
   model at low effort often beats a lower tier at high effort.
+
+Models of other providers (OpenAI, DeepSeek, xAI) are not shipped here: their ids and prices change
+and a wrong number is worse than none. The user declares them in config.json with `router config
+--external NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT` and `load_external` registers them at start-up. They
+judge and arbitrate; they never do the work (the routing lattice is Anthropic only), so their tier is
+a fixed assumption (EXTERNAL_TIER) and their cached tokens are priced at the input rate.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from .paths import MODELS_ENV, read_config
 
 PRICES_AS_OF = "2026-10-06"
+KNOWN_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "deepseek", "xai")
+EXTERNAL_TIER = 2  # an external judge is assumed as capable as Opus; it is never routed, so this only orders cells
+TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}
+EXTERNAL_SYNTAX = re.compile(r"^([a-z][a-z0-9-]*)=(?:([a-z]+)/([^@\s]+)@([0-9.]+)/([0-9.]+))?$")
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 EFFORT_OUTPUT_MULT: dict[str, float] = {"low": 0.5, "medium": 0.75, "high": 1.0, "xhigh": 1.6, "max": 2.5}
@@ -54,6 +66,7 @@ class ModelSpec:
     max_output: int = 128_000
     long_prompt_from: int | None = None  # prompt tokens above which `long_prompt_mult` applies
     long_prompt_mult: float = 1.0
+    provider: str = "anthropic"  # who serves it; only Anthropic models do the work, the rest judge
 
 
 MODELS: dict[str, ModelSpec] = {
@@ -66,6 +79,57 @@ MODELS: dict[str, ModelSpec] = {
     "claude-fable-5-1": ModelSpec("claude-fable-5-1", "fable", 3, 10.00, 50.00, 0.25, 12.50, "high", True),
 }
 SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
+
+
+def parse_external(text: str) -> tuple[str, ModelSpec | None]:
+    """Parse one `router config --external` value, `NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT` (prices in USD per
+    million tokens), into the short name and its spec; `NAME=` alone means remove, and returns None.
+
+    Raises:
+        ValueError: the syntax, the provider or the name is not acceptable.
+    """
+    m = EXTERNAL_SYNTAX.match(text.strip())
+    if m is None:
+        raise ValueError(f"expected NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT (or NAME= to remove), got {text!r}")
+    name, provider, model_id, price_in, price_out = m.groups()
+    if any(spec.short == name and spec.provider == "anthropic" for spec in MODELS.values()):
+        raise ValueError(f"{name!r} is an Anthropic model; pick another short name")
+    if provider is None:
+        return name, None
+    if provider not in KNOWN_PROVIDERS or provider == "anthropic":
+        raise ValueError(f"unknown provider {provider!r}; known: {', '.join(p for p in KNOWN_PROVIDERS if p != 'anthropic')}")
+    cost_in, cost_out = float(price_in), float(price_out)
+    return name, ModelSpec(model_id, name, EXTERNAL_TIER, cost_in, cost_out, cost_in, cost_in, "medium", False,
+                           provider=provider)
+
+
+def load_external(config: dict[str, Any]) -> list[str]:
+    """Register the external models declared in `config["external"]` (as `router config --external` writes
+    them) in the catalogue, replacing any registered before, and return their short names. Entries that
+    do not parse are skipped.
+    """
+    for model_id in [m for m, spec in MODELS.items() if spec.provider != "anthropic"]:
+        SHORT_TO_ID.pop(MODELS.pop(model_id).short, None)
+    loaded = []
+    declared = config.get("external")
+    for name, entry in (declared.items() if isinstance(declared, dict) else []):
+        if not isinstance(entry, dict):
+            continue
+        declared_as = f"{name}={entry.get('provider')}/{entry.get('id')}@{entry.get('input')}/{entry.get('output')}"
+        try:
+            _, spec = parse_external(declared_as)
+        except ValueError:
+            continue
+        if spec is not None:
+            MODELS[spec.id] = spec
+            SHORT_TO_ID[spec.short] = spec.id
+            loaded.append(spec.short)
+    return loaded
+
+
+def external_models() -> list[ModelSpec]:
+    """Return the registered models of other providers, the ones that may judge but never do the work."""
+    return [spec for spec in MODELS.values() if spec.provider != "anthropic"]
 
 
 class UnknownModelError(ValueError):
@@ -152,17 +216,14 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
 
 
 def available_models() -> list[str]:
-    """Return the models this installation may route to, in catalogue order. The MODEL_ROUTER_MODELS
-    variable wins, then `models` in config.json (written by `router install --models`), else every
-    model in the catalogue. Use it when a plan or an account lacks a model (no Fable, say).
+    """Return the models this installation may route to, in catalogue order: Anthropic models only. The
+    MODEL_ROUTER_MODELS variable wins, then `models` in config.json (written by `router install --models`),
+    else every Anthropic model in the catalogue. Use it when a plan or an account lacks a model (no Fable, say).
     """
     raw = os.environ.get(MODELS_ENV)
-    if raw:
-        return parse_models(raw)
     configured = read_config().get("models")
-    if configured:
-        return parse_models(configured)
-    return list(MODELS)
+    ids = parse_models(raw) if raw else parse_models(configured) if configured else list(MODELS)
+    return [m for m in ids if MODELS[m].provider == "anthropic"]
 
 
 @dataclass(frozen=True)
@@ -195,7 +256,8 @@ class Cell:
 
     @property
     def capability(self) -> float:
-        return round(CAPABILITY_TIER[self.spec.short] + CAPABILITY_EFFORT[self.effort], 4)
+        base = CAPABILITY_TIER.get(self.spec.short, TIER_CAPABILITY[self.spec.tier])
+        return round(base + CAPABILITY_EFFORT[self.effort], 4)
 
     def claude_code(self) -> dict[str, str]:
         """Return the `model` and `effort` values Claude Code's Agent tool and agent frontmatter accept."""
@@ -230,10 +292,13 @@ def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None =
 
 
 def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
-    """Return `cell` itself when its model is available; otherwise the same effort on the most capable
-    available model below it, or the least capable one above it when nothing is below. The ladder
-    then escalates from there as usual.
+    """Return `cell` itself when its model is available (an external judge always is: its availability is
+    its API key, checked when it is called); otherwise the same effort on the most capable available
+    model below it, or the least capable one above it when nothing is below. The ladder then escalates
+    from there as usual.
     """
+    if cell.spec.provider != "anthropic":
+        return cell
     avail = [resolve_model(m) for m in (models or available_models())]
     if cell.model in avail:
         return cell

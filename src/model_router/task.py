@@ -107,7 +107,12 @@ def contains_checker(*needles: str, all_of: bool = True) -> Checker:
 FENCED_BLOCK = re.compile(r"```[\w-]*[ \t]*\r?\n(.*?)\r?\n?[ \t]*```", re.DOTALL)
 
 
-def _json_payload(answer: str) -> object:
+def json_payload(answer: str) -> object:
+    """Parse the JSON in `answer`: the first fenced block when there is one, else the whole text.
+
+    Raises:
+        json.JSONDecodeError: it is not JSON.
+    """
     text = answer.strip()
     fenced = FENCED_BLOCK.search(text)
     if fenced:
@@ -121,7 +126,7 @@ def json_checker(required_keys: tuple[str, ...] = ()) -> Checker:
     """
     def check(answer: str) -> CheckResult:
         try:
-            data = _json_payload(answer)
+            data = json_payload(answer)
         except json.JSONDecodeError as exc:
             return CheckResult(False, f"invalid JSON: {exc.msg}")
         if required_keys:
@@ -139,7 +144,7 @@ def pydantic_checker(model: type[BaseModel]) -> Checker:
     """Return a checker that passes when the answer is JSON that validates against `model`."""
     def check(answer: str) -> CheckResult:
         try:
-            model.model_validate(_json_payload(answer))
+            model.model_validate(json_payload(answer))
         except json.JSONDecodeError as exc:
             return CheckResult(False, f"invalid JSON: {exc.msg}")
         except ValidationError as exc:

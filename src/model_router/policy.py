@@ -172,8 +172,9 @@ def choose_arbiter(
     """Return the cell that settles a split between the two judges of `worker`'s tribunal, or None when no
     cell other than the judges themselves is available (a split then fails, as in a panel). `arbiter`
     (the configured one when None) wins when it is not one of the judges; otherwise the first of these
-    that is not a judge: the next model up from the full judge at low effort, the full judge's model one
-    effort up, the worker's model one effort up from the light judge.
+    that is not a judge, cells on a provider other than the full judge's first: the next model up from
+    the full judge at low effort, the full judge's model one effort up, the worker's model one effort up
+    from the light judge.
     """
     judges = choose_panel(worker, cells, judge=judge)
     arbiter = _cap_effort(arbiter) if arbiter else default_arbiter({c.model for c in cells})
@@ -185,6 +186,7 @@ def choose_arbiter(
     above = [m for m in models if Cell(m, "low").tier > full.tier]
     candidates = [Cell(above[0], "low")] if above else []
     candidates += [_effort_up(full), _effort_up(light)]
+    candidates.sort(key=lambda c: c.spec.provider == full.spec.provider)  # another provider first, stable otherwise
     return next((c for c in candidates if c not in judges), None)
 
 

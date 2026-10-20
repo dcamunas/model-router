@@ -143,6 +143,20 @@ def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp
     assert updated["model"] == "opus" and updated["effort"] == "medium" and "cross" not in record
 
 
+def test_an_external_judge_never_becomes_a_subagents_model(tmp_path, monkeypatch):
+    from model_router.catalog import load_external
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    (tmp_path / "config.json").write_text(json.dumps({
+        "judge": "gpt/high", "external": {"gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}))
+    try:
+        load_external(json.loads((tmp_path / "config.json").read_text()))
+        updated, record = decided({"prompt": "Review this critical design of the payments migration"}, chat_model="opus")
+        assert updated["model"] == "opus" and "cross" not in record
+    finally:
+        load_external({})
+
+
 def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
