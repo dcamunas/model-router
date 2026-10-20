@@ -272,9 +272,11 @@ flowchart LR
 
 Karpathy's `llm-council` sends one question to several models, has each one rank the others'
 answers and lets a chairman write the final one. With four members that is nine calls per
-question, and the value comes from mixing providers. Here every model is Claude and the number that
-matters is the cost per solved task, so the router keeps the one part that pays: a second,
-independent opinion.
+question, and the value comes from mixing providers. Here the work is done by one Claude cell
+picked by cost and risk, the judges may come from another provider (see "Judges from other
+providers"), and the number that matters is the cost per solved task, so the router keeps the parts
+that pay: a second, independent opinion, and a third one only when the first two split. No shared
+answers, no ranking, no chairman.
 
 Who judges is a fixed choice, not a climb up the lattice. `full` uses one judge cell, `opus/xhigh`
 unless `router config --judge` or `MODEL_ROUTER_JUDGE` say otherwise, in a fresh context. When the
@@ -309,10 +311,11 @@ on a split, and how many of its verdicts you contradicted with `router feedback`
 numbers to pick a judge with, instead of the error rates the simulation assumes.
 
 `router bench --simulate` compares `router` (tribunal) with `router (panel)` and `router (one
-judge)`. The simulation assumes the
-judges of one answer share their random draw half the time (`JUDGE_CORRELATION`): models of one
-family err together, which is the honest reason a panel of Claude cells buys less than a council of
-different providers would. Measure it on your own tasks before trusting either number.
+judge)`. The simulation assumes the judges of one answer share their random draw half the time
+(`JUDGE_CORRELATION`): models of one family err together, which is the honest reason two Claude
+judges buy less than two providers would. A judge from another provider should lower that
+correlation; the scoreboard in `router stats` is where to see whether it does. Measure on your own
+tasks before trusting either number.
 
 ## Judges from other providers
 
