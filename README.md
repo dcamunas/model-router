@@ -23,6 +23,21 @@ things are different here, and each one has its reason in the table.
 
 What it does not do: it decides nothing from real data until you have real verdicts.
 
+![router run on a critical writing task: the answer, one attempt on opus/medium judged by a tribunal of two, status solved](docs/showcase/router-run.gif)
+
+```mermaid
+flowchart LR
+  T[task: kind + risk] --> P[plan: start cell, ladder, verification, budget]
+  P --> A[attempt on the cell]
+  A --> C{checker}
+  C -- fails --> N[next cell up the ladder]
+  C -- passes or none --> J{judge or tribunal}
+  J -- pass --> L[(ledger)]
+  J -- fail --> N
+  N --> A
+  N -- ladder or budget exhausted --> U[unsolved]
+```
+
 ## Install
 
 Requirements: Python 3.12 or later, [uv](https://docs.astral.sh/uv/), and Claude Code if you want
@@ -242,6 +257,19 @@ print(result.answer)
 
 ## Tribunal: two judges and an arbiter, not a council
 
+![The tribunal, step by step: the worker answers, two judges read it blind to each other, they split, the arbiter reads both reasoned verdicts and decides, the ledger keeps every verdict](docs/showcase/tribunal.gif)
+
+```mermaid
+flowchart LR
+  W[worker's answer] --> A[judge A: the worker's cell, fresh context]
+  W --> B[judge B: the fixed judge, another model]
+  A & B --> D{agree?}
+  D -- yes --> V[verdict]
+  D -- split --> R[arbiter: task, answer, both reasons]
+  R --> V
+  V --> S[(ledger and scoreboard)]
+```
+
 Karpathy's `llm-council` sends one question to several models, has each one rank the others'
 answers and lets a chairman write the final one. With four members that is nine calls per
 question, and the value comes from mixing providers. Here every model is Claude and the number that
@@ -347,6 +375,7 @@ replace the tasks with yours.
 uv run pytest -q
 uv run ruff check src tests   # style, types on signatures, docstrings on the public API, complexity
 uv run pyright                # types
+uv run --with pillow docs/showcase/build.py   # the README's GIFs, from docs/showcase/router-run.txt (a real run)
 ```
 
 GitHub Actions runs the same on every push, checks that the skill ships inside the wheel and

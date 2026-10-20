@@ -1,0 +1,12 @@
+**Invoicing service outage – 19 October 2026**
+
+On 19 October 2026, the invoicing service was unavailable for 45 minutes, from 10:00 to 10:45 UTC. No data was lost.
+
+The outage was caused by a configuration change. To prevent this from happening again, all configuration changes now go through a second review and are rolled out in stages.
+
+We apologise for the disruption.
+
+#  cell         fallback  stop      tok in/out  cost     verdict                                 verif.  reason
+-  -----------  --------  --------  ----------  -------  --------------------------------------  ------  ---------------------
+1  opus/medium            end_turn  2/128       $0.0028  pass (tribunal, opus/medium+fable/low)  $0.040  tribunal agreed (opus
+status solved · cost $0.043 (verification $0.040) · retries 0 · id 9d77a90ec5a1

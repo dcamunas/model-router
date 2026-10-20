@@ -2,6 +2,16 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Two animated figures in the README, built from `docs/showcase/build.py`: a real `router run` on a critical writing task, and the tribunal step by step (two blind judges, a split, the arbiter). Mermaid diagrams next to them for the loop and the tribunal.
+
+### Changed
+
+- The attempts table of `router run` fits the terminal: the reason column takes what the other columns leave (`COLUMNS` is honoured), between 16 and 70 characters.
+
 ## [0.6.0] - 2026-10-20
 
 ### Added
