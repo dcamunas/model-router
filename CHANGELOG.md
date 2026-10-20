@@ -2,6 +2,22 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.4.3] - 2026-10-20
+
+Twenty-one fixes from an independent bug hunt over the whole package, each with a test.
+
+### Fixed
+
+- Runner: a judge that cannot be reached no longer loses the worker's attempt; it is recorded with source `judge-error`, the answer is kept and the task ends with status `error`. The retry after a truncated answer now uses the model's output cap when doubling would exceed it.
+- Feedback store: it learns only from verified verdicts (checker, judge, panel); unverified passes, refusals, truncations and judge errors are no longer counted, and the first-attempt flag belongs to the start cell only (a cell reached after a refusal was counted as a first attempt). `router feedback` moves a count only when the verdict actually changes, so repeating a correction no longer drains other tasks' passes. The file is written atomically and merged under a lock, so two processes sharing it keep each other's counts; an unreadable file starts empty and is replaced on the next save.
+- Task: zero or negative `max_tokens`, `max_attempts` and `budget_usd` are rejected (a zero budget used to mean the risk default).
+- JSON checkers unwrap fenced blocks in every common shape: no newline before the closing fence, a space after the language tag, CRLF line endings, prose around the block.
+- Classification: `borrador` and `medición` no longer count as high risk and `crítica` only as a whole word; `análisis` and `revísalo` land on their kinds; "fix this bug" is code, not review.
+- Hook: a transcript line of an unexpected shape, an assistant entry without a model, or a log directory that cannot be written no longer silence the routing for that call.
+- CLI: `install`, `uninstall` and `doctor` give one-line errors for a settings.json that is not an object or whose hooks have an unexpected shape; `uninstall` checks the skill before touching the hooks, so a foreign skill leaves the profile untouched; a missing `--file` or `--system` file is a one-line error; `bench` with no terminal to confirm is cancelled instead of a traceback.
+- `claude -p` backend: JSON that is not an object, or a non-zero exit without an error flag, become a one-line client error; the served model is the requested one when the CLI lists it, else the busiest one, so a fallback is not reported falsely.
+- Ledger: an override no longer mutates the in-memory records; `find` returns the record as written and `last_override` gives the latest human verdict.
+
 ## [0.4.2] - 2026-10-20
 
 ### Changed
