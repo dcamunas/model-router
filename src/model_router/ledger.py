@@ -109,6 +109,7 @@ class Summary:
     verify_cost: float = 0.0
     by_cell: dict[str, dict[str, float]] = field(default_factory=dict)
     by_kind: dict[str, dict[str, float]] = field(default_factory=dict)
+    by_judge: dict[str, dict[str, int]] = field(default_factory=dict)  # the scoreboard, see `scoreboard`
 
     @property
     def total_cost(self) -> float:
@@ -141,6 +142,21 @@ class Summary:
             ]
             lines.append("")
             lines.append(table(["kind", "tasks", "solved", "cost", "cost/solved"], rows))
+        if self.by_judge:
+            rows = []
+            for label, s in sorted(self.by_judge.items(), key=lambda kv: -kv[1]["verdicts"]):
+                paired = s["agreed"] + s["split"]
+                ruled = s["backed"] + s["overruled"]
+                rows.append([
+                    label, s["verdicts"], f"{s['passes'] / s['verdicts']:.0%}",
+                    f"{s['agreed'] / paired:.0%} of {paired}" if paired else "-",
+                    f"{s['backed'] / ruled:.0%} of {ruled}" if ruled else "-",
+                    s["contradicted"],
+                ])
+            lines.append("")
+            lines.append("judges' scoreboard (agreed = with the other judge; backed = by the arbiter on a split; "
+                         "contradicted = by a human override)")
+            lines.append(table(["judge", "verdicts", "pass rate", "agreed", "backed", "contradicted"], rows))
         return "\n".join(lines)
 
 
@@ -172,4 +188,34 @@ def summarize(task_records: list[dict[str, Any]]) -> Summary:
         k["cost"] += t.get("total_cost_usd", 0.0)
     s.by_cell = dict(cells)
     s.by_kind = dict(kinds)
+    s.by_judge = scoreboard(task_records)
     return s
+
+
+def scoreboard(task_records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Return, per judge cell, how many verdicts it gave and how many passed, how often it agreed with the other
+    judge when both were asked (`agreed` / `split`), how often the arbiter sided with it on a split (`backed` /
+    `overruled`) and how many of its verdicts on a task's final attempt a human override contradicted.
+    """
+    board: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"verdicts": 0, "passes": 0, "agreed": 0, "split": 0, "backed": 0, "overruled": 0, "contradicted": 0}
+    )
+    for t in task_records:
+        attempts = t.get("attempts") or []
+        human = (t["status"] == "solved") if t.get("overridden") else None
+        for i, a in enumerate(attempts):
+            judges = [v for v in a.get("verdicts") or [] if v.get("role") == "judge"]
+            arbiter = next((v for v in a.get("verdicts") or [] if v.get("role") == "arbiter"), None)
+            for v in judges:
+                b = board[v["cell"]]
+                b["verdicts"] += 1
+                b["passes"] += bool(v["passed"])
+                if human is not None and i == len(attempts) - 1 and bool(v["passed"]) != human:
+                    b["contradicted"] += 1
+            if len(judges) == 2:
+                same = bool(judges[0]["passed"]) == bool(judges[1]["passed"])
+                for v in judges:
+                    board[v["cell"]]["agreed" if same else "split"] += 1
+                    if not same and arbiter is not None:
+                        board[v["cell"]]["backed" if bool(v["passed"]) == bool(arbiter["passed"]) else "overruled"] += 1
+    return dict(board)

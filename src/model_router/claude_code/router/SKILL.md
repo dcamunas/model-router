@@ -14,8 +14,8 @@ from the prompt. What this skill adds is the rest of the loop: verify by risk an
 A Claude Code subagent drags the whole session prompt along (tools, MCP, skills: about 100K tokens).
 For a subtask that needs no tools (classify, extract, summarise, draft, review a text you already
 have) use the router directly: about 900 tokens of context, model and effort by kind and risk, an
-optional checker, a judge by risk (two at critical risk for analysis, writing and review), and an
-entry in the ledger.
+optional checker, a judge by risk (at critical risk for analysis, writing and review, a tribunal: two
+judges blind to each other and an arbiter if they split), and an entry in the ledger.
 
 ```bash
 router run "<task>" --kind <kind> --risk <risk>              # the answer goes to stdout
@@ -44,8 +44,8 @@ fails, `router doctor` says so.
    ```
 
    Kinds: classify, extract, summarize, search, chat, write, code, review, analysis, agentic.
-   Risks: low, medium, high, critical. It prints the start cell, the ladder, the verification mode
-   and the verifier (two cells for a panel).
+   Risks: low, medium, high, critical. It prints the start cell, the ladder, the verification mode,
+   the verifier (two cells for a panel or a tribunal) and the arbiter of a tribunal.
 
 2. Launch the subagent with the `model` and `effort` of the start cell and the full brief.
 
@@ -57,6 +57,11 @@ fails, `router doctor` says so.
    - `panel`: the same, twice, on the two cells the plan prints, cheaper one first. Each judge gets
      the brief and the result in a fresh context and never sees the other's verdict. If the first
      fails, do not launch the second. The result passes only when both pass.
+   - `tribunal`: both judges, always, each in a fresh context and blind to the other. If they agree,
+     that is the verdict. If they split, launch a third subagent on the arbiter cell the plan prints
+     with the brief, the result and both verdicts (as judge A and judge B, no model names) and ask it
+     to decide for itself; its verdict is final. Say in the final message who split and who was
+     backed.
 
 4. On failure, relaunch on the next cell of the ladder with the reason for the failure in the brief.
    Stop when it passes, when the ladder runs out, or when the cost is not worth it.

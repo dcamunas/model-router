@@ -14,7 +14,7 @@ from .catalog import PLAN_OUTPUT_TOKENS_AT_HIGH, Cell, Usage, cost_usd
 from .client import ClaudeClient, ClientUnavailableError
 from .policy import Policy, PolicyProtocol
 from .task import Task
-from .verify import VERIFIED_SOURCES, Verifier
+from .verify import VERIFIED_SOURCES, JudgeVerdict, Verifier
 
 if TYPE_CHECKING:
     from .feedback import FeedbackStore
@@ -26,8 +26,9 @@ STATUSES: tuple[str, ...] = ("solved", "unsolved", "refused", "budget", "error")
 @dataclass
 class Attempt:
     """One call to a worker cell and what came of it: usage and cost, whether it was refused or cut short,
-    the verdict with its source (checker, judge, panel, none) and, for judged attempts, the deciding
-    judge's cell, every judge asked and what they cost.
+    the verdict with its source (checker, judge, panel, tribunal, none) and, for judged attempts, the
+    deciding judge's cell, every judge asked, each judge's own verdict (plus the arbiter's after a split)
+    and what they cost.
     """
 
     n: int
@@ -46,6 +47,8 @@ class Attempt:
     verify_usage: Usage = field(default_factory=Usage)
     verify_cost_usd: float = 0.0
     judges: list[Cell] = field(default_factory=list)
+    verdicts: list[JudgeVerdict] = field(default_factory=list)
+    arbiter: Cell | None = None
 
     @property
     def fallback_ran(self) -> bool:
@@ -59,6 +62,7 @@ class Attempt:
             "verdict_source": self.verdict_source, "reason": self.reason,
             "verifier": self.verifier.label if self.verifier else None, "verify_usage": self.verify_usage.to_dict(),
             "verify_cost_usd": round(self.verify_cost_usd, 6), "judges": [j.label for j in self.judges],
+            "verdicts": [v.to_dict() for v in self.verdicts], "arbiter": self.arbiter.label if self.arbiter else None,
         }
 
 
@@ -204,7 +208,7 @@ class Router:
             spent += verdict.cost_usd
             attempts.append(replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
                                     verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
-                                    judges=verdict.judges))
+                                    judges=verdict.judges, verdicts=verdict.verdicts, arbiter=verdict.arbiter))
             answer, parsed, final = completion.text, completion.parsed, cell
             if verdict.passed:
                 status = "solved"

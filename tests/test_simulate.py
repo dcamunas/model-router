@@ -25,10 +25,13 @@ def test_frontier_solves_at_least_as_much_as_sonnet_and_costs_more():
 def test_panel_router_is_compared_with_the_single_judge_router():
     tasks, reports = run_simulation(100, seed=1)  # five critical analysis/write/review tasks in this draw
     by = {r.name: r for r in reports}
-    assert by["router (no panel)"].verify_cost > 0 and by["router"].verify_cost > 0
-    panels = [a for t in by["router"].ledger.tasks() for a in t["attempts"] if a["verdict_source"] == "panel"]
-    assert panels and all(len(a["judges"]) in (1, 2) for a in panels)
-    assert not any(a["verdict_source"] == "panel" for t in by["router (no panel)"].ledger.tasks() for a in t["attempts"])
+    assert by["router (one judge)"].verify_cost > 0 and by["router"].verify_cost > 0
+    tribunals = [a for t in by["router"].ledger.tasks() for a in t["attempts"] if a["verdict_source"] == "tribunal"]
+    assert tribunals and all(len(a["judges"]) in (1, 2) for a in tribunals)
+    panels = [a for t in by["router (panel)"].ledger.tasks() for a in t["attempts"] if a["verdict_source"] == "panel"]
+    assert panels
+    assert not any(a["verdict_source"] in ("panel", "tribunal")
+                   for t in by["router (one judge)"].ledger.tasks() for a in t["attempts"])
     assert "share a draw" in format_report(tasks, reports, 1)
 
 

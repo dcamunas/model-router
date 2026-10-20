@@ -55,7 +55,7 @@ def test_panel_needs_both_judges_and_a_split_escalates():
         script={"opus/medium": [Reply("draft")], "fable/low": [Reply("better draft")]},
         judge={"opus/medium": [ok()], "fable/low": [ko("thin"), ok()], "opus/xhigh": [ok()]},
     )
-    result = Router(client).run(Task(prompt="write the incident report", kind="write", risk="critical"))
+    result = Router(client).run(Task(prompt="write the incident report", kind="write", risk="critical", verify="panel"))
     assert result.verify == "panel" and result.solved
     first, second = result.attempts
     assert first.cell.label == "opus/medium" and first.verdict is False and first.verdict_source == "panel"
@@ -70,9 +70,72 @@ def test_panel_needs_both_judges_and_a_split_escalates():
     assert result.to_dict()["attempts"][0]["judges"] == ["opus/medium", "fable/low"]
 
 
+def test_tribunal_asks_both_judges_and_the_arbiter_settles_a_split(tmp_path: Path):
+    client = FakeClient(
+        script={"*": [Reply("the notice")]},
+        judge={"opus/medium": [ok("fine")], "fable/low": [ko("thin")], "fable/medium": [ok("judge A was right")]},
+    )
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    result = Router(client, ledger=ledger).run(Task(prompt="write the incident report", kind="write", risk="critical"))
+    assert result.verify == "tribunal" and result.solved and len(result.attempts) == 1
+    attempt = result.attempts[0]
+    assert attempt.verdict is True and attempt.verdict_source == "tribunal" and attempt.arbiter == parse_cell("fable/medium")
+    assert [j.label for j in attempt.judges] == ["opus/medium", "fable/low"]
+    assert [(v.cell.label, v.passed, v.role) for v in attempt.verdicts] == [
+        ("opus/medium", True, "judge"), ("fable/low", False, "judge"), ("fable/medium", True, "arbiter"),
+    ]
+    assert "tribunal split: opus/medium passed, fable/low failed; arbiter fable/medium sided with opus/medium" in attempt.reason
+    calls = [c for c in client.calls if c["output_format"] == "Verdict"]
+    assert [c["cell"] for c in calls] == ["opus/medium", "fable/low", "fable/medium"]
+    ruling = calls[-1]["prompt"]
+    assert "<verdicts>" in ruling and "Judge A passed" in ruling and "Judge B failed" in ruling
+    assert "fable" not in ruling.split("<verdicts>")[1]  # the arbiter does not see who the judges were
+    assert attempt.verify_cost_usd == pytest.approx(0.010 + 0.025 + 0.025)
+    record = ledger.tasks()[0]["attempts"][0]
+    assert record["arbiter"] == "fable/medium" and [v["role"] for v in record["verdicts"]] == ["judge", "judge", "arbiter"]
+
+
+def test_tribunal_agreement_needs_no_arbiter_and_a_split_without_one_fails(monkeypatch):
+    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
+    result = Router(client).run(Task(prompt="x", kind="write", risk="critical"))
+    attempt = result.attempts[0]
+    assert result.solved and attempt.arbiter is None and "tribunal agreed" in attempt.reason
+    assert len([c for c in client.calls if c["output_format"] == "Verdict"]) == 2
+    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ko()]})
+    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1))
+    assert result.status == "unsolved" and "tribunal agreed" in result.attempts[0].reason
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
+    client = FakeClient(script={"*": [Reply("x")]}, judge={"opus/high": [ok()], "opus/xhigh": [ko("no")]})
+    router = Router(client, policy=LadderPolicy([parse_cell("opus/high")], verify="tribunal"))
+    result = router.run(Task(prompt="x", kind="write", risk="critical"))
+    attempt = result.attempts[0]
+    assert result.status == "unsolved" and attempt.verdict is False and "no arbiter available" in attempt.reason
+    assert attempt.arbiter is None and len(attempt.verdicts) == 2
+
+
+def test_scoreboard_counts_agreement_arbiter_backing_and_human_contradictions(tmp_path: Path):
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    client = FakeClient(
+        script={"*": [Reply("x")]},
+        judge={"opus/medium": [ok(), ok(), ok()], "fable/low": [ko("thin"), ok(), ok()], "fable/medium": [ok()]},
+    )
+    router = Router(client, ledger=ledger)
+    for i in range(3):
+        router.run(Task(prompt="x", kind="write", risk="critical", id=f"w{i}"))
+    ledger.override("w2", passed=False, note="it was bad")
+    board = summarize(ledger.tasks()).by_judge
+    assert board["opus/medium"] == {"verdicts": 3, "passes": 3, "agreed": 2, "split": 1, "backed": 1, "overruled": 0,
+                                    "contradicted": 1}
+    assert board["fable/low"] == {"verdicts": 3, "passes": 2, "agreed": 2, "split": 1, "backed": 0, "overruled": 1,
+                                  "contradicted": 1}
+    assert "fable/medium" not in board  # the arbiter is not a judge on the scoreboard
+    text = summarize(ledger.tasks()).text()
+    assert "judges' scoreboard" in text and "opus/medium" in text
+
+
 def test_panel_stops_at_the_first_failing_judge():
     client = FakeClient(script={"*": [Reply("draft")]}, judge={"opus/medium": [ko("vague")], "*": [ok()]})
-    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1))
+    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1, verify="panel"))
     assert result.status == "unsolved"
     attempt = result.attempts[0]
     assert attempt.verdict is False and attempt.verdict_source == "panel"

@@ -22,14 +22,14 @@ from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
-from .paths import CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config
-from .policy import DEFAULT_JUDGE, LadderPolicy, Policy, PolicyProtocol, default_judge
+from .paths import ARBITER_ENV, CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config
+from .policy import DEFAULT_JUDGE, LadderPolicy, Policy, PolicyProtocol, default_arbiter, default_judge
 from .runner import Router, TaskResult
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
 from .verify import VERIFIED_SOURCES
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
-JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02, "panel": 0.025}  # per verified attempt, rough, for the bench
+JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02, "panel": 0.025, "tribunal": 0.03}  # per attempt, rough
 REASON_COLUMN_CHARS = 70  # keeps the attempts table on one line per attempt
 PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
 
@@ -98,6 +98,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     judges = policy.judges_for(plan.start, plan.verify)
     if judges:
         print(f"verifier ({plan.verify}): {' then '.join(map(str, judges))}")
+    if plan.verify == "tribunal" and len(judges) > 1:
+        arbiter = policy.arbiter_for(plan.start)
+        print(f"arbiter on a split: {arbiter or 'none available (a split fails)'}")
     first = plan.start.expected_cost(task.estimated_input_tokens, task.planned_output_tokens)
     print(f"estimated cost of the first attempt: {money(first)}"
           f"  (prices {PRICES_AS_OF})")
@@ -109,7 +112,7 @@ def _attempts_table(result: TaskResult) -> str:
     for a in result.attempts:
         verdict = "-" if a.verdict is None else ("pass" if a.verdict else "fail")
         served = a.served_model if a.fallback_ran else ""
-        judged = "+".join(j.label for j in a.judges)
+        judged = "+".join(j.label for j in a.judges) + (f" > {a.arbiter.label}" if a.arbiter else "")
         rows.append([a.n, a.cell.label, served, a.stop_reason, f"{a.usage.input_tokens:,}/{a.usage.output_tokens:,}",
                      money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + judged if judged else ''})",
                      money(a.verify_cost_usd), a.reason[:REASON_COLUMN_CHARS]])
@@ -369,6 +372,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
         checks.append((True, f"judge for full verification: {judge} (via {source})"))
     except ValueError as exc:  # UnknownModelError is one too
         checks.append((False, f"judge for full verification: {exc} (check {JUDGE_ENV} or `router config --judge`)"))
+    try:
+        arbiter = default_arbiter()
+        source = ARBITER_ENV if os.environ.get(ARBITER_ENV) else "config.json"
+        checks.append((True, f"arbiter for a tribunal split: {arbiter} (via {source})" if arbiter else
+                       "arbiter for a tribunal split: by rule (the next model up from the judge, at low effort)"))
+    except ValueError as exc:
+        checks.append((False, f"arbiter for a tribunal split: {exc} (check {ARBITER_ENV} or `router config --arbiter`)"))
     if profile is not None and profile.is_dir():
         checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
@@ -455,17 +465,21 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
-    if args.models is None and args.profile_dir is None and args.judge is None:
+    if args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None:
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
         print(f"available models: {', '.join(cfg.get('models') or [m.short for m in MODELS.values()])}")
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
+        print(f"arbiter for a tribunal split: {cfg.get('arbiter') or 'by rule (the next model up from the judge)'}")
         print(f"(in {config_path()})")
         return 0
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
     judge = parse_cell(args.judge).label if args.judge is not None else None
-    remember(profile, names, reset_models=args.models is not None and names is None, judge=judge)
+    arbiter = None
+    if args.arbiter is not None:
+        arbiter = "" if args.arbiter.strip().lower() == "rule" else parse_cell(args.arbiter).label
+    remember(profile, names, reset_models=args.models is not None and names is None, judge=judge, arbiter=arbiter)
     return 0
 
 
@@ -546,6 +560,7 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
     sg.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
+    sg.add_argument("--arbiter", help="cell that settles a tribunal split, e.g. fable/low; `rule` goes back to the default")
     sg.set_defaults(func=_cmd_config)
     return p
 

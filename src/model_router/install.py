@@ -164,31 +164,47 @@ def model_names(models: str) -> list[str] | None:
 
 
 def remember(
-    profile: Path | None, models: list[str] | None, *, reset_models: bool = False, judge: str | None = None
+    profile: Path | None, models: list[str] | None, *, reset_models: bool = False, judge: str | None = None,
+    arbiter: str | None = None,
 ) -> None:
     """Record in config.json the Claude profile for `router run`, the models this installation may route
-    to (`reset_models` removes that restriction) and the judge cell for full verification. A None value
-    leaves its key untouched.
+    to (`reset_models` removes that restriction), the judge cell for full verification and the arbiter of
+    a tribunal split (an empty string removes it, so the rule applies). A None value leaves its key untouched.
     """
-    if profile is None and models is None and judge is None and not reset_models:
-        return
     cfg = read_config()
+    lines = _apply_config(cfg, profile, models, reset_models=reset_models, judge=judge, arbiter=arbiter)
+    if not lines:
+        return
+    path = save_config(cfg)
+    for line in lines:
+        print(f"{line} (in {path})")
+
+
+def _apply_config(
+    cfg: dict[str, Any], profile: Path | None, models: list[str] | None, *, reset_models: bool, judge: str | None,
+    arbiter: str | None,
+) -> list[str]:
+    """Apply the requested changes to `cfg` in place and return one line per change, for the user."""
+    lines = []
     if profile is not None:
         cfg["claude_config_dir"] = str(profile)
-    if models is not None:
-        cfg["models"] = models
-    elif reset_models:
-        cfg.pop("models", None)
+        lines.append(f"profile for `router run`: {profile}")
+    if models is not None or reset_models:
+        if models is not None:
+            cfg["models"] = models
+        else:
+            cfg.pop("models", None)
+        lines.append("available models: " + ", ".join(cfg.get("models") or [spec.short for spec in MODELS.values()]))
     if judge is not None:
         cfg["judge"] = judge
-    path = save_config(cfg)
-    if profile is not None:
-        print(f"profile for `router run`: {profile} (in {path})")
-    if models is not None or reset_models:
-        shown = ", ".join(cfg.get("models") or [spec.short for spec in MODELS.values()])
-        print(f"available models: {shown} (in {path})")
-    if judge is not None:
-        print(f"judge for full verification: {judge} (in {path})")
+        lines.append(f"judge for full verification: {judge}")
+    if arbiter is not None:
+        if arbiter:
+            cfg["arbiter"] = arbiter
+        else:
+            cfg.pop("arbiter", None)
+        lines.append(f"arbiter for a tribunal split: {arbiter or 'by rule'}")
+    return lines
 
 
 def install(

@@ -2,7 +2,7 @@ import pytest
 
 from model_router.catalog import lattice, parse_cell
 from model_router.feedback import FeedbackStore
-from model_router.policy import LadderPolicy, Policy, choose_panel, choose_verifier, default_judge
+from model_router.policy import LadderPolicy, Policy, choose_arbiter, choose_panel, choose_verifier, default_judge
 from model_router.task import Task, contains_checker
 
 
@@ -126,10 +126,10 @@ def test_panel_with_one_model_uses_two_cells_and_degrades_to_one_at_the_top(monk
     assert choose_panel(parse_cell("opus/max"), cells) == [parse_cell("opus/xhigh")]
 
 
-def test_panel_is_automatic_at_critical_risk_for_judgement_kinds_without_checker():
+def test_tribunal_is_automatic_at_critical_risk_for_judgement_kinds_without_checker():
     policy = Policy()
-    assert policy.plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "panel"
-    assert policy.plan(Task(prompt="x", kind="write", risk="critical")).verify == "panel"
+    assert policy.plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "tribunal"
+    assert policy.plan(Task(prompt="x", kind="write", risk="critical")).verify == "tribunal"
     assert policy.plan(Task(prompt="x", kind="code", risk="critical")).verify == "full"
     assert policy.plan(Task(prompt="x", kind="analysis", risk="high")).verify == "light"
     with_checker = Task(prompt="x", kind="analysis", risk="critical", checker=contains_checker("42"))
@@ -137,8 +137,41 @@ def test_panel_is_automatic_at_critical_risk_for_judgement_kinds_without_checker
     assert policy.plan(Task(prompt="x", kind="analysis", risk="critical", verify="full")).verify == "full"
     assert policy.plan(Task(prompt="x", kind="code", risk="low", verify="panel")).verify == "panel"
     assert Policy(panel_kinds=frozenset()).plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "full"
+    assert Policy(critical_mode="panel").plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "panel"
     plan = policy.plan(Task(prompt="x", kind="review", risk="critical"))
-    assert any(r.startswith("panel:") for r in plan.rationale)
+    assert any(r.startswith("tribunal:") and "arbiter" in r for r in plan.rationale)
+    with pytest.raises(ValueError):
+        Policy(critical_mode="council")
+
+
+def test_arbiter_is_the_next_model_up_from_the_judge_else_one_effort_up(monkeypatch):
+    monkeypatch.delenv("MODEL_ROUTER_ARBITER", raising=False)
+    cells = lattice()
+    # judges sonnet/medium + opus/xhigh: the model above the judge, at low
+    assert choose_arbiter(parse_cell("sonnet/medium"), cells) == parse_cell("fable/low")
+    # judges opus/medium + fable/low: nothing above fable, so the judge one effort up
+    assert choose_arbiter(parse_cell("opus/medium"), cells) == parse_cell("fable/medium")
+    # judges fable/low + opus/xhigh: fable/low and opus/xhigh are taken, so the worker's model one effort up
+    assert choose_arbiter(parse_cell("fable/low"), cells) == parse_cell("fable/medium")
+    # a configured arbiter wins unless it is one of the judges
+    assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("sonnet/max")) == parse_cell("sonnet/xhigh")
+    assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("fable/low")) == parse_cell("fable/medium")
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
+    cells = lattice()
+    assert choose_arbiter(parse_cell("opus/medium"), cells) == parse_cell("opus/high")  # judges opus/medium + opus/xhigh
+    assert choose_arbiter(parse_cell("opus/high"), cells) is None  # judges opus/high + opus/xhigh: nothing is left
+
+
+def test_arbiter_comes_from_the_environment_or_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv("MODEL_ROUTER_ARBITER", raising=False)
+    assert Policy().arbiter is None
+    (tmp_path / "config.json").write_text('{"arbiter": "fable/max"}')
+    assert Policy().arbiter == parse_cell("fable/xhigh")
+    monkeypatch.setenv("MODEL_ROUTER_ARBITER", "sonnet/high")
+    assert Policy().arbiter == parse_cell("sonnet/high")
+    assert LadderPolicy([parse_cell("opus/low")]).arbiter == parse_cell("sonnet/high")
+    assert Policy().arbiter_for(parse_cell("opus/medium")) == parse_cell("sonnet/high")
 
 
 def test_judges_for_lists_every_judge_and_the_panel_cost_counts_both():

@@ -2,7 +2,8 @@
 spend. Everything is a table you can read and edit; the feedback store nudges the start cell once
 it has seen enough verdicts for a kind. Verification has four modes: none; `light`, the worker's own
 cell in a fresh context; `full`, a fixed judge cell (opus/xhigh unless configured) on another model
-than the worker; `panel`, those two together, both must agree (critical risk, no checker, kinds
+than the worker; `panel`, those two together, both must agree; `tribunal`, those two blind to each
+other plus an arbiter that settles a split (the default at critical risk, with no checker, for kinds
 where only judgement can decide). Verifying is easier than producing, so the judge does not have to
 outrank the worker: it has to be independent and good enough, and it never thinks above `xhigh`.
 """
@@ -15,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from .catalog import EFFORTS, Cell, ladder, lattice, nearest_available, parse_cell, step_up
-from .paths import JUDGE_ENV, read_config
+from .paths import ARBITER_ENV, JUDGE_ENV, read_config
 from .task import Task
 
 if TYPE_CHECKING:
@@ -39,8 +40,9 @@ START: dict[str, dict[str, str]] = {
 FLOOR: dict[str, str] = {"high": "sonnet/low", "critical": "opus/medium"}
 VERIFY_BY_RISK: dict[str, str] = {"low": "none", "medium": "none", "high": "light", "critical": "full"}
 # Kinds where no checker can decide: when the risk calls for a full judge and the task has no checker,
-# the policy asks a panel of two judges instead of one.
+# the policy asks two judges (CRITICAL_MODE: a tribunal, or a panel) instead of one.
 PANEL_KINDS: frozenset[str] = frozenset({"analysis", "write", "review"})
+CRITICAL_MODE = "tribunal"
 BUDGET_USD_BY_RISK: dict[str, float] = {"low": 0.10, "medium": 0.50, "high": 2.00, "critical": 10.00}
 MAX_ATTEMPTS_BY_RISK: dict[str, int] = {"low": 2, "medium": 3, "high": 4, "critical": 5}
 BUDGET_ATTEMPTS = 3.0  # the budget is at least this many first attempts, so big prompts are not starved
@@ -79,6 +81,8 @@ class PolicyProtocol(Protocol):
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None: ...
 
     def judges_for(self, worker: Cell, mode: str) -> list[Cell]: ...
+
+    def arbiter_for(self, worker: Cell) -> Cell | None: ...
 
 
 def _judge_cost(cell: Cell) -> float:
@@ -140,16 +144,59 @@ def choose_verifier(worker: Cell, mode: str, cells: list[Cell], *, judge: Cell |
 
 
 def choose_panel(worker: Cell, cells: list[Cell], *, judge: Cell | None = None) -> list[Cell]:
-    """Return the judges of a panel for `worker`, cheapest first: the light judge (the worker's own cell,
-    fresh context) and the full judge (see `choose_verifier`). When both are the same cell, one judge.
+    """Return the judges of a panel or a tribunal for `worker`, cheapest first: the light judge (the worker's
+    own cell, fresh context) and the full judge (see `choose_verifier`). When both are the same cell, one judge.
     """
     judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
     return sorted({_light_judge(worker), _full_judge(worker, judge, cells)}, key=_judge_cost)
 
 
+def default_arbiter(models: Iterable[str] | None = None) -> Cell | None:
+    """Return the configured arbiter cell (MODEL_ROUTER_ARBITER, else `arbiter` in config.json), capped at
+    JUDGE_MAX_EFFORT and moved to the nearest available model, or None when nothing is configured and the
+    rule in `choose_arbiter` applies.
+
+    Raises:
+        UnknownModelError: the configured model is not in the catalogue.
+        ValueError: the configured effort does not exist.
+    """
+    raw = os.environ.get(ARBITER_ENV) or read_config().get("arbiter")
+    if not raw:
+        return None
+    return _cap_effort(nearest_available(parse_cell(str(raw)), models))
+
+
+def choose_arbiter(
+    worker: Cell, cells: list[Cell], *, judge: Cell | None = None, arbiter: Cell | None = None
+) -> Cell | None:
+    """Return the cell that settles a split between the two judges of `worker`'s tribunal, or None when no
+    cell other than the judges themselves is available (a split then fails, as in a panel). `arbiter`
+    (the configured one when None) wins when it is not one of the judges; otherwise the first of these
+    that is not a judge: the next model up from the full judge at low effort, the full judge's model one
+    effort up, the worker's model one effort up from the light judge.
+    """
+    judges = choose_panel(worker, cells, judge=judge)
+    arbiter = _cap_effort(arbiter) if arbiter else default_arbiter({c.model for c in cells})
+    if arbiter is not None and arbiter not in judges:
+        return arbiter
+    judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
+    full, light = _full_judge(worker, judge, cells), _light_judge(worker)
+    models = sorted({c.model for c in cells}, key=lambda m: Cell(m, "low").tier)
+    above = [m for m in models if Cell(m, "low").tier > full.tier]
+    candidates = [Cell(above[0], "low")] if above else []
+    candidates += [_effort_up(full), _effort_up(light)]
+    return next((c for c in candidates if c not in judges), None)
+
+
+def _effort_up(cell: Cell) -> Cell:
+    return Cell(cell.model, EFFORTS[min(cell.effort_rank + 1, EFFORTS.index(JUDGE_MAX_EFFORT))])
+
+
 class Policy:
-    """The default policy: the START table, the risk floors, feedback nudges, cost-aware escalation and a
-    fixed judge (`judge`, else the configured one) for full verification.
+    """The default policy: the START table, the risk floors, feedback nudges, cost-aware escalation, a
+    fixed judge (`judge`, else the configured one) for full verification and, at critical risk for
+    `panel_kinds` without a checker, `critical_mode` (a tribunal, or a panel) with `arbiter` (else the
+    configured one, else the rule in `choose_arbiter`).
     """
 
     def __init__(
@@ -160,15 +207,21 @@ class Policy:
         feedback: FeedbackStore | None = None,
         min_gain: float = 0.08,
         panel_kinds: frozenset[str] = PANEL_KINDS,
+        critical_mode: str = CRITICAL_MODE,
         judge: Cell | None = None,
+        arbiter: Cell | None = None,
     ) -> None:
+        if critical_mode not in ("panel", "tribunal"):
+            raise ValueError(f"critical_mode must be 'panel' or 'tribunal', not {critical_mode!r}")
         self.cells = cells or lattice()
         self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
         self.start_table = start_table or START
         self.feedback = feedback
         self.min_gain = min_gain
         self.panel_kinds = panel_kinds
+        self.critical_mode = critical_mode
         self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
+        self.arbiter = _cap_effort(nearest_available(arbiter, self.models)) if arbiter else default_arbiter(self.models)
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
         """Replace a cell whose model this installation does not have with the nearest available one."""
@@ -188,8 +241,9 @@ class Policy:
         start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
         if task.verify is None and verify == "full" and kind in self.panel_kinds and task.checker is None:
-            verify = "panel"
-            rationale.append(f"panel: {risk} {kind} with no checker, two judges must agree")
+            verify = self.critical_mode
+            rationale.append(f"{verify}: {risk} {kind} with no checker, two judges blind to each other"
+                             + (", an arbiter settles a split" if verify == "tribunal" else ", both must agree"))
         est_input = task.estimated_input_tokens
         out_tokens = task.planned_output_tokens
         if self.feedback is not None:
@@ -226,9 +280,14 @@ class Policy:
         """
         return _judges(worker, mode, self.cells, self.judge)
 
+    def arbiter_for(self, worker: Cell) -> Cell | None:
+        """Return the cell that settles a split in `worker`'s tribunal, or None when none is available."""
+        return choose_arbiter(worker, self.cells, judge=self.judge, arbiter=self.arbiter)
+
     def attempt_cost(self, cell: Cell, verify: str, est_input: int, out_tokens: int) -> float:
         """Return the expected cost of one attempt on `cell` including its verification calls (both judges
-        of a panel, although the second is skipped when the first fails).
+        of a panel or a tribunal; the panel skips the second on a fail, the tribunal's arbiter only runs
+        on a split, neither is priced here).
         """
         cost = cell.expected_cost(est_input, out_tokens)
         for judge in self.judges_for(cell, verify):
@@ -252,7 +311,8 @@ class LadderPolicy:
     """A fixed ladder, for benchmarks: 'always Opus high', 'Sonnet then Opus on failure', etc."""
 
     def __init__(
-        self, cells: list[Cell], *, verify: str = "none", budget_usd: float = 100.0, judge: Cell | None = None
+        self, cells: list[Cell], *, verify: str = "none", budget_usd: float = 100.0, judge: Cell | None = None,
+        arbiter: Cell | None = None,
     ) -> None:
         if not cells:
             raise ValueError("a ladder needs at least one cell")
@@ -262,6 +322,7 @@ class LadderPolicy:
         self._all = lattice()
         models = {c.model for c in self._all}
         self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
+        self.arbiter = _cap_effort(nearest_available(arbiter, models)) if arbiter else default_arbiter(models)
 
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)
@@ -277,9 +338,13 @@ class LadderPolicy:
         """Return every judge `mode` consults on `worker`'s answer, chosen from the whole lattice."""
         return _judges(worker, mode, self._all, self.judge)
 
+    def arbiter_for(self, worker: Cell) -> Cell | None:
+        """Return the cell that settles a split in `worker`'s tribunal, chosen from the whole lattice."""
+        return choose_arbiter(worker, self._all, judge=self.judge, arbiter=self.arbiter)
+
 
 def _judges(worker: Cell, mode: str, cells: list[Cell], judge: Cell) -> list[Cell]:
-    if mode == "panel":
+    if mode in ("panel", "tribunal"):
         return choose_panel(worker, cells, judge=judge)
     one = choose_verifier(worker, mode, cells, judge=judge)
     return [] if one is None else [one]

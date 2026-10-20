@@ -25,7 +25,8 @@ def test_plan_prints_both_judges_of_a_panel(capsys):
     argv = ["plan", "Assess whether we should migrate the billing database", "--kind", "analysis", "--risk", "critical"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "verification panel" in out and "verifier (panel): opus/xhigh then fable/low" in out
+    assert "verification tribunal" in out and "verifier (tribunal): opus/xhigh then fable/low" in out
+    assert "arbiter on a split: fable/medium" in out
 
 
 def test_plan_claude_code_prints_frontmatter_values(capsys):
@@ -260,6 +261,10 @@ def test_config_shows_and_sets_the_profile_and_the_models_without_touching_hooks
     assert "models" not in json.loads((home / "config.json").read_text())
     assert main(["config", "--judge", "opus/max"]) == 0
     assert json.loads((home / "config.json").read_text())["judge"] == "opus/max"
+    assert main(["config", "--arbiter", "fable/low"]) == 0
+    assert json.loads((home / "config.json").read_text())["arbiter"] == "fable/low"
+    assert main(["config", "--arbiter", "rule"]) == 0
+    assert "arbiter" not in json.loads((home / "config.json").read_text())
     main(["doctor"])  # exits 1 here because the profile directory does not exist; the judge line is what matters
     assert "judge for full verification: opus/xhigh (via config.json)" in capsys.readouterr().out  # capped at xhigh
     with pytest.raises(SystemExit, match="unknown model 'opsu'"):
