@@ -1,11 +1,12 @@
 """`router` on the command line: plan (no API), run (live), judge (verify an answer written elsewhere),
-bench (simulated or a file of real tasks), stats, feedback, doctor, cells, config, install and uninstall.
-The README documents each command.
+bench (simulated or a file of real tasks), stats, feedback, db (the SQLite index of the ledger), doctor,
+cells, config, install and uninstall. The README documents each command.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -13,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +40,7 @@ from .ledger import Ledger, summarize
 from .paths import ARBITER_ENV, CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config, write_config
 from .policy import DEFAULT_JUDGE, LadderPolicy, Policy, PolicyProtocol, default_arbiter, default_judge
 from .runner import Router, TaskResult
+from .store import Store
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
 from .verify import VERIFIED_SOURCES
 
@@ -142,6 +145,17 @@ def _attempts_table(result: TaskResult, *, width: int | None = None) -> str:
     return table(headers, rows)
 
 
+def _store() -> Store:
+    return Store(home() / "router.db")
+
+
+def _ledger_files() -> list[tuple[Path, str | None]]:
+    """Return the main ledger and every bench ledger, oldest first; a bench ledger's strategy is in its first line."""
+    files: list[tuple[Path, str | None]] = [(home() / "ledger.jsonl", None)]
+    files += [(p, None) for p in sorted((home() / "bench").glob("*.jsonl"))]
+    return files
+
+
 def _add_backend_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--backend", choices=("auto", "api", "cli"), default="auto",
                    help="api = SDK with ANTHROPIC_API_KEY; cli = `claude -p` with your account; "
@@ -178,7 +192,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     client = _with_providers(_live_client(args))
     task, cls = _task_from(args, prompt, client)
     feedback = FeedbackStore(home() / "feedback.json")
-    router = Router(client, policy=Policy(feedback=feedback), ledger=Ledger(home() / "ledger.jsonl"), feedback=feedback)
+    ledger = Ledger(home() / "ledger.jsonl", store=_store())
+    router = Router(client, policy=Policy(feedback=feedback), ledger=ledger, feedback=feedback)
     result = router.run(task)
     if args.json:
         print(json.dumps({**result.to_dict(), "answer": result.answer}, ensure_ascii=False, indent=1))
@@ -203,7 +218,7 @@ def _cmd_judge(args: argparse.Namespace) -> int:
     client = _with_providers(_live_client(args))
     task, cls = _task_from(args, prompt, client)
     policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
-    router = Router(client, policy=policy, ledger=Ledger(home() / "ledger.jsonl"))
+    router = Router(client, policy=policy, ledger=Ledger(home() / "ledger.jsonl", store=_store()))
     result = router.judge(task, answer, worker=parse_cell(args.cell) if args.cell else None)
     if args.json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=1))
@@ -248,12 +263,27 @@ def _spec_task(spec: dict[str, Any]) -> Task:
                 max_attempts=spec.get("max_attempts"), verify=spec.get("verify"))
 
 
-def _parse_strategy(text: str) -> tuple[str, PolicyProtocol]:
+def _parse_strategy(text: str, verify: str | None = None) -> tuple[str, PolicyProtocol]:
+    """Parse one strategy: `router`, or cells joined by `>`; `verify` sets the mode of a fixed ladder (default:
+    light when it can escalate, none for one cell; `auto` = what the router would pick by risk).
+    """
     text = text.strip()
     if text == "router":
         return "router", Policy()
     cells = [parse_cell(c) for c in text.split(">")]
-    return text, LadderPolicy(cells, verify="light" if len(cells) > 1 else "none")
+    return text, LadderPolicy(cells, verify=verify or ("light" if len(cells) > 1 else "none"))
+
+
+def _bench_estimate(tasks: list[Task], strategies: list[tuple[str, PolicyProtocol]]) -> float:
+    """Return a rough cost of running `tasks` once under every strategy: first attempts, escalation, judges."""
+    estimate = 0.0
+    for _, policy in strategies:
+        for t in tasks:
+            plan = policy.plan(t)
+            first = plan.start.expected_cost(t.estimated_input_tokens, t.planned_output_tokens)
+            estimate += first * (1.0 if len(plan.ladder) == 1 else ESCALATION_COST_FACTOR)
+            estimate += JUDGE_COST_ESTIMATE_USD.get(plan.verify, 0.0)
+    return estimate
 
 
 def _cmd_bench(args: argparse.Namespace) -> int:
@@ -263,18 +293,21 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         tasks, reports = run_simulation(args.tasks, args.seed)
         print(format_report(tasks, reports, args.seed, detail=args.detail))
         return 0
-    specs = _load_specs(Path(args.file))
+    path = Path(args.file)
+    specs = _load_specs(path)
     tasks = [_spec_task(s) for s in specs]
-    strategies = [_parse_strategy(s) for s in args.strategies.split(",")]
-    estimate = 0.0
-    for _, policy in strategies:
-        for t in tasks:
-            plan = policy.plan(t)
-            first = plan.start.expected_cost(t.estimated_input_tokens, t.planned_output_tokens)
-            estimate += first * (1.0 if len(plan.ladder) == 1 else ESCALATION_COST_FACTOR)
-            estimate += JUDGE_COST_ESTIMATE_USD.get(plan.verify, 0.0)
-    print(f"{len(tasks)} tasks x {len(strategies)} strategies · estimate {money(estimate)} "
-          "(a rough one; it may fall short)")
+    eval_id = hashlib.sha256(path.read_bytes()).hexdigest()[:12]  # names this exact file in every record it produces
+    repeat = max(1, args.repeat)
+    strategies = [_parse_strategy(s, args.verify) for s in args.strategies.split(",")]
+    with_checker = sum(t.checker is not None for t in tasks)
+    print(f"{len(tasks)} tasks ({with_checker} with a checker) x {len(strategies)} strategies x {repeat} repeat(s) · "
+          f"eval {eval_id} · estimate {money(_bench_estimate(tasks, strategies) * repeat)} (a rough one; it may fall short)")
+    if args.dry_run:
+        for name, policy in strategies:
+            modes = sorted({policy.plan(t).verify for t in tasks})
+            print(f"  {name}: verification {', '.join(modes)}")
+        print("dry run: the file is valid; nothing was called")
+        return 0
     if not args.yes:
         try:
             answer = input("Make real calls? [y/N] ").strip().lower()
@@ -285,11 +318,18 @@ def _cmd_bench(args: argparse.Namespace) -> int:
             return 1
     client = _with_providers(_live_client(args))
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    jobs = [(replace(t, id=f"{t.id}.r{k}") if repeat > 1 else t, k) for k in range(1, repeat + 1) for t in tasks]
     for name, policy in strategies:
-        ledger = Ledger(home() / "bench" / f"{stamp}-{name.replace('/', '-').replace('>', '_')}.jsonl")
+        ledger = Ledger(home() / "bench" / f"{stamp}-{name.replace('/', '-').replace('>', '_')}.jsonl",
+                        store=_store(), strategy=name)
+        ledger.note(strategy=name, eval_id=eval_id, file=str(path), repeat=repeat, started=stamp)
         router = Router(client, policy=policy, ledger=ledger)
+
+        def run_one(job: tuple[Task, int], router: Router = router) -> TaskResult:
+            return router.run(job[0], eval_id=eval_id, repeat=job[1])
+
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-            for t, res in zip(tasks, pool.map(router.run, tasks), strict=True):
+            for (t, _), res in zip(jobs, pool.map(run_one, jobs), strict=True):
                 print(f"  [{name}] {t.id} {res.status} {money(res.total_cost_usd)} via {res.final_cell}")
         print(f"\n== {name} ==")
         print(summarize(ledger.tasks()).text())
@@ -299,9 +339,16 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 
 def _cmd_stats(args: argparse.Namespace) -> int:
     ledger = Ledger(Path(args.ledger) if args.ledger else home() / "ledger.jsonl")
-    records = ledger.tasks()
-    if ledger.corrupt:
-        print(f"warning: {ledger.corrupt} unreadable lines in {ledger.path}, not counted", file=sys.stderr)
+    if args.ledger or args.source == "ledger":
+        records = ledger.tasks()
+        if ledger.corrupt:
+            print(f"warning: {ledger.corrupt} unreadable lines in {ledger.path}, not counted", file=sys.stderr)
+    else:
+        store = _store()
+        store.sync(_ledger_files())  # a line written without the index (another version, a library user) still counts
+        records = store.task_records(source="ledger.jsonl")
+        if store.corrupt:
+            print(f"warning: {store.corrupt} unreadable lines in the ledger files, not counted", file=sys.stderr)
     if not records:
         print(f"no tasks in {ledger.path}")
     else:
@@ -315,6 +362,21 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     if hook_rows:
         print("\nClaude Code hook decisions (routed subagents)")
         print(table(["cell", "kind", "risk", "times"], hook_rows))
+    return 0
+
+
+def _cmd_db(args: argparse.Namespace) -> int:
+    store = _store()
+    if args.action == "rebuild":
+        counts = store.rebuild(_ledger_files())
+        print(f"rebuilt {store.path}: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+        return 0
+    if not store.path.exists():
+        print(f"{store.path}: not built yet (`router stats` or `router db rebuild` build it)")
+        return 0
+    counts = ", ".join(f"{v} {k}" for k, v in store.counts().items())
+    state = "behind the ledger: run `router db rebuild`" if store.stale(_ledger_files()) else "in sync with the ledger"
+    print(f"{store.path}: {counts} · {state}")
     return 0
 
 
@@ -459,7 +521,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
 
 
 def _cmd_feedback(args: argparse.Namespace) -> int:
-    ledger = Ledger(home() / "ledger.jsonl")
+    ledger = Ledger(home() / "ledger.jsonl", store=_store())
     record = ledger.find(args.task_id)
     if record is None:
         raise SystemExit(f"no task {args.task_id} in {ledger.path}")
@@ -612,12 +674,23 @@ def build_parser() -> argparse.ArgumentParser:
                     help='e.g. "router,fable/xhigh,opus/high,sonnet/medium>opus/high"')
     sb.add_argument("--yes", "-y", action="store_true", help="do not ask before spending")
     sb.add_argument("--jobs", "-j", type=int, default=3, help="tasks in parallel (default 3)")
+    sb.add_argument("--repeat", type=int, default=1, help="run every task this many times (models are not deterministic)")
+    sb.add_argument("--verify", choices=("auto", *VERIFY_MODES),
+                    help="verification for fixed-cell strategies: a mode, or auto = what the router picks by risk "
+                         "(default: light for a ladder, none for one cell)")
+    sb.add_argument("--dry-run", action="store_true", help="validate the file and print the estimate; call nothing")
     _add_backend_args(sb)
     sb.set_defaults(func=_cmd_bench)
 
     ss = sub.add_parser("stats", help="summary of the ledger and the feedback store")
     ss.add_argument("--ledger", help="another ledger file")
+    ss.add_argument("--source", choices=("db", "ledger"), default="db",
+                    help="read the SQLite index (synced with the ledger first) or the JSON-lines file directly")
     ss.set_defaults(func=_cmd_stats)
+
+    sdb = sub.add_parser("db", help="the SQLite index of the ledger (~/.model-router/router.db): status, or rebuild it")
+    sdb.add_argument("action", nargs="?", choices=("status", "rebuild"), default="status")
+    sdb.set_defaults(func=_cmd_db)
 
     sf = sub.add_parser("feedback", help="correct a task's verdict by hand")
     sf.add_argument("task_id", help="the task id that `router run` prints and `router stats` lists")

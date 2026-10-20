@@ -378,3 +378,93 @@ def test_doctor_recognises_the_plugin_install(tmp_path, monkeypatch, capsys):
     venv_hook.write_text("")
     main(["doctor"])
     assert "ok     plugin environment" in capsys.readouterr().out
+
+
+def _ok_verdict():
+    from model_router.catalog import Usage
+    from model_router.verify import Verdict
+
+    return Reply(parsed=Verdict(passed=True, confidence=0.9, reason="fine"), usage=Usage(2000, 100))
+
+
+def test_bench_dry_run_validates_the_file_and_calls_nothing(home, monkeypatch, capsys):
+    def no_client(_args):
+        raise AssertionError("a dry run must not build a client")
+
+    monkeypatch.setattr(cli, "_live_client", no_client)
+    spec = home / "t.yaml"
+    spec.write_text("tasks:\n  - id: a\n    kind: classify\n    risk: low\n    prompt: classify this\n"
+                    "    check_regex: POSITIVE\n  - id: b\n    kind: write\n    risk: critical\n    prompt: write it\n")
+    argv = ["bench", str(spec), "--dry-run", "--strategies", "router,haiku/low", "--verify", "auto", "--repeat", "3"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "2 tasks (1 with a checker) x 2 strategies x 3 repeat(s) · eval " in out and "dry run" in out
+    assert "haiku/low: verification none, tribunal" in out
+    assert not (home / "bench").exists()
+
+
+def test_bench_repeat_records_eval_and_repeat_in_the_ledger_and_the_index(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVE")] * 8}))
+    spec = home / "t.json"
+    spec.write_text(json.dumps({"tasks": [
+        {"id": f"c{i}", "kind": "classify", "risk": "low", "prompt": f"classify {i}", "check_regex": "POSITIVE"} for i in range(2)
+    ]}))
+    assert main(["bench", str(spec), "--yes", "--strategies", "haiku/low", "--repeat", "2"]) == 0
+    assert "tasks 4" in capsys.readouterr().out
+    files = list((home / "bench").glob("*.jsonl"))
+    assert len(files) == 1
+    records = [json.loads(line) for line in files[0].read_text().splitlines()]
+    assert records[0]["type"] == "bench" and records[0]["strategy"] == "haiku/low" and records[0]["repeat"] == 2
+    tasks = {r["task_id"]: r for r in records if r["type"] == "task"}
+    assert sorted(tasks) == ["c0.r1", "c0.r2", "c1.r1", "c1.r2"]
+    assert {r["repeat"] for r in tasks.values()} == {1, 2} and len({r["eval_id"] for r in tasks.values()}) == 1
+    assert tasks["c0.r1"]["fingerprint"] == tasks["c0.r2"]["fingerprint"] != tasks["c1.r1"]["fingerprint"]
+    import sqlite3
+
+    with sqlite3.connect(home / "router.db") as conn:
+        rows = conn.execute("SELECT DISTINCT strategy, eval_id FROM task").fetchall()
+    assert rows == [("haiku/low", tasks["c0.r1"]["eval_id"])]
+
+
+def test_bench_verify_sets_the_mode_of_fixed_cells(home, monkeypatch, capsys):
+    client = FakeClient(script={"*": [Reply("draft")]}, judge={"*": [_ok_verdict()]})
+    monkeypatch.setattr(cli, "_live_client", lambda args: client)
+    spec = home / "t.json"
+    spec.write_text(json.dumps({"tasks": [{"id": "w", "kind": "write", "risk": "critical", "prompt": "write it"}]}))
+    assert main(["bench", str(spec), "--yes", "--strategies", "opus/medium", "--verify", "auto"]) == 0
+    capsys.readouterr()
+    assert main(["bench", str(spec), "--yes", "--strategies", "opus/medium"]) == 0
+    sources = []
+    for path in sorted((home / "bench").glob("*.jsonl")):  # one file, or two when the second runs a second later
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        sources += [r["attempts"][0]["verdict_source"] for r in records if r["type"] == "task"]
+    assert sorted(sources) == ["none", "tribunal"]
+
+
+def test_stats_reads_the_index_and_matches_the_ledger(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVE")]}))
+    main(["run", "classify", "--kind", "classify", "--risk", "low", "--check-regex", "POSITIVE"])
+    capsys.readouterr()
+    assert main(["stats"]) == 0
+    from_db = capsys.readouterr().out
+    assert main(["stats", "--source", "ledger"]) == 0
+    assert capsys.readouterr().out == from_db and "tasks 1 · solved 1" in from_db
+    assert (home / "router.db").exists()
+    with (home / "ledger.jsonl").open("a") as fh:  # a line written behind the index's back
+        fh.write(json.dumps({"type": "task", "task_id": "x", "kind": "chat", "risk": "low", "status": "unsolved",
+                             "attempts": [], "retries": 0}) + "\n")
+    main(["stats"])
+    assert "tasks 2 · solved 1" in capsys.readouterr().out
+
+
+def test_db_status_and_rebuild(home, monkeypatch, capsys):
+    assert main(["db"]) == 0
+    assert "not built yet" in capsys.readouterr().out
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVE")]}))
+    main(["run", "classify", "--kind", "classify", "--risk", "low", "--check-regex", "POSITIVE"])
+    capsys.readouterr()
+    assert main(["db", "rebuild"]) == 0
+    assert "rebuilt" in capsys.readouterr().out
+    assert main(["db"]) == 0
+    out = capsys.readouterr().out
+    assert "1 tasks" in out and "in sync" in out

@@ -156,8 +156,15 @@ router bench --simulate --tasks 200 --seed 1
 # Compare strategies on real tasks (spends money or quota; asks first)
 router bench tasks.yaml --strategies "router,fable/low,opus/high,sonnet/medium>opus/high"
 
+# The same three times per task, fixed cells verified as the router would, and a dry run first
+router bench tasks.yaml --strategies "router,fable/low" --repeat 3 --verify auto --dry-run
+
 # What has happened so far and what it has learned
 router stats
+
+# The SQLite index of the ledger: its state, or rebuild it from the JSON-lines files
+router db
+router db rebuild
 
 # Correct a verdict by hand (it feeds the feedback store)
 router feedback <task_id> --ko --note "the judge accepted a badly parsed date"
@@ -271,7 +278,14 @@ With judges from other providers, register them and wrap the client: `load_exter
    kept and the status is `error`). An answer cut by `max_tokens` is retried once on
    the same cell with twice the room.
 6. Ledger. `~/.model-router/ledger.jsonl` (`MODEL_ROUTER_HOME` moves it): every attempt with its
-   real tokens, cost, the model that served it (when a fallback ran), verdict and reason.
+   real tokens, cost, the model that served it (when a fallback ran), verdict and reason, plus the
+   router version and the calibration that decided, the task's fingerprint (a hash of kind, risk and
+   prompt, so the same task can be compared across strategies and versions) and, for bench runs, the
+   eval file and the repetition. `router.db` next to it is a SQLite index of the same records (tasks,
+   attempts, every judge's verdict, overrides) for queries across months; the JSON-lines file stays
+   the source, and `router db rebuild` reloads the index from it.
+7. Escalation. After a verified fail, the next attempt's prompt carries the reason, so the next cell
+   does not repeat the mistake; `router stats` counts the retries that repeat it anyway.
 
 ## Tribunal: two judges and an arbiter, not a council
 
@@ -368,8 +382,8 @@ structured output goes through `parse`; above 16K tokens the call streams.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
   or your Claude Code account. With a judge or an arbiter from another provider (`router config --external`), the
   task and the answer go to that provider too, with its key. To nobody else.
-- The ledger keeps tokens, cost, cell, verdict and reason for every attempt; it keeps neither the
-  prompt nor the answer.
+- The ledger and its SQLite index keep tokens, cost, cell, verdict and reason for every attempt; they
+  keep neither the prompt nor the answer, only a hash of the task.
 - `router plan`, `router stats`, `router cells` and `router doctor` without `--live` call nothing.
 
 ## Assumptions (read them before you believe a number)
@@ -386,7 +400,7 @@ structured output goes through `parse`; above 16K tokens the call streams.
 ## What is missing before this is a real router
 
 An evaluation set of your own: 20 to 30 real tasks, frozen, with a checker or a reference answer,
-run through `router bench tasks.yaml` with several strategies. Until then, the only reliable number
+run through `router bench tasks.yaml --repeat 3 --verify auto` with several strategies. Until then, the only reliable number
 this gives you is the real cost per solved task in the ledger. `evals/v1.yaml` is a starter set of
 fifteen made-up tasks (ten with a checker, two critical ones without so the tribunal runs): copy it and
 replace the tasks with yours.

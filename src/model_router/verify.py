@@ -53,7 +53,7 @@ ARBITER_SYSTEM = (
 MAX_ANSWER_CHARS = 60_000
 JUDGE_MAX_TOKENS = 8000  # thinking counts against max_tokens; a verdict is short but the reasoning is not
 MAX_ISSUES_SHOWN = 3  # issues appended to a failed verdict's reason
-VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge", "panel"})  # verdicts that count as evidence
+VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge", "panel", "tribunal"})  # verdicts that count as evidence
 
 
 def judge_prompt(task: Task, answer: str) -> str:

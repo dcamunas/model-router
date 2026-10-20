@@ -201,6 +201,8 @@ class Policy:
     configured one, else the rule in `choose_arbiter`).
     """
 
+    calibration_id = "builtin"  # which tables decide; a calibration file will set its own id here
+
     def __init__(
         self,
         *,
@@ -310,7 +312,11 @@ class Policy:
 
 
 class LadderPolicy:
-    """A fixed ladder, for benchmarks: 'always Opus high', 'Sonnet then Opus on failure', etc."""
+    """A fixed ladder, for benchmarks: 'always Opus high', 'Sonnet then Opus on failure', etc. `verify` is a
+    mode, or `auto` for the mode the default policy would pick for each task (by risk, tribunal at critical).
+    """
+
+    calibration_id = "fixed"
 
     def __init__(
         self, cells: list[Cell], *, verify: str = "none", budget_usd: float = 100.0, judge: Cell | None = None,
@@ -325,12 +331,17 @@ class LadderPolicy:
         models = {c.model for c in self._all}
         self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
         self.arbiter = _cap_effort(nearest_available(arbiter, models)) if arbiter else default_arbiter(models)
+        self._auto = Policy(judge=self.judge, arbiter=self.arbiter) if verify == "auto" else None
 
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)
         budget = task.budget_usd if task.budget_usd is not None else self.budget_usd
-        return Plan(cells, task.verify or self.verify, budget, len(cells),
-                    [f"fixed ladder: {' -> '.join(map(str, cells))}"])
+        verify = task.verify or self.verify
+        rationale = [f"fixed ladder: {' -> '.join(map(str, cells))}"]
+        if verify == "auto" and self._auto is not None:
+            verify = self._auto.plan(task).verify
+            rationale.append(f"verification auto -> {verify} (what the default policy picks at risk {task.risk})")
+        return Plan(cells, verify, budget, len(cells), rationale)
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
         """Return the cell that verifies `worker`'s answer in `mode`, chosen from the whole lattice."""

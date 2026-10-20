@@ -5,6 +5,7 @@ the output can be checked by code (tests pass, JSON validates, a regex matches).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -70,6 +71,13 @@ class Task:
             raise ValueError("max_attempts must be at least 1")
         if self.budget_usd is not None and self.budget_usd <= 0:
             raise ValueError("budget_usd must be positive")
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a stable 12-character id of what the task asks (kind, risk, prompt): the same task on another
+        day or under another strategy has the same fingerprint, so the ledger can compare them.
+        """
+        return hashlib.sha256(f"{self.kind}\n{self.risk}\n{self.prompt}".encode()).hexdigest()[:12]
 
     @property
     def estimated_input_tokens(self) -> int:

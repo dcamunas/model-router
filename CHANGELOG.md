@@ -2,7 +2,18 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.8.0] - 2026-10-20
+
+### Added
+
+- Every ledger record now says which router decided it: `router_version`, `calibration_id` (`builtin` until a calibration exists, `fixed` for a bench ladder), the task's `fingerprint` (a stable hash of kind, risk and prompt, so the same task can be compared across strategies and versions) and, for bench runs, `eval_id` (a hash of the eval file) and `repeat`. Old records read as before.
+- A SQLite index of the ledger, `~/.model-router/router.db` (`store.py`, `Store` in the library): tasks, attempts, every judge's verdict with its provider, overrides and, for later, calibrations. The JSON-lines files stay the source; the index is written alongside every record, `router stats` reads it (and rebuilds it when something wrote to a ledger without it), `router db` shows its state and `router db rebuild` reloads it. Like the ledger, it stores no prompt or answer.
+- `router bench`: `--repeat N` runs every task N times (ids become `id.rN`), `--verify auto|none|light|full|panel|tribunal` sets the verification of fixed-cell strategies (`auto` = what the router would pick by risk; today they ran unverified), `--dry-run` validates the file and prints the estimate without a call. Each bench ledger starts with a `bench` note naming its strategy, eval and repeat count.
+- After a verified fail, the next attempt's prompt carries the reason (`with_failure`), and the attempt records `carried_reason`; `router stats` and the bench summary count the retries that repeat the previous reason.
+
+### Fixed
+
+- Tribunal verdicts were not treated as evidence: they never fed the feedback store and `router feedback` could not correct them. `VERIFIED_SOURCES` now includes `tribunal`.
 
 ### Changed
 

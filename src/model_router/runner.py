@@ -15,6 +15,7 @@ from .client import ClaudeClient, ClientUnavailableError
 from .policy import Policy, PolicyProtocol
 from .task import Task
 from .verify import VERIFIED_SOURCES, JudgeVerdict, Verifier
+from .version import router_version
 
 if TYPE_CHECKING:
     from .feedback import FeedbackStore
@@ -22,6 +23,16 @@ if TYPE_CHECKING:
 
 STATUSES: tuple[str, ...] = ("solved", "unsolved", "refused", "budget", "error")
 EXTERNAL_STOP = "external"  # the stop reason of an attempt whose answer was produced outside the router (`Router.judge`)
+CARRIED_REASON_CHARS = 600  # how much of a failed verdict's reason the next attempt's prompt carries
+
+
+def with_failure(prompt: str, cell: Cell, reason: str) -> str:
+    """Return `prompt` with a note on why the previous attempt (on `cell`) failed verification, so the next
+    cell does not repeat the mistake. The note names the model, not the effort: the next worker needs the
+    mistake, not the lattice.
+    """
+    return (f"{prompt}\n\nA previous attempt at this task (by {cell.spec.short}) was rejected by verification for "
+            f"this reason: {reason[:CARRIED_REASON_CHARS]}\nDo not repeat that mistake; answer the whole task again.")
 
 
 @dataclass
@@ -50,6 +61,7 @@ class Attempt:
     judges: list[Cell] = field(default_factory=list)
     verdicts: list[JudgeVerdict] = field(default_factory=list)
     arbiter: Cell | None = None
+    carried_reason: bool = False  # the prompt carried the reason the attempt before failed for
 
     @property
     def fallback_ran(self) -> bool:
@@ -64,6 +76,7 @@ class Attempt:
             "verifier": self.verifier.label if self.verifier else None, "verify_usage": self.verify_usage.to_dict(),
             "verify_cost_usd": round(self.verify_cost_usd, 6), "judges": [j.label for j in self.judges],
             "verdicts": [v.to_dict() for v in self.verdicts], "arbiter": self.arbiter.label if self.arbiter else None,
+            "carried_reason": self.carried_reason,
         }
 
 
@@ -87,6 +100,11 @@ class TaskResult:
     elapsed: float
     parsed: Any = None
     rationale: list[str] = field(default_factory=list)
+    fingerprint: str = ""  # `Task.fingerprint`: the same task under another strategy or version has the same one
+    router_version: str = ""
+    calibration_id: str = "builtin"  # which tables decided (the policy's)
+    eval_id: str | None = None  # the eval file this task came from, when a bench ran it
+    repeat: int | None = None  # which repetition of the eval, when a bench ran it more than once
 
     @property
     def solved(self) -> bool:
@@ -123,7 +141,9 @@ class TaskResult:
             "started_at": self.started_at, "elapsed": round(self.elapsed, 2), "attempts": [a.to_dict() for a in self.attempts],
             "work_cost_usd": round(self.work_cost_usd, 6), "verify_cost_usd": round(self.verify_cost_usd, 6),
             "total_cost_usd": round(self.total_cost_usd, 6), "retries": self.retries, "usage": self.usage.to_dict(),
-            "answer_chars": len(self.answer), "rationale": self.rationale,
+            "answer_chars": len(self.answer), "rationale": self.rationale, "fingerprint": self.fingerprint,
+            "router_version": self.router_version, "calibration_id": self.calibration_id, "eval_id": self.eval_id,
+            "repeat": self.repeat,
         }
 
 
@@ -151,12 +171,15 @@ class Router:
             ledger = Ledger(None)
         self.ledger = ledger
 
-    def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
+    def run(self, task: Task, *, eval_id: str | None = None, repeat: int | None = None) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
         """Run `task` through its plan and return the result. Side effects: the result is appended to the
-        ledger and, with a feedback store, every verified verdict (checker, judge or panel) is recorded
-        and the store saved; a judge that cannot be reached ends the task with status `error`.
+        ledger and, with a feedback store, every verified verdict (checker, judge, panel or tribunal) is
+        recorded and the store saved; a judge that cannot be reached ends the task with status `error`.
+        After a verified fail, the next attempt's prompt carries the reason (`with_failure`). `eval_id`
+        and `repeat` say which eval file and repetition a bench is running, for the record.
         """
         plan = self.policy.plan(task)
+        failure: tuple[Cell, str] | None = None  # the last verified fail: its cell and reason
         est_input = task.estimated_input_tokens
         attempts: list[Attempt] = []
         spent = 0.0
@@ -172,18 +195,21 @@ class Router:
             if attempts and spent + cell.expected_cost(est_input, min(PLAN_OUTPUT_TOKENS_AT_HIGH, max_tokens)) > plan.budget_usd:
                 status = "budget"
                 break
+            prompt = with_failure(task.prompt, *failure) if failure else task.prompt
             try:
                 completion = self.client.complete(
-                    cell, prompt=task.prompt, system=task.system, max_tokens=max_tokens, output_format=task.output_schema
+                    cell, prompt=prompt, system=task.system, max_tokens=max_tokens, output_format=task.output_schema
                 )
             except ClientUnavailableError as exc:
-                attempts.append(Attempt(n, cell, Usage(), 0.0, 0.0, "error", cell.model, None, False, None, "error", str(exc)))
+                attempts.append(Attempt(n, cell, Usage(), 0.0, 0.0, "error", cell.model, None, False, None, "error", str(exc),
+                                        carried_reason=failure is not None))
                 status = "error"
                 break
             cost = cost_usd(cell.model, completion.usage)
             spent += cost
             base = Attempt(n, cell, completion.usage, cost, completion.seconds, completion.stop_reason, completion.model,
-                           completion.request_id, refused=False, verdict=None, verdict_source="", reason="")
+                           completion.request_id, refused=False, verdict=None, verdict_source="", reason="",
+                           carried_reason=failure is not None)
             if completion.refused:
                 attempts.append(replace(base, refused=True, verdict_source="refusal",
                                         reason=f"refused ({completion.refusal_category or 'no category'})"))
@@ -214,6 +240,8 @@ class Router:
             if verdict.passed:
                 status = "solved"
                 break
+            if verdict.source in VERIFIED_SOURCES:
+                failure = (cell, verdict.reason)
             if spent > plan.budget_usd:
                 status = "budget"
                 break
@@ -224,6 +252,8 @@ class Router:
             task_id=task.id, kind=task.kind, risk=task.risk, plan=[c.label for c in plan.ladder], verify=plan.verify,
             budget_usd=plan.budget_usd, attempts=attempts, answer=answer, status=status, final_cell=final,
             started_at=started_at, elapsed=time.monotonic() - t0, parsed=parsed, rationale=plan.rationale,
+            fingerprint=task.fingerprint, router_version=router_version(),
+            calibration_id=getattr(self.policy, "calibration_id", "builtin"), eval_id=eval_id, repeat=repeat,
         )
         if self.feedback is not None:
             first = True
@@ -264,6 +294,8 @@ class Router:
             budget_usd=plan.budget_usd, attempts=[attempt], answer=answer, status=status, final_cell=worker,
             started_at=started_at, elapsed=time.monotonic() - t0,
             rationale=[*plan.rationale, "answer produced outside the router: judged only"],
+            fingerprint=task.fingerprint, router_version=router_version(),
+            calibration_id=getattr(self.policy, "calibration_id", "builtin"),
         )
         self.ledger.append(result)
         return result

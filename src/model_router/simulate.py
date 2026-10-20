@@ -128,7 +128,7 @@ class SimClient:
     ) -> Completion:
         if output_format is Verdict:
             return self._judge(cell, prompt)
-        task = self.tasks[prompt]
+        task = self.tasks[prompt.split("\n", 1)[0]]  # after a fail the prompt carries the reason; the id is its first line
         ok = _draw(self.seed, "work", task.id, cell.label) < pass_probability(cell, task.difficulty)
         noise = 0.8 + 0.4 * _draw(self.seed, "out", task.id, cell.label)
         out = max(1, round(task.output_high * EFFORT_OUTPUT_MULT[cell.effort] * noise))

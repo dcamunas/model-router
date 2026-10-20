@@ -16,6 +16,7 @@ from ._fmt import money, table
 
 if TYPE_CHECKING:
     from .runner import TaskResult
+    from .store import Store
 
 
 _LOCK = threading.Lock()
@@ -26,8 +27,10 @@ class Ledger:
     (benchmarks, tests).
     """
 
-    def __init__(self, path: Path | None) -> None:
+    def __init__(self, path: Path | None, *, store: Store | None = None, strategy: str | None = None) -> None:
         self.path = path
+        self.store = store  # the SQLite index every record is also written to, when there is one
+        self.strategy = strategy  # the bench strategy this ledger belongs to, for the index
         self._memory: list[dict[str, Any]] = []
         self.corrupt = 0  # lines of the file that were not JSON on the last load
 
@@ -40,12 +43,18 @@ class Ledger:
         self._write({"type": "override", "task_id": task_id, "passed": passed, "note": note,
                      "at": datetime.now(UTC).isoformat(timespec="seconds")})
 
+    def note(self, **fields: Any) -> None:
+        """Append a `bench` record: the strategy, eval and repeat count the tasks that follow belong to."""
+        self._write({"type": "bench", **fields})
+
     def _write(self, record: dict[str, Any]) -> None:
         self._memory.append(record)
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with _LOCK, self.path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if self.store is not None:
+                self.store.record(record, source=self.path, strategy=self.strategy)
 
     def load(self) -> list[dict[str, Any]]:
         """Return every record in file order. Lines that are not JSON (a write cut short by another
@@ -104,6 +113,7 @@ class Summary:
     by_status: dict[str, int] = field(default_factory=dict)
     attempts: int = 0
     retries: int = 0
+    same_reason_retries: int = 0  # retries whose verified fail gives the reason the attempt before gave
     tokens: int = 0
     work_cost: float = 0.0
     verify_cost: float = 0.0
@@ -124,7 +134,9 @@ class Summary:
         lines = [
             f"tasks {self.tasks} · solved {self.solved} · "
             + ", ".join(f"{k} {v}" for k, v in sorted(self.by_status.items())),
-            f"attempts {self.attempts} · retries {self.retries} · tokens {self.tokens:,}",
+            f"attempts {self.attempts} · retries {self.retries}"
+            + (f" ({self.same_reason_retries} repeating the previous reason)" if self.retries else "")
+            + f" · tokens {self.tokens:,}",
             f"work cost {money(self.work_cost)} · verification {money(self.verify_cost)} · total {money(self.total_cost)}",
             f"cost per solved task: {money(self.cost_per_solved) if self.cost_per_solved is not None else 'n/a'}",
         ]
@@ -175,7 +187,10 @@ def summarize(task_records: list[dict[str, Any]]) -> Summary:
         s.tokens += sum(t.get("usage", {}).values())
         s.work_cost += t.get("work_cost_usd", 0.0)
         s.verify_cost += t.get("verify_cost_usd", 0.0)
-        for a in t["attempts"]:
+        for i, a in enumerate(t["attempts"]):
+            if i and a.get("verdict") is False and t["attempts"][i - 1].get("verdict") is False \
+                    and a.get("reason") == t["attempts"][i - 1].get("reason"):
+                s.same_reason_retries += 1
             c = cells[a["cell"]]
             c["attempts"] += 1
             c["cost"] += a["cost_usd"] + a.get("verify_cost_usd", 0.0)

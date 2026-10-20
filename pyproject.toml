@@ -1,6 +1,6 @@
 [project]
 name = "model-router"
-version = "0.7.0"
+version = "0.8.0"
 description = "Model router for Claude: model + effort per task, verification by risk, escalation and cost per solved task"
 readme = "README.md"
 license = "MIT"

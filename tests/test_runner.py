@@ -323,3 +323,37 @@ def test_feedback_learns_first_attempt_rate_and_moves_the_start(tmp_path: Path):
     reloaded = FeedbackStore(tmp_path / "fb.json", min_n=3)
     assert reloaded.first_attempt_stats("code", parse_cell("opus/low")) == (3, 0.0)
     assert reloaded.rows()[0][:2] == ["code", "fable/low"] or reloaded.rows()[0][:2] == ["code", "opus/low"]
+
+
+def test_escalation_carries_the_failure_reason_to_the_next_cell():
+    client = FakeClient(script={"opus/low": [Reply("def f(): return 1")], "fable/low": [Reply("def f(): return 42")]})
+    task = Task(prompt="write f", kind="code", risk="medium", verify="none", checker=contains_checker("42"))
+    result = Router(client).run(task)
+    first, second = (c["prompt"] for c in client.calls)
+    assert first == "write f"
+    assert second.startswith("write f\n\nA previous attempt at this task (by opus) was rejected") and "missing: 42" in second
+    assert [a.carried_reason for a in result.attempts] == [False, True]
+    assert result.to_dict()["attempts"][1]["carried_reason"] is True
+
+
+def test_result_records_fingerprint_version_and_calibration():
+    client = FakeClient(script={"*": [Reply("ok")]})
+    task = Task(prompt="say ok", kind="chat", risk="low")
+    result = Router(client).run(task)
+    assert result.fingerprint == task.fingerprint and len(task.fingerprint) == 12
+    assert Task(prompt="say ok", kind="chat", risk="low").fingerprint == task.fingerprint  # a new id, the same task
+    assert Task(prompt="say ok", kind="chat", risk="high").fingerprint != task.fingerprint
+    assert result.router_version and result.calibration_id == "builtin" and result.eval_id is None and result.repeat is None
+    assert {"fingerprint", "router_version", "calibration_id", "eval_id", "repeat"} <= result.to_dict().keys()
+    judged = Router(client).judge(task, "ok")
+    assert judged.fingerprint == task.fingerprint and judged.calibration_id == "builtin"
+    fixed = Router(client, policy=LadderPolicy([parse_cell("haiku/low")])).run(task, eval_id="e1", repeat=3)
+    assert fixed.calibration_id == "fixed" and fixed.eval_id == "e1" and fixed.repeat == 3
+
+
+def test_tribunal_verdicts_feed_the_feedback_store(tmp_path: Path):
+    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
+    feedback = FeedbackStore(tmp_path / "feedback.json")
+    result = Router(client, feedback=feedback).run(Task(prompt="x", kind="write", risk="critical"))
+    assert result.attempts[0].verdict_source == "tribunal"
+    assert feedback.data["write"]["opus/medium"] == {"n": 1, "pass": 1, "n_first": 1, "pass_first": 1}
