@@ -42,7 +42,8 @@ from .verify import VERIFIED_SOURCES
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02, "panel": 0.025, "tribunal": 0.03}  # per attempt, rough
-REASON_COLUMN_CHARS = 70  # keeps the attempts table on one line per attempt
+REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
+MIN_REASON_CHARS = 16
 PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
 
 
@@ -119,7 +120,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def _attempts_table(result: TaskResult) -> str:
+def _attempts_table(result: TaskResult, *, width: int | None = None) -> str:
+    """Render the attempts as a table that fits `width` columns (the terminal's when None): the reason
+    column takes what the other columns leave, between MIN_REASON_CHARS and REASON_COLUMN_CHARS.
+    """
+    headers = ["#", "cell", "fallback", "stop", "tok in/out", "cost", "verdict", "verif.", "reason"]
     rows = []
     for a in result.attempts:
         verdict = "-" if a.verdict is None else ("pass" if a.verdict else "fail")
@@ -127,8 +132,13 @@ def _attempts_table(result: TaskResult) -> str:
         judged = "+".join(j.label for j in a.judges) + (f" > {a.arbiter.label}" if a.arbiter else "")
         rows.append([a.n, a.cell.label, served, a.stop_reason, f"{a.usage.input_tokens:,}/{a.usage.output_tokens:,}",
                      money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + judged if judged else ''})",
-                     money(a.verify_cost_usd), a.reason[:REASON_COLUMN_CHARS]])
-    return table(["#", "cell", "fallback", "stop", "tok in/out", "cost", "verdict", "verif.", "reason"], rows)
+                     money(a.verify_cost_usd), a.reason])
+    columns = width if width is not None else shutil.get_terminal_size((200, 24)).columns
+    fixed = sum(max(len(str(r[i])) for r in [headers, *rows]) for i in range(len(headers) - 1)) + 2 * (len(headers) - 1)
+    reason_chars = max(MIN_REASON_CHARS, min(REASON_COLUMN_CHARS, columns - fixed))
+    for r in rows:
+        r[-1] = str(r[-1])[:reason_chars]
+    return table(headers, rows)
 
 
 def _add_backend_args(p: argparse.ArgumentParser) -> None:

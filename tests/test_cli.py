@@ -157,6 +157,23 @@ def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monk
         load_external({})
 
 
+def test_attempts_table_fits_the_terminal_width(monkeypatch):
+    from model_router.runner import Router
+    from model_router.task import Task, contains_checker
+
+    client = FakeClient(script={"*": [Reply("42")]})
+    result = Router(client).run(Task(prompt="f", kind="code", risk="medium", checker=contains_checker("42")))
+    result.attempts[0].reason = "x" * 200
+    wide = cli._attempts_table(result, width=400)
+    assert max(len(line) for line in wide.splitlines()) < 400 and "x" * cli.REASON_COLUMN_CHARS in wide
+    narrow = cli._attempts_table(result, width=100)
+    assert max(len(line) for line in narrow.splitlines()) <= 100 and "x" * 24 not in narrow
+    tiny = cli._attempts_table(result, width=50)  # narrower than the fixed columns: the reason keeps its minimum
+    assert "x" * cli.MIN_REASON_CHARS in tiny and "x" * (cli.MIN_REASON_CHARS + 1) not in tiny
+    monkeypatch.setenv("COLUMNS", "100")
+    assert cli._attempts_table(result) == narrow  # the terminal's width, through COLUMNS
+
+
 def test_a_missing_task_or_system_file_is_a_one_line_error(home):
     with pytest.raises(SystemExit, match="cannot access"):
         main(["plan", "--file", str(home / "nope.md")])
