@@ -150,11 +150,14 @@ def model_names(models: str) -> list[str] | None:
     return [MODELS[m].short for m in parse_models(models)]
 
 
-def remember(profile: Path | None, models: list[str] | None, *, reset_models: bool = False) -> None:
-    """Record in config.json the Claude profile for `router run` and the models this installation may
-    route to; `reset_models` removes that restriction. A None value leaves its key untouched.
+def remember(
+    profile: Path | None, models: list[str] | None, *, reset_models: bool = False, judge: str | None = None
+) -> None:
+    """Record in config.json the Claude profile for `router run`, the models this installation may route
+    to (`reset_models` removes that restriction) and the judge cell for full verification. A None value
+    leaves its key untouched.
     """
-    if profile is None and models is None and not reset_models:
+    if profile is None and models is None and judge is None and not reset_models:
         return
     cfg = read_config()
     if profile is not None:
@@ -163,12 +166,16 @@ def remember(profile: Path | None, models: list[str] | None, *, reset_models: bo
         cfg["models"] = models
     elif reset_models:
         cfg.pop("models", None)
+    if judge is not None:
+        cfg["judge"] = judge
     path = save_config(cfg)
     if profile is not None:
         print(f"profile for `router run`: {profile} (in {path})")
     if models is not None or reset_models:
         shown = ", ".join(cfg.get("models") or [spec.short for spec in MODELS.values()])
         print(f"available models: {shown} (in {path})")
+    if judge is not None:
+        print(f"judge for full verification: {judge} (in {path})")
 
 
 def install(

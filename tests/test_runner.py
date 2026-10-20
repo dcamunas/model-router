@@ -37,13 +37,13 @@ def test_checker_failure_escalates_to_the_next_cell_and_counts_costs():
 def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
     client = FakeClient(
         script={"opus/medium": [Reply("meh")], "fable/low": [Reply("good")]},
-        judge={"fable/low": [ko()], "fable/medium": [ok()]},
+        judge={"fable/low": [ko()], "opus/high": [ok()]},
     )
     task = Task(prompt="implement the migration", kind="code", risk="high", verify="full")
     result = Router(client).run(task)
     assert result.solved
     assert [a.cell.label for a in result.attempts] == ["opus/medium", "fable/low"]
-    assert [a.verifier.label if a.verifier else None for a in result.attempts] == ["fable/low", "fable/medium"]
+    assert [a.verifier.label if a.verifier else None for a in result.attempts] == ["fable/low", "opus/high"]
     assert "off by one" in result.attempts[0].reason
     assert result.verify_cost_usd > 0
     judge_calls = [c for c in client.calls if c["output_format"] == "Verdict"]
@@ -53,7 +53,7 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
 def test_panel_needs_both_judges_and_a_split_escalates():
     client = FakeClient(
         script={"opus/medium": [Reply("draft")], "fable/low": [Reply("better draft")]},
-        judge={"opus/medium": [ok()], "fable/low": [ko("thin"), ok()], "fable/medium": [ok()]},
+        judge={"opus/medium": [ok()], "fable/low": [ko("thin"), ok()], "opus/high": [ok()]},
     )
     result = Router(client).run(Task(prompt="write the incident report", kind="write", risk="critical"))
     assert result.verify == "panel" and result.solved
@@ -62,11 +62,11 @@ def test_panel_needs_both_judges_and_a_split_escalates():
     assert [j.label for j in first.judges] == ["opus/medium", "fable/low"] and first.verifier == parse_cell("fable/low")
     assert "panel split: opus/medium passed, fable/low failed" in first.reason and "thin" in first.reason
     assert second.cell.label == "fable/low" and second.verdict is True
-    assert [j.label for j in second.judges] == ["fable/low", "fable/medium"] and "panel agreed" in second.reason
+    assert [j.label for j in second.judges] == ["opus/high", "fable/low"] and "panel agreed" in second.reason
     judge_calls = [c["cell"] for c in client.calls if c["output_format"] == "Verdict"]
-    assert judge_calls == ["opus/medium", "fable/low", "fable/low", "fable/medium"]
+    assert judge_calls == ["opus/medium", "fable/low", "opus/high", "fable/low"]
     assert first.verify_cost_usd == pytest.approx(0.035)  # opus/medium 0.010 + fable/low 0.025 on Usage(2000, 100)
-    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.085)
+    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.070)
     assert result.to_dict()["attempts"][0]["judges"] == ["opus/medium", "fable/low"]
 
 
@@ -86,7 +86,7 @@ def test_panel_reduced_to_one_judge_is_reported_as_a_judge(monkeypatch):
     router = Router(client, policy=LadderPolicy([parse_cell("opus/max")], verify="panel"))
     result = router.run(Task(prompt="x", kind="analysis", risk="critical"))
     attempt = result.attempts[0]
-    assert result.solved and attempt.verdict_source == "judge" and [j.label for j in attempt.judges] == ["opus/max"]
+    assert result.solved and attempt.verdict_source == "judge" and [j.label for j in attempt.judges] == ["opus/high"]
 
 
 def test_low_risk_without_checker_accepts_first_answer():

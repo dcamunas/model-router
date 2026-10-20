@@ -2,7 +2,7 @@ import pytest
 
 from model_router.catalog import lattice, parse_cell
 from model_router.feedback import FeedbackStore
-from model_router.policy import Policy, choose_panel, choose_verifier
+from model_router.policy import LadderPolicy, Policy, choose_panel, choose_verifier, default_judge
 from model_router.task import Task, contains_checker
 
 
@@ -58,31 +58,63 @@ def test_feedback_demotes_below_the_break_even(tmp_path):
     assert plan.start.label == "fable/low" and any("threshold" in r for r in plan.rationale)
 
 
-def test_light_verifier_is_cheapest_cell_at_least_as_capable():
+def test_light_verifier_is_the_workers_own_cell_capped_at_high():
     cells = lattice()
     light = choose_verifier(parse_cell("haiku/medium"), "light", cells)
     assert light is not None and light.label == "haiku/medium"
-    light = choose_verifier(parse_cell("sonnet/medium"), "light", cells)
-    assert light is not None and light.label == "sonnet/medium"
+    light = choose_verifier(parse_cell("fable/max"), "light", cells)
+    assert light is not None and light.label == "fable/high"
 
 
-def test_full_verifier_is_another_model_clearly_more_capable():
+def test_full_verifier_is_the_fixed_judge_on_another_model_than_the_worker():
     cells = lattice()
     v = choose_verifier(parse_cell("sonnet/medium"), "full", cells)
-    assert v is not None and v.spec.short == "opus"
-    v = choose_verifier(parse_cell("opus/low"), "full", cells)
-    assert v is not None and v.spec.short == "fable"
+    assert v is not None and v.label == "opus/high"  # the default judge
     v = choose_verifier(parse_cell("fable/xhigh"), "full", cells)
-    assert v is not None and v.spec.short == "fable" and v != parse_cell("fable/xhigh")
+    assert v is not None and v.label == "opus/high"  # a judge does not have to outrank the worker
+    v = choose_verifier(parse_cell("opus/low"), "full", cells)
+    assert v is not None and v.label == "fable/low"  # worker on the judge's model: next model up, low effort
+    v = choose_verifier(parse_cell("opus/low"), "full", cells, judge=parse_cell("fable/max"))
+    assert v is not None and v.label == "fable/high"  # an explicit judge is capped at high
     assert choose_verifier(parse_cell("opus/low"), "none", cells) is None
 
 
-def test_panel_pairs_the_full_judge_with_the_cheapest_judge_on_another_model():
+def test_judge_comes_from_the_environment_then_config_then_the_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv("MODEL_ROUTER_JUDGE", raising=False)
+    assert default_judge().label == "opus/high"
+    (tmp_path / "config.json").write_text('{"judge": "sonnet/xhigh"}')
+    assert default_judge().label == "sonnet/high"
+    monkeypatch.setenv("MODEL_ROUTER_JUDGE", "fable/low")
+    assert default_judge().label == "fable/low"
+    assert Policy().judge.label == "fable/low"
+    assert LadderPolicy([parse_cell("opus/high")]).judge.label == "fable/low"
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
+    assert default_judge().label == "opus/low"  # fable missing: nearest available model, same effort
+    monkeypatch.setenv("MODEL_ROUTER_JUDGE", "opus/turbo")
+    with pytest.raises(ValueError):
+        default_judge()
+
+
+def test_judge_on_a_single_model_falls_back_to_the_model_below_or_another_cell(monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "sonnet,opus")
+    cells = lattice()
+    v = choose_verifier(parse_cell("opus/medium"), "full", cells)
+    assert v is not None and v.label == "sonnet/high"  # nothing above opus here: the model below at the judge's effort
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
+    cells = lattice()
+    assert choose_verifier(parse_cell("opus/medium"), "full", cells) == parse_cell("opus/high")
+    assert choose_verifier(parse_cell("opus/high"), "full", cells) == parse_cell("opus/medium")
+
+
+def test_panel_pairs_the_workers_fresh_context_with_the_fixed_judge():
     cells = lattice()
     panel = choose_panel(parse_cell("opus/high"), cells)
-    assert [c.label for c in panel] == ["opus/high", "fable/low"]  # cheapest first; a fresh context on the worker's cell counts
+    assert [c.label for c in panel] == ["opus/high", "fable/low"]  # cheapest first
     panel = choose_panel(parse_cell("sonnet/medium"), cells)
-    assert [c.label for c in panel] == ["sonnet/medium", "opus/low"]
+    assert [c.label for c in panel] == ["sonnet/medium", "opus/high"]
+    panel = choose_panel(parse_cell("fable/xhigh"), cells)
+    assert [c.label for c in panel] == ["opus/high", "fable/high"]  # nobody judges above high
     assert len({c.model for c in panel}) == 2
 
 
@@ -90,8 +122,8 @@ def test_panel_with_one_model_uses_two_cells_and_degrades_to_one_at_the_top(monk
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
     cells = lattice()
     panel = choose_panel(parse_cell("opus/medium"), cells)
-    assert len(panel) == 2 and len(set(panel)) == 2 and all(c.spec.short == "opus" for c in panel)
-    assert choose_panel(parse_cell("opus/max"), cells) == [parse_cell("opus/max")]
+    assert [c.label for c in panel] == ["opus/medium", "opus/high"]
+    assert choose_panel(parse_cell("opus/max"), cells) == [parse_cell("opus/high")]
 
 
 def test_panel_is_automatic_at_critical_risk_for_judgement_kinds_without_checker():

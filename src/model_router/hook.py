@@ -34,7 +34,7 @@ from .catalog import MODELS
 from .classify import classify_rules
 from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home
-from .policy import VERIFY_BY_RISK, Policy, choose_verifier
+from .policy import VERIFY_BY_RISK, Policy
 from .task import Task
 
 ROUTED_SUBAGENTS = frozenset({"", "general-purpose", "claude"})
@@ -101,8 +101,8 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=cls.risk))
     cell, cross = plan.start, None
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
-        other = choose_verifier(cell, "full", policy.cells)
-        if other is not None and other.claude_code()["model"] != chat_model:
+        other = policy.verifier_for(cell, "full")
+        if other is not None and other.claude_code()["model"] != chat_model and other.tier >= cell.tier:
             cross = f"{cls.risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
             cell = other
     cc = cell.claude_code()

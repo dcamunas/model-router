@@ -1,9 +1,8 @@
 """Verification by risk. Order of trust: the task's programmatic checker (free, authoritative when
-it fails), then a judge model with a structured verdict. `light` uses the cheapest cell at least as
-capable as the worker; `full` uses a clearly more capable cell on another model, a blind
-cross-check in a fresh context; `panel` asks two judges on different cells, cheapest first, and
-passes only when both pass. The second judge is not asked when the first fails, and no judge sees
-another's verdict.
+it fails), then a judge model with a structured verdict. `light` uses the worker's own cell in a
+fresh context; `full` uses the configured judge cell on another model than the worker, a blind
+cross-check in a fresh context; `panel` asks both, cheapest first, and passes only when both pass.
+The second judge is not asked when the first fails, and no judge sees another's verdict.
 """
 
 from __future__ import annotations

@@ -22,8 +22,8 @@ from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
-from .paths import CONFIG_DIR_ENV, config_path, home, read_config
-from .policy import LadderPolicy, Policy, PolicyProtocol
+from .paths import CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config
+from .policy import DEFAULT_JUDGE, LadderPolicy, Policy, PolicyProtocol, default_judge
 from .runner import Router, TaskResult
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
 
@@ -351,6 +351,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
         checks.append((False, f"available models: {exc.name!r} does not exist (check {MODELS_ENV} or `router install --models`)"))
     except ValueError:
         checks.append((False, f"available models: empty list (check {MODELS_ENV} or `router install --models`)"))
+    try:
+        judge = default_judge()
+        source = JUDGE_ENV if os.environ.get(JUDGE_ENV) else ("config.json" if read_config().get("judge") else "default")
+        checks.append((True, f"judge for full verification: {judge} (via {source})"))
+    except ValueError as exc:  # UnknownModelError is one too
+        checks.append((False, f"judge for full verification: {exc} (check {JUDGE_ENV} or `router config --judge`)"))
     if profile is not None and profile.is_dir():
         checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
@@ -411,15 +417,17 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
-    if args.models is None and args.profile_dir is None:
+    if args.models is None and args.profile_dir is None and args.judge is None:
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
         print(f"available models: {', '.join(cfg.get('models') or [m.short for m in MODELS.values()])}")
+        print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
         print(f"(in {config_path()})")
         return 0
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
-    remember(profile, names, reset_models=args.models is not None and names is None)
+    judge = parse_cell(args.judge).label if args.judge is not None else None
+    remember(profile, names, reset_models=args.models is not None and names is None, judge=judge)
     return 0
 
 
@@ -495,9 +503,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_profile_args(su)
     su.set_defaults(func=_cmd_uninstall)
 
-    sg = sub.add_parser("config", help="show or set the profile for `router run` and the available models (hooks untouched)")
+    sg = sub.add_parser("config",
+                        help="show or set the profile for `router run`, the available models and the judge (hooks untouched)")
     sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
     sg.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
+    sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/high (effort capped at high)")
     sg.set_defaults(func=_cmd_config)
     return p
 

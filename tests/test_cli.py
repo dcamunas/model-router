@@ -25,7 +25,7 @@ def test_plan_prints_both_judges_of_a_panel(capsys):
     argv = ["plan", "Assess whether we should migrate the billing database", "--kind", "analysis", "--risk", "critical"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "verification panel" in out and "verifier (panel): fable/low then fable/medium" in out
+    assert "verification panel" in out and "verifier (panel): opus/high then fable/low" in out
 
 
 def test_plan_claude_code_prints_frontmatter_values(capsys):
@@ -194,13 +194,20 @@ def test_config_shows_and_sets_the_profile_and_the_models_without_touching_hooks
     assert main(["config"]) == 0
     out = capsys.readouterr().out
     assert "profile for `router run`: not set" in out and "haiku, sonnet, opus, fable" in out
+    assert "judge for full verification: opus/high (default)" in out
     assert main(["config", "--models", "haiku, opus", "--profile-dir", str(home / "p")]) == 0
     cfg = json.loads((home / "config.json").read_text())
     assert cfg == {"claude_config_dir": str((home / "p").resolve()), "models": ["haiku", "opus"]}
     assert main(["config", "--models", "all"]) == 0
     assert "models" not in json.loads((home / "config.json").read_text())
+    assert main(["config", "--judge", "opus/xhigh"]) == 0
+    assert json.loads((home / "config.json").read_text())["judge"] == "opus/xhigh"
+    main(["doctor"])  # exits 1 here because the profile directory does not exist; the judge line is what matters
+    assert "judge for full verification: opus/high (via config.json)" in capsys.readouterr().out  # capped at high
     with pytest.raises(SystemExit, match="unknown model 'opsu'"):
         main(["config", "--models", "opsu"])
+    with pytest.raises(SystemExit, match="unknown effort"):
+        main(["config", "--judge", "opus/turbo"])
     assert not (home / "settings.json").exists()
 
 

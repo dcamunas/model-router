@@ -1,16 +1,21 @@
 """Routing policy: which cell starts a task, how it escalates, how it is verified and what it may
 spend. Everything is a table you can read and edit; the feedback store nudges the start cell once
-it has seen enough verdicts for a kind. Verification has four modes: none, one light judge, one full
-judge on another model, or a panel of two judges that must agree (critical risk, no checker, kinds
-where only judgement can decide).
+it has seen enough verdicts for a kind. Verification has four modes: none; `light`, the worker's own
+cell in a fresh context; `full`, a fixed judge cell (opus/high unless configured) on another model
+than the worker; `panel`, those two together, both must agree (critical risk, no checker, kinds
+where only judgement can decide). Verifying is easier than producing, so the judge does not have to
+outrank the worker: it has to be independent and good enough, and it never thinks above `high`.
 """
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from .catalog import Cell, ladder, lattice, nearest_available, parse_cell, step_up
+from .catalog import EFFORTS, Cell, ladder, lattice, nearest_available, parse_cell, step_up
+from .paths import JUDGE_ENV, read_config
 from .task import Task
 
 if TYPE_CHECKING:
@@ -44,7 +49,9 @@ BUDGET_ATTEMPTS = 3.0  # the budget is at least this many first attempts, so big
 JUDGE_INPUT_TOKENS = 3000
 JUDGE_OUTPUT_TOKENS_AT_HIGH = 300
 JUDGE_PROMPT_OVERHEAD_TOKENS = 300  # the verdict instructions and tags around the task and the answer
-FULL_VERIFY_GAIN = 0.08  # a full verifier must be this much more capable than the worker
+FULL_VERIFY_GAIN = 0.08  # the simulation treats a judge this much more capable than the worker as a `full`-grade one
+DEFAULT_JUDGE = "opus/high"  # the `full` judge unless MODEL_ROUTER_JUDGE or `judge` in config.json say otherwise
+JUDGE_MAX_EFFORT = "high"  # a judge reads and decides; thinking above this on a verdict is cost, not accuracy
 
 
 @dataclass
@@ -78,48 +85,72 @@ def _judge_cost(cell: Cell) -> float:
     return cell.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
 
 
-def _light_judge(worker: Cell, cells: list[Cell]) -> Cell:
-    cands = [c for c in cells if c.capability >= worker.capability - 1e-9]
-    return min(cands, key=_judge_cost) if cands else worker
+def _cap_effort(cell: Cell) -> Cell:
+    if cell.effort_rank <= EFFORTS.index(JUDGE_MAX_EFFORT):
+        return cell
+    return Cell(cell.model, JUDGE_MAX_EFFORT)
 
 
-def _full_judge(worker: Cell, cells: list[Cell]) -> Cell:
-    cands = [c for c in cells if c.capability >= worker.capability + FULL_VERIFY_GAIN - 1e-9 and c.model != worker.model]
-    if not cands:
-        cands = [c for c in cells if c.capability >= worker.capability - 1e-9 and c != worker]
-    return min(cands, key=_judge_cost) if cands else worker
+def default_judge(models: Iterable[str] | None = None) -> Cell:
+    """Return the configured judge cell: MODEL_ROUTER_JUDGE, else `judge` in config.json, else DEFAULT_JUDGE;
+    its effort is capped at JUDGE_MAX_EFFORT and its model replaced by the nearest one in `models` (the
+    available models when None) when this installation lacks it.
+
+    Raises:
+        UnknownModelError: the configured model is not in the catalogue.
+        ValueError: the configured effort does not exist.
+    """
+    raw = os.environ.get(JUDGE_ENV) or read_config().get("judge") or DEFAULT_JUDGE
+    return _cap_effort(nearest_available(parse_cell(str(raw)), models))
 
 
-def choose_verifier(worker: Cell, mode: str, cells: list[Cell]) -> Cell | None:
-    """Return the judge for `mode`. light: the cheapest cell at least as capable as the worker (may be
-    the worker's own cell, in a fresh context). full (also one of the two judges of a panel): the
-    cheapest cell clearly more capable AND on another model, so the check is a blind cross-check;
-    when no other model qualifies, a fresh context on the same model.
+def _light_judge(worker: Cell) -> Cell:
+    return _cap_effort(worker)
+
+
+def _full_judge(worker: Cell, judge: Cell, cells: list[Cell]) -> Cell:
+    if worker.model != judge.model:
+        return judge
+    models = sorted({c.model for c in cells}, key=lambda m: Cell(m, "low").tier)
+    above = [m for m in models if Cell(m, "low").tier > worker.tier]
+    if above:
+        return Cell(above[0], "low")
+    below = [m for m in models if Cell(m, "low").tier < worker.tier]
+    if below:
+        return Cell(below[-1], judge.effort)
+    same = [c for c in cells if c.model == worker.model and c != worker and c.effort_rank <= judge.effort_rank]
+    if not same:
+        return _cap_effort(worker)
+    return max(same, key=lambda c: c.effort_rank)
+
+
+def choose_verifier(worker: Cell, mode: str, cells: list[Cell], *, judge: Cell | None = None) -> Cell | None:
+    """Return the judge for `mode`, or None for `none`. light: the worker's own cell in a fresh context,
+    effort capped at JUDGE_MAX_EFFORT. full: `judge` (the configured one when None) in a fresh context;
+    when the worker is on the judge's model, so that the check stays a cross-check between models, the
+    next model up at low effort, else the model below at the judge's effort, else another cell of that
+    model at or under the judge's effort, else the worker's own cell.
     """
     if mode == "none":
         return None
     if mode == "light":
-        return _light_judge(worker, cells)
-    return _full_judge(worker, cells)
+        return _light_judge(worker)
+    judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
+    return _full_judge(worker, judge, cells)
 
 
-def choose_panel(worker: Cell, cells: list[Cell]) -> list[Cell]:
-    """Return the judges of a panel for `worker`, cheapest first: the full judge (another model, clearly
-    more capable) and, from the remaining models, the cheapest cell at least as capable as the worker
-    (a fresh context on the worker's own cell counts). With one model available the second judge is
-    the cheapest other cell at least as capable as the worker; with none, the panel has one judge.
+def choose_panel(worker: Cell, cells: list[Cell], *, judge: Cell | None = None) -> list[Cell]:
+    """Return the judges of a panel for `worker`, cheapest first: the light judge (the worker's own cell,
+    fresh context) and the full judge (see `choose_verifier`). When both are the same cell, one judge.
     """
-    full = _full_judge(worker, cells)
-    others = [c for c in cells if c.capability >= worker.capability - 1e-9 and c.model != full.model]
-    if not others:
-        others = [c for c in cells if c.capability >= worker.capability - 1e-9 and c != full]
-    if not others:
-        return [full]
-    return sorted({full, min(others, key=_judge_cost)}, key=_judge_cost)
+    judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
+    return sorted({_light_judge(worker), _full_judge(worker, judge, cells)}, key=_judge_cost)
 
 
 class Policy:
-    """The default policy: the START table, the risk floors, feedback nudges, cost-aware escalation."""
+    """The default policy: the START table, the risk floors, feedback nudges, cost-aware escalation and a
+    fixed judge (`judge`, else the configured one) for full verification.
+    """
 
     def __init__(
         self,
@@ -129,6 +160,7 @@ class Policy:
         feedback: FeedbackStore | None = None,
         min_gain: float = 0.08,
         panel_kinds: frozenset[str] = PANEL_KINDS,
+        judge: Cell | None = None,
     ) -> None:
         self.cells = cells or lattice()
         self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
@@ -136,6 +168,7 @@ class Policy:
         self.feedback = feedback
         self.min_gain = min_gain
         self.panel_kinds = panel_kinds
+        self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
         """Replace a cell whose model this installation does not have with the nearest available one."""
@@ -184,13 +217,13 @@ class Policy:
         """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`; for `panel` it is the
         full judge alone, `judges_for` has both.
         """
-        return choose_verifier(worker, mode, self.cells)
+        return choose_verifier(worker, mode, self.cells, judge=self.judge)
 
     def judges_for(self, worker: Cell, mode: str) -> list[Cell]:
         """Return every judge `mode` consults on `worker`'s answer, cheapest first: none for `none`, one
         for `light` and `full`, two for `panel`.
         """
-        return _judges(worker, mode, self.cells)
+        return _judges(worker, mode, self.cells, self.judge)
 
     def attempt_cost(self, cell: Cell, verify: str, est_input: int, out_tokens: int) -> float:
         """Return the expected cost of one attempt on `cell` including its verification calls (both judges
@@ -217,13 +250,17 @@ class Policy:
 class LadderPolicy:
     """A fixed ladder, for benchmarks: 'always Opus high', 'Sonnet then Opus on failure', etc."""
 
-    def __init__(self, cells: list[Cell], *, verify: str = "none", budget_usd: float = 100.0) -> None:
+    def __init__(
+        self, cells: list[Cell], *, verify: str = "none", budget_usd: float = 100.0, judge: Cell | None = None
+    ) -> None:
         if not cells:
             raise ValueError("a ladder needs at least one cell")
         self.ladder_cells = cells
         self.verify = verify
         self.budget_usd = budget_usd
         self._all = lattice()
+        models = {c.model for c in self._all}
+        self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
 
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)
@@ -232,15 +269,15 @@ class LadderPolicy:
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
         """Return the cell that verifies `worker`'s answer in `mode`, chosen from the whole lattice."""
-        return choose_verifier(worker, mode, self._all)
+        return choose_verifier(worker, mode, self._all, judge=self.judge)
 
     def judges_for(self, worker: Cell, mode: str) -> list[Cell]:
         """Return every judge `mode` consults on `worker`'s answer, chosen from the whole lattice."""
-        return _judges(worker, mode, self._all)
+        return _judges(worker, mode, self._all, self.judge)
 
 
-def _judges(worker: Cell, mode: str, cells: list[Cell]) -> list[Cell]:
+def _judges(worker: Cell, mode: str, cells: list[Cell], judge: Cell) -> list[Cell]:
     if mode == "panel":
-        return choose_panel(worker, cells)
-    judge = choose_verifier(worker, mode, cells)
-    return [] if judge is None else [judge]
+        return choose_panel(worker, cells, judge=judge)
+    one = choose_verifier(worker, mode, cells, judge=judge)
+    return [] if one is None else [one]
