@@ -2,7 +2,7 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.6.1] - 2026-10-20
 
 ### Added
 
@@ -11,6 +11,7 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 ### Changed
 
 - The attempts table of `router run` fits the terminal: the reason column takes what the other columns leave (`COLUMNS` is honoured), between 16 and 70 characters.
+- README brought up to date with 0.6.0: judges may come from another provider (the council comparison, the simulation note, what leaves your machine, the library example), only verified verdicts feed the feedback store, a judge that cannot be reached ends the task as `error`. The skill says a judge from another provider cannot be a subagent.
 
 ## [0.6.0] - 2026-10-20
 
