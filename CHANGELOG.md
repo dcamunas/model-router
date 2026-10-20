@@ -2,6 +2,12 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.4.2] - 2026-10-20
+
+### Changed
+
+- The default judge is `opus/xhigh` and judges are capped at `xhigh` (`max` is still lowered). 0.4.1 shipped `opus/high` with the cap at `high`; a judge at xhigh writes about 1.6 times the thinking of one at high, so verification of critical tasks costs that much more, and `router config --judge opus/high` brings the cheaper setting back.
+
 ## [0.4.1] - 2026-10-20
 
 ### Changed
