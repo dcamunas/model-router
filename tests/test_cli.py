@@ -573,6 +573,7 @@ def test_config_declares_a_codex_door_and_doctor_says_whether_it_opens(home, mon
 
     monkeypatch.delenv("MODEL_ROUTER_CODEX_HOME", raising=False)
     monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/opt/bin/{name}")  # the CI runner has no codex binary
     try:
         assert main(["config", "--external", "luna=codex/gpt-5.5@5/30"]) == 0
         assert "models from other providers: luna" in capsys.readouterr().out
