@@ -87,7 +87,8 @@ def test_a_bench_ledger_names_its_strategy_in_a_note_that_a_rebuild_recovers(tmp
 
 def test_two_threads_writing_two_ledgers_lose_nothing(tmp_path):
     store = Store(tmp_path / "router.db")
-    ledgers = [Ledger(tmp_path / f"l{i}.jsonl", store=store) for i in range(2)]
+    paths = [tmp_path / f"l{i}.jsonl" for i in range(2)]
+    ledgers = [Ledger(path, store=store) for path in paths]
 
     def work(ledger: Ledger) -> None:
         for n in range(5):
@@ -97,7 +98,7 @@ def test_two_threads_writing_two_ledgers_lose_nothing(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         list(pool.map(work, ledgers))
     assert store.counts()["tasks"] == 10 and store.counts()["sources"] == 2
-    assert not store.stale([(ledger.path, None) for ledger in ledgers])
+    assert not store.stale([(path, None) for path in paths])
 
 
 def test_rebuild_skips_lines_that_are_not_json(tmp_path):
