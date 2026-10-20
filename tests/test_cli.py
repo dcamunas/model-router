@@ -6,6 +6,7 @@ import pytest
 
 from model_router import cli
 from model_router.cli import main
+from model_router.policy import Policy
 from model_router.testing import FakeClient, Reply
 
 
@@ -479,3 +480,89 @@ def test_a_broken_index_does_not_stop_a_run_and_stats_rebuilds_it(home, monkeypa
     assert main(["stats"]) == 0
     assert "tasks 1 · solved 1" in capsys.readouterr().out
     assert main(["db"]) == 0 and "in sync" in capsys.readouterr().out
+
+
+def test_calibrate_reports_from_the_index_and_apply_makes_the_policy_start_from_it(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("1: POSITIVE")] * 40}))
+    spec = home / "t.json"
+    spec.write_text(json.dumps({"tasks": [
+        {"id": f"c{i}", "kind": "classify", "risk": "medium", "prompt": f"classify {i}", "check_regex": "POSITIVE"}
+        for i in range(6)
+    ]}))
+    assert main(["bench", str(spec), "--yes", "--matrix", "--cells", "haiku/low,sonnet/low"]) == 0
+    capsys.readouterr()
+    assert main(["calibrate"]) == 0
+    out = capsys.readouterr().out
+    assert "12 first attempts with a verified verdict" in out and "compared with the built-in table" in out
+    assert "classify x medium: haiku/medium -> haiku/low (100% of 6" in out and "--apply writes" in out
+    assert main(["plan", "classify this", "--kind", "classify", "--risk", "medium"]) == 0
+    assert "start: haiku/medium" in capsys.readouterr().out
+    assert main(["calibrate", "--apply"]) == 0
+    assert "saved" in capsys.readouterr().out
+    cal_id = json.loads((home / "config.json").read_text())["calibration"]
+    assert (home / "calibrations" / f"{cal_id}.json").exists()
+    assert main(["plan", "classify this", "--kind", "classify", "--risk", "medium"]) == 0
+    out = capsys.readouterr().out
+    assert "start: haiku/low" in out and f"(calibration {cal_id})" in out
+    ok, line = cli._calibration_check()
+    assert ok and line.startswith(f"calibration: {cal_id} (made ") and "1 changes to the table) via config.json" in line
+    main(["run", "classify this", "--kind", "classify", "--risk", "medium", "--check-regex", "POSITIVE"])
+    capsys.readouterr()
+    last = json.loads((home / "ledger.jsonl").read_text().splitlines()[-1])
+    assert last["calibration_id"] == cal_id and last["plan"][0] == "haiku/low"
+    with_cal, builtin = cli._parse_strategy(f"router@{cal_id}")[1], cli._parse_strategy("router@builtin")[1]
+    assert isinstance(with_cal, Policy) and isinstance(builtin, Policy)
+    assert with_cal.calibration_id == cal_id and builtin.calibration_id == "builtin"
+    with pytest.raises(SystemExit, match="cannot be loaded"):
+        cli._parse_strategy("router@nope")
+    assert main(["calibrate"]) == 0
+    assert f"compared with calibration {cal_id}" in capsys.readouterr().out
+    assert main(["config"]) == 0 and f"calibration: {cal_id}" in capsys.readouterr().out
+    assert main(["config", "--calibration", "none"]) == 0
+    assert "calibration: none" in capsys.readouterr().out
+    assert main(["plan", "classify this", "--kind", "classify", "--risk", "medium"]) == 0
+    assert "start: haiku/medium" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="cannot access"):
+        main(["config", "--calibration", "never-made"])
+    monkeypatch.setenv("MODEL_ROUTER_CALIBRATION", "never-made")
+    ok, line = cli._calibration_check()
+    assert not ok and "cannot be loaded" in line and "MODEL_ROUTER_CALIBRATION" in line
+
+
+def test_bench_matrix_lists_every_cell_and_max_usd_guards_the_spend(home, monkeypatch, capsys):
+    from model_router.catalog import Usage
+
+    spec = home / "t.json"
+    spec.write_text(json.dumps({"tasks": [{"id": "w", "kind": "write", "risk": "critical", "prompt": "write it"}]}))
+    assert main(["bench", str(spec), "--matrix", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "x 20 strategies" in out and "fable/max: verification tribunal" in out
+    assert main(["bench", str(spec), "--matrix", "--cells", "haiku/low,opus/low", "--verify", "none", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "x 2 strategies" in out and "haiku/low: verification none" in out and "opus/low: verification none" in out
+    assert main(["bench", str(spec), "--yes", "--matrix", "--max-usd", "0"]) == 1
+    assert "over --max-usd" in capsys.readouterr().out and not (home / "bench").exists()
+    big = Reply("draft", usage=Usage(2_000_000, 1000))  # far over the estimate, so the cap trips after the first cell
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [big] * 4}))
+    argv = ["bench", str(spec), "--yes", "--matrix", "--cells", "haiku/low,opus/low", "--verify", "none", "--max-usd", "0.05"]
+    assert main(argv) == 1
+    out = capsys.readouterr().out
+    assert "== haiku/low ==" in out and "stopped before opus/low" in out and "== opus/low ==" not in out
+    assert "--max-usd $0.050 reached" in out
+
+
+def test_calibrate_classifier_compares_rules_and_haiku_with_the_eval_labels(home, monkeypatch, capsys):
+    from model_router.classify import LlmClassification
+
+    spec = home / "t.json"
+    spec.write_text(json.dumps({"tasks": [
+        {"id": f"c{i}", "kind": "classify", "risk": "medium", "prompt": f"classify ticket {i}"} for i in range(3)
+    ]}))
+    assert main(["calibrate", "--classifier", str(spec)]) == 0
+    out = capsys.readouterr().out
+    assert "rules: kind right on 3/3, risk right on 0/3; 3 misses" in out and "haiku:" not in out
+    guess = Reply(parsed=LlmClassification(kind="classify", risk="medium", reason="a ticket"))
+    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(judge={"*": [guess] * 3}))  # structured: the judge table
+    assert main(["calibrate", "--classifier", str(spec), "--llm"]) == 0
+    out = capsys.readouterr().out
+    assert "haiku: kind right on 3/3, risk right on 3/3; 0 misses" in out and "cost of the Haiku calls" in out

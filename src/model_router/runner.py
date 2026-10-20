@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 from .catalog import PLAN_OUTPUT_TOKENS_AT_HIGH, Cell, Usage, cost_usd
 from .client import ClaudeClient, ClientUnavailableError
 from .policy import Policy, PolicyProtocol
-from .task import Task
-from .verify import VERIFIED_SOURCES, JudgeVerdict, Verifier
+from .task import VERIFIED_SOURCES, Task
+from .verify import JudgeVerdict, Verifier
 from .version import router_version
 
 if TYPE_CHECKING:

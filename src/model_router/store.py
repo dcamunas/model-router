@@ -19,7 +19,7 @@ from typing import Any
 
 from .catalog import UnknownModelError, parse_cell
 
-SCHEMA_VERSION = 2  # 2: rows keyed by (source file, task id), the source's modification time; 1: by task id alone
+SCHEMA_VERSION = 3  # 3: no calibration table (they are files); 2: rows keyed by (source file, task id); 1: by task id
 _LOCK = threading.Lock()
 LedgerFiles = Iterable[tuple[Path, str | None]]  # (file, strategy name when it is a bench ledger)
 SIDECARS = ("-journal", "-wal", "-shm")  # SQLite's companions of the index file
@@ -55,10 +55,6 @@ CREATE TABLE IF NOT EXISTS verdict (
 );
 CREATE TABLE IF NOT EXISTS override (
     source TEXT NOT NULL, task_id TEXT NOT NULL, at TEXT NOT NULL, passed INTEGER NOT NULL, note TEXT
-);
-CREATE TABLE IF NOT EXISTS calibration (
-    id TEXT PRIMARY KEY, created TEXT NOT NULL, eval_id TEXT, tables TEXT NOT NULL, metrics TEXT,
-    active INTEGER NOT NULL DEFAULT 0
 );
 """
 TABLES = ("task", "attempt", "verdict", "override", "source")
@@ -301,14 +297,15 @@ class Store:
         self.rebuild(files)
         return True
 
-    def task_records(self, *, source: str | None = None) -> list[dict[str, Any]]:
+    def task_records(self, *, source: str | None = None, tagged: bool = False) -> list[dict[str, Any]]:
         """Return the task records (of one `source` file, or all), overrides of the same file applied as
-        `Ledger.tasks` does.
+        `Ledger.tasks` does; `tagged` adds each record's `source` (the file name) and `strategy`.
         """
         where, params = (" WHERE source = ?", (source,)) if source is not None else ("", ())
         with self._open() as conn:
-            rows = conn.execute("SELECT source, task_id, record FROM task" + where + " ORDER BY rowid", params)
-            tasks = {(src, task_id): json.loads(record) for src, task_id, record in rows}
+            rows = conn.execute("SELECT source, task_id, strategy, record FROM task" + where + " ORDER BY rowid", params)
+            tasks = {(src, task_id): json.loads(record) | ({"source": src, "strategy": strategy} if tagged else {})
+                     for src, task_id, strategy, record in rows}
             overrides = conn.execute("SELECT source, task_id, passed FROM override" + where + " ORDER BY rowid",
                                      params).fetchall()
         for src, task_id, passed in overrides:

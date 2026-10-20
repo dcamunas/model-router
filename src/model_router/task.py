@@ -21,6 +21,7 @@ KINDS: tuple[str, ...] = (
 )
 RISKS: tuple[str, ...] = ("low", "medium", "high", "critical")
 VERIFY_MODES: tuple[str, ...] = ("none", "light", "full", "panel", "tribunal")
+VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge", "panel", "tribunal"})  # verdict sources that are evidence
 
 DEFAULT_MAX_TOKENS = 16_000  # equals client.NON_STREAMING_MAX_TOKENS, so the api backend never streams by default
 CHARS_PER_TOKEN = 4  # rough average for Spanish and English prose and code; planning only

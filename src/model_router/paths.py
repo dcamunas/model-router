@@ -2,8 +2,8 @@
 
 State lives in ~/.model-router (MODEL_ROUTER_HOME moves it). `config.json` holds what `router
 install` or `router config` decide for this machine: the Claude profile the cli backend uses and,
-optionally, the models this installation may route to and the judge cell. Every variable the router
-reads is named here, all under the MODEL_ROUTER_ prefix.
+optionally, the models this installation may route to, the judge cell and the active calibration. Every
+variable the router reads is named here, all under the MODEL_ROUTER_ prefix.
 """
 
 from __future__ import annotations
@@ -14,10 +14,12 @@ from pathlib import Path
 from typing import Any
 
 HOME_ENV = "MODEL_ROUTER_HOME"
+MAIN_LEDGER = "ledger.jsonl"  # the ledger of `router run` and `router judge`; benches write their own under bench/
 MODELS_ENV = "MODEL_ROUTER_MODELS"  # models this installation may route to, e.g. "haiku,sonnet,opus"
 CONFIG_DIR_ENV = "MODEL_ROUTER_CLAUDE_CONFIG_DIR"  # Claude profile for the cli backend
 JUDGE_ENV = "MODEL_ROUTER_JUDGE"  # the cell that judges in `full` mode, e.g. "opus/xhigh"
 ARBITER_ENV = "MODEL_ROUTER_ARBITER"  # the cell that settles a tribunal's split; unset = the rule in policy.py
+CALIBRATION_ENV = "MODEL_ROUTER_CALIBRATION"  # the calibration that decides: an id or a file; "none" = the code tables
 HOOK_ENV = "MODEL_ROUTER_HOOK"  # "0" disables the Claude Code hook without uninstalling it
 HOOK_LOG_ENV = "MODEL_ROUTER_HOOK_LOG"  # "0" stops the hook's decisions log
 HOOK_QUIET_ENV = "MODEL_ROUTER_HOOK_QUIET"  # "1" hides the hook's one-line notice in the UI

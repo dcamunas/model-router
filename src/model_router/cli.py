@@ -21,6 +21,19 @@ from pathlib import Path
 from typing import Any
 
 from ._fmt import money, table
+from .calibration import (
+    BUILTIN,
+    MIN_N,
+    MIN_RATE,
+    MIN_SAVING,
+    NO_CALIBRATION,
+    active_calibration_name,
+    calibrations_dir,
+    classifier_report,
+    load_calibration,
+    measure,
+)
+from .calibration import report as calibration_report
 from .catalog import (
     MODELS,
     MODELS_ENV,
@@ -38,12 +51,21 @@ from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
-from .paths import ARBITER_ENV, CONFIG_DIR_ENV, JUDGE_ENV, config_path, home, read_config, write_config
-from .policy import DEFAULT_JUDGE, LadderPolicy, Policy, PolicyProtocol, default_arbiter, default_judge
+from .paths import (
+    ARBITER_ENV,
+    CALIBRATION_ENV,
+    CONFIG_DIR_ENV,
+    JUDGE_ENV,
+    MAIN_LEDGER,
+    config_path,
+    home,
+    read_config,
+    write_config,
+)
+from .policy import DEFAULT_JUDGE, FLOOR, START, LadderPolicy, Policy, PolicyProtocol, default_arbiter, default_judge
 from .runner import Router, TaskResult
 from .store import Store
-from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
-from .verify import VERIFIED_SOURCES
+from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFIED_SOURCES, VERIFY_MODES, Task, json_checker, regex_checker
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02, "panel": 0.025, "tribunal": 0.03}  # per attempt, rough
@@ -152,7 +174,7 @@ def _store() -> Store:
 
 def _ledger_files() -> list[tuple[Path, str | None]]:
     """Return the main ledger and every bench ledger, oldest first; a bench ledger's strategy is in its first line."""
-    files: list[tuple[Path, str | None]] = [(home() / "ledger.jsonl", None)]
+    files: list[tuple[Path, str | None]] = [(home() / MAIN_LEDGER, None)]
     files += [(p, None) for p in sorted((home() / "bench").glob("*.jsonl"))]
     return files
 
@@ -282,6 +304,12 @@ def _parse_strategy(text: str, verify: str | None = None) -> tuple[str, PolicyPr
     text = text.strip()
     if text == "router":
         return "router", Policy()
+    if text.startswith("router@"):  # the router with a given calibration, or `router@builtin` for the code tables
+        name = text[len("router@"):].strip()
+        policy = Policy(calibration=None if name.lower() in NO_CALIBRATION else name)
+        if policy.calibration_missing:
+            raise SystemExit(f"strategy {text}: calibration {name!r} cannot be loaded (`router calibrate --apply` makes one)")
+        return text, policy
     cells = [parse_cell(c) for c in text.split(">")]
     return text, LadderPolicy(cells, verify=verify or ("light" if len(cells) > 1 else "none"))
 
@@ -309,37 +337,67 @@ def _simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _bench_strategies(args: argparse.Namespace) -> list[tuple[str, PolicyProtocol]]:
+    """Return the strategies a bench compares: with `--matrix`, one single-cell strategy per cell (`--cells`, or
+    the whole lattice), verified as the router would unless `--verify` says otherwise; else `--strategies`.
+    """
+    if args.matrix:
+        cells = [parse_cell(c) for c in args.cells.split(",") if c.strip()] if args.cells else lattice()
+        return [(c.label, LadderPolicy([c], verify=args.verify or "auto")) for c in cells]
+    return [_parse_strategy(s, args.verify) for s in args.strategies.split(",")]
+
+
+def _confirm() -> bool:
+    try:
+        answer = input("Make real calls? [y/N] ").strip().lower()
+    except EOFError:  # no terminal to answer from: that is a no
+        answer = ""
+    return answer in ("y", "yes")
+
+
 def _cmd_bench(args: argparse.Namespace) -> int:
     if args.file is None or args.simulate:
         return _simulate(args)
     path = Path(args.file)
-    specs = _load_specs(path)
-    tasks = [_spec_task(s) for s in specs]
+    tasks = [_spec_task(s) for s in _load_specs(path)]
     eval_id = hashlib.sha256(path.read_bytes()).hexdigest()[:12]  # names this exact file in every record it produces
     repeat = max(1, args.repeat)
-    strategies = [_parse_strategy(s, args.verify) for s in args.strategies.split(",")]
+    strategies = _bench_strategies(args)
     with_checker = sum(t.checker is not None for t in tasks)
+    estimate = _bench_estimate(tasks, strategies) * repeat
     print(f"{len(tasks)} tasks ({with_checker} with a checker) x {len(strategies)} strategies x {repeat} repeat(s) · "
-          f"eval {eval_id} · estimate {money(_bench_estimate(tasks, strategies) * repeat)} (a rough one; it may fall short)")
+          f"eval {eval_id} · estimate {money(estimate)} (a rough one; it may fall short)")
     if args.dry_run:
         for name, policy in strategies:
             modes = sorted({policy.plan(t).verify for t in tasks})
             print(f"  {name}: verification {', '.join(modes)}")
         print("dry run: the file is valid; nothing was called")
         return 0
-    if not args.yes:
-        try:
-            answer = input("Make real calls? [y/N] ").strip().lower()
-        except EOFError:  # no terminal to answer from: that is a no
-            answer = ""
-        if answer not in ("y", "yes"):
-            print("cancelled")
-            return 1
+    if args.max_usd is not None and estimate > args.max_usd:
+        print(f"the estimate is over --max-usd {money(args.max_usd)}; nothing was called")
+        return 1
+    if not args.yes and not _confirm():
+        print("cancelled")
+        return 1
+    return _run_bench(args, path, tasks, strategies, eval_id=eval_id, repeat=repeat)
+
+
+def _run_bench(
+    args: argparse.Namespace, path: Path, tasks: list[Task], strategies: list[tuple[str, PolicyProtocol]], *,
+    eval_id: str, repeat: int,
+) -> int:
+    """Run every strategy over `tasks` (`repeat` times each), one bench ledger per strategy; stop between
+    strategies once `--max-usd` is spent.
+    """
     client = _with_providers(_live_client(args))
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     jobs = [(replace(t, id=f"{t.id}.r{k}") if repeat > 1 else t, k) for k in range(1, repeat + 1) for t in tasks]
     store = _store()
+    spent = 0.0
     for name, policy in strategies:
+        if args.max_usd is not None and spent >= args.max_usd:
+            print(f"stopped before {name}: {money(spent)} spent, --max-usd {money(args.max_usd)} reached")
+            return 1
         ledger = Ledger(home() / "bench" / f"{stamp}-{name.replace('/', '-').replace('>', '_')}.jsonl",
                         store=store, strategy=name)
         ledger.note(strategy=name, eval_id=eval_id, file=str(path), repeat=repeat, started=stamp)
@@ -350,11 +408,44 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
             for (t, _), res in zip(jobs, pool.map(run_one, jobs), strict=True):
+                spent += res.total_cost_usd
                 print(f"  [{name}] {t.id} {res.status} {money(res.total_cost_usd)} via {res.final_cell}")
         print(f"\n== {name} ==")
         print(summarize(ledger.tasks()).text())
         print(f"ledger: {ledger.path}\n")
         _warn_index(store)
+    return 0
+
+
+def _cmd_calibrate(args: argparse.Namespace) -> int:
+    if args.classifier:
+        specs = _load_specs(Path(args.classifier))
+        client = _with_providers(_live_client(args)) if args.llm else None
+        print(classifier_report(specs, start=lambda t: Policy().plan(t).start, client=client))
+        return 0
+    store = _store()
+    store.sync(_ledger_files())
+    current, against = START, BUILTIN
+    active = active_calibration_name()
+    if active:
+        try:
+            loaded = load_calibration(active)
+            current, against = loaded.start, loaded.id
+        except (OSError, ValueError) as exc:
+            print(f"warning: the active calibration {active} cannot be loaded ({exc}); comparing with the built-in table",
+                  file=sys.stderr)
+    cal = measure(store.task_records(tagged=True), current=current, floors=FLOOR, min_n=args.min_n,
+                  min_rate=args.min_rate, min_saving=args.min_saving, eval_id=args.eval, against=against)
+    print(calibration_report(cal))
+    if not args.apply:
+        print(f"\n--apply writes {calibrations_dir() / (cal.id + '.json')} and makes it the calibration that decides")
+        return 0
+    from .install import remember
+
+    saved = cal.save(calibrations_dir())
+    print(f"\nsaved {saved}")
+    remember(None, None, calibration=cal.id)
+    print("`router plan` and `router doctor` name it; `router config --calibration none` goes back to the built-in tables")
     return 0
 
 
@@ -367,7 +458,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     else:
         store = _store()
         store.sync(_ledger_files())  # a line written without the index (another version, a library user) still counts
-        records = store.task_records(source="ledger.jsonl")
+        records = store.task_records(source=MAIN_LEDGER)
         if store.corrupt:
             print(f"warning: {store.corrupt} unreadable lines in the ledger files, not counted", file=sys.stderr)
     if not records:
@@ -519,6 +610,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
                        "arbiter for a tribunal split: by rule (the next model up from the judge, at low effort)"))
     except ValueError as exc:
         checks.append((False, f"arbiter for a tribunal split: {exc} (check {ARBITER_ENV} or `router config --arbiter`)"))
+    checks.append(_calibration_check())
     if external_models():
         from .providers import PROVIDERS
 
@@ -543,6 +635,20 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     for ok_, text in checks:
         print(("ok     " if ok_ else "FAIL   ") + text)
     return 0 if all(ok_ for ok_, _ in checks) else 1
+
+
+def _calibration_check() -> tuple[bool, str]:
+    """Return the doctor's line about the calibration: which one decides, or that the named one cannot be loaded."""
+    name = active_calibration_name()
+    if not name:
+        return True, "calibration: none, the built-in tables decide (`router calibrate` measures one)"
+    source = CALIBRATION_ENV if os.environ.get(CALIBRATION_ENV) else "config.json"
+    try:
+        cal = load_calibration(name)
+    except (OSError, ValueError) as exc:
+        return False, f"calibration {name} (via {source}): cannot be loaded ({exc}); `router config --calibration none`"
+    return True, (f"calibration: {cal.id} (made {cal.created[:10]} from {cal.evidence} verified first attempts, "
+                  f"{len(cal.changes)} changes to the table) via {source}")
 
 
 def _cmd_feedback(args: argparse.Namespace) -> int:
@@ -623,13 +729,15 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
-    if args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None and not args.external:
+    if (args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None
+            and args.calibration is None and not args.external):
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
         anthropic = [m.short for m in MODELS.values() if m.provider == "anthropic"]
         print(f"available models: {', '.join(cfg.get('models') or anthropic)}")
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
         print(f"arbiter for a tribunal split: {cfg.get('arbiter') or 'by rule (the next model up from the judge)'}")
+        print(f"calibration: {cfg.get('calibration') or 'none (the built-in tables decide)'}")
         shown = ", ".join(f"{s.short}={s.provider}/{s.id}@{s.input:g}/{s.output:g}" for s in external_models()) or "none"
         print(f"judges from other providers: {shown}")
         print(f"(in {config_path()})")
@@ -650,7 +758,13 @@ def _cmd_config(args: argparse.Namespace) -> int:
     arbiter = None
     if args.arbiter is not None:
         arbiter = "" if args.arbiter.strip().lower() == "rule" else parse_cell(args.arbiter).label
-    remember(profile, names, reset_models=args.models is not None and names is None, judge=judge, arbiter=arbiter)
+    calibration = None
+    if args.calibration is not None:
+        calibration = "" if args.calibration.strip().lower() in NO_CALIBRATION else args.calibration.strip()
+        if calibration:
+            load_calibration(calibration)  # OSError or ValueError when it cannot be used; main() makes them one line
+    remember(profile, names, reset_models=args.models is not None and names is None, judge=judge, arbiter=arbiter,
+             calibration=calibration)
     return 0
 
 
@@ -706,8 +820,32 @@ def build_parser() -> argparse.ArgumentParser:
                     help="verification for fixed-cell strategies: a mode, or auto = what the router picks by risk "
                          "(default: light for a ladder, none for one cell)")
     sb.add_argument("--dry-run", action="store_true", help="validate the file and print the estimate; call nothing")
+    sb.add_argument("--matrix", action="store_true",
+                    help="one single-cell strategy per cell (every cell, or --cells), verified as the router would "
+                         "unless --verify says otherwise; what `router calibrate` measures from")
+    sb.add_argument("--cells", help="with --matrix: the cells to run, e.g. haiku/low,sonnet/low,opus/low (default: all)")
+    sb.add_argument("--max-usd", type=float,
+                    help="do not start when the estimate is above this; stop between strategies once the spend "
+                         "reaches it (a strategy in progress runs to its end)")
     _add_backend_args(sb)
     sb.set_defaults(func=_cmd_bench)
+
+    sca = sub.add_parser("calibrate",
+                         help="measure the start table from the benches and the ledger; --apply makes it the one that decides")
+    sca.add_argument("--eval", help="only the records of this eval id (what `router bench` prints)")
+    sca.add_argument("--min-n", type=int, default=MIN_N,
+                     help=f"first attempts a (kind, cell) needs before its rate counts (default {MIN_N})")
+    sca.add_argument("--min-rate", type=float, default=MIN_RATE,
+                     help=f"the lowest first-attempt pass rate a start cell may have (default {MIN_RATE:.0%})")
+    sca.add_argument("--min-saving", type=float, default=MIN_SAVING,
+                     help=f"a measured start cell is replaced only by one at least this much cheaper per solved task "
+                          f"(default {MIN_SAVING:.0%})")
+    sca.add_argument("--apply", action="store_true", help="save the calibration and make it the one that decides")
+    sca.add_argument("--classifier", metavar="FILE",
+                     help="instead: compare the rule classifier with the kind and risk this eval file gives each task")
+    sca.add_argument("--llm", action="store_true", help="with --classifier: also run the Haiku classifier (real calls)")
+    _add_backend_args(sca)
+    sca.set_defaults(func=_cmd_calibrate)
 
     ss = sub.add_parser("stats", help="summary of the ledger and the feedback store")
     ss.add_argument("--ledger", help="another ledger file")
@@ -746,12 +884,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_profile_args(su)
     su.set_defaults(func=_cmd_uninstall)
 
-    sg = sub.add_parser("config",
-                        help="show or set the profile for `router run`, the available models and the judge (hooks untouched)")
+    sg = sub.add_parser("config", help="show or set the profile for `router run`, the available models, the judge "
+                                       "and the calibration (hooks untouched)")
     sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
     sg.add_argument("--models", help="models this installation may pick, e.g. haiku,sonnet,opus; all = every model")
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--arbiter", help="cell that settles a tribunal split, e.g. fable/low; `rule` goes back to the default")
+    sg.add_argument("--calibration", help="the calibration that decides: an id from `router calibrate --apply`, or a "
+                                          "file; `none` goes back to the built-in tables")
     sg.add_argument("--external", action="append", metavar="NAME=PROVIDER/MODEL_ID@IN/OUT",
                     help="declare a judge from another provider (openai, deepseek, xai) with its prices in USD per "
                          "million tokens, e.g. gpt=openai/gpt-5.5@5/30; NAME= removes it")

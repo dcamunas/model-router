@@ -2,6 +2,20 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.9.0] - 2026-10-20
+
+### Added
+
+- `router calibrate`: measures, from the benches and the ledger, the first-attempt pass rate per kind and cell with its 95 % interval, the mean cost of an attempt and the expected cost per solved task (the attempt, plus one on the next cell up on the share that fails; a cell with nothing above it counts a second attempt on itself), and proposes a start table. A record without a cost is no evidence, and a calibration file names a cell for every kind and risk this router knows, or it is not loaded. A change needs evidence: a cheaper cell that was measured and passes, or the current cell measured and beaten (or under `--min-rate`, 50 %); a cell needs `--min-n` first attempts (6) to count; the risk floors hold. `--eval ID` keeps the records of one eval. `--apply` saves `~/.model-router/calibrations/<date>-<eval>.json` and names it in config.json: `Policy` then starts from it, `router plan` says so in the first line of the rationale, `router doctor` names it, and every record carries its id as `calibration_id`. `MODEL_ROUTER_CALIBRATION` (an id, a file, or `none`) overrides the config; `router config --calibration ID|none` sets or clears it. The ladder still climbs by the catalogue's assumed capability: a calibration moves where a task starts, not how it escalates. `Calibration` and `measure` are exported by the library.
+- `router bench --matrix [--cells a,b,c] [--max-usd N]`: one single-cell strategy per cell (the whole lattice, or `--cells`), verified as the router would unless `--verify` says otherwise; `--max-usd` refuses to start when the estimate is above it and stops between strategies once it is spent. The strategy `router@builtin` runs the router on the code tables and `router@ID` on a given calibration, so one bench compares before and after on the same eval.
+- `router calibrate --classifier FILE [--llm]`: how often the rule classifier (and, with `--llm`, the Haiku one, with its cost) gets kind and risk right against the labels of an eval file, with the confusion matrices and, for each miss, whether it would change the start cell.
+
+### Changed
+
+- `VERIFIED_SOURCES` lives in `task.py` with the other vocabularies; `verify.py` no longer defines it.
+- The SQLite index has no `calibration` table any more: calibrations are files. An index built by 0.8.1 is replaced on first use.
+- The test suite never reads `~/.model-router`: a `conftest.py` fixture points every test at its own state directory.
+
 ## [0.8.1] - 2026-10-20
 
 ### Fixed

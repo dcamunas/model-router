@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
+from .calibration import ACTIVE, Calibration, active_calibration_name, load_calibration
 from .catalog import EFFORTS, Cell, ladder, lattice, nearest_available, parse_cell, step_up
 from .paths import ARBITER_ENV, JUDGE_ENV, read_config
 from .task import Task
@@ -194,14 +195,30 @@ def _effort_up(cell: Cell) -> Cell:
     return Cell(cell.model, EFFORTS[min(cell.effort_rank + 1, EFFORTS.index(JUDGE_MAX_EFFORT))])
 
 
+def _resolve_calibration(value: Calibration | str | None) -> tuple[Calibration | None, str | None]:
+    """Return the calibration `value` asks for and, when it names one that cannot be loaded, that name: a
+    Calibration as is, None for the code tables, ACTIVE for the one the environment or config.json names,
+    any other string for an id or a file.
+    """
+    if value is None or isinstance(value, Calibration):
+        return value, None
+    name = active_calibration_name() if value == ACTIVE else value
+    if not name:
+        return None, None
+    try:
+        return load_calibration(name), None
+    except (OSError, ValueError):
+        return None, name
+
+
 class Policy:
-    """The default policy: the START table, the risk floors, feedback nudges, cost-aware escalation, a
-    fixed judge (`judge`, else the configured one) for full verification and, at critical risk for
-    `panel_kinds` without a checker, `critical_mode` (a tribunal, or a panel) with `arbiter` (else the
-    configured one, else the rule in `choose_arbiter`).
+    """The default policy: the START table (or the active calibration's, see `calibration.py`), the risk
+    floors, feedback nudges, cost-aware escalation, a fixed judge (`judge`, else the configured one) for
+    full verification and, at critical risk for `panel_kinds` without a checker, `critical_mode` (a
+    tribunal, or a panel) with `arbiter` (else the configured one, else the rule in `choose_arbiter`).
     """
 
-    calibration_id = "builtin"  # which tables decide; a calibration file will set its own id here
+    calibration_id = "builtin"  # which tables decide; an instance with a calibration carries its id instead
 
     def __init__(
         self,
@@ -214,12 +231,16 @@ class Policy:
         critical_mode: str = CRITICAL_MODE,
         judge: Cell | None = None,
         arbiter: Cell | None = None,
+        calibration: Calibration | str | None = ACTIVE,
     ) -> None:
         if critical_mode not in ("panel", "tribunal"):
             raise ValueError(f"critical_mode must be 'panel' or 'tribunal', not {critical_mode!r}")
         self.cells = cells or lattice()
         self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
-        self.start_table = start_table or START
+        self.calibration, self.calibration_missing = _resolve_calibration(calibration)
+        if self.calibration is not None:
+            self.calibration_id = self.calibration.id
+        self.start_table = start_table or (self.calibration.start if self.calibration else START)
         self.feedback = feedback
         self.min_gain = min_gain
         self.panel_kinds = panel_kinds
@@ -241,7 +262,9 @@ class Policy:
         kind = task.kind if task.kind in self.start_table else "unknown"
         risk = task.risk
         start = parse_cell(self.start_table[kind][risk])
-        rationale = [f"table {kind} x {risk} -> {start}"]
+        rationale = [f"table {kind} x {risk} -> {start}" + (f" (calibration {self.calibration_id})" if self.calibration else "")]
+        if self.calibration_missing:
+            rationale.append(f"calibration {self.calibration_missing} cannot be loaded: the built-in tables decide")
         start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
         if task.verify is None and verify == "full" and kind in self.panel_kinds and task.checker is None:
@@ -331,7 +354,7 @@ class LadderPolicy:
         models = {c.model for c in self._all}
         self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
         self.arbiter = _cap_effort(nearest_available(arbiter, models)) if arbiter else default_arbiter(models)
-        self._auto = Policy(judge=self.judge, arbiter=self.arbiter) if verify == "auto" else None
+        self._auto = Policy(judge=self.judge, arbiter=self.arbiter, calibration=None) if verify == "auto" else None
 
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)

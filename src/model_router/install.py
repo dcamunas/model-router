@@ -165,14 +165,16 @@ def model_names(models: str) -> list[str] | None:
 
 def remember(
     profile: Path | None, models: list[str] | None, *, reset_models: bool = False, judge: str | None = None,
-    arbiter: str | None = None,
+    arbiter: str | None = None, calibration: str | None = None,
 ) -> None:
     """Record in config.json the Claude profile for `router run`, the models this installation may route
-    to (`reset_models` removes that restriction), the judge cell for full verification and the arbiter of
-    a tribunal split (an empty string removes it, so the rule applies). A None value leaves its key untouched.
+    to (`reset_models` removes that restriction), the judge cell for full verification, the arbiter of
+    a tribunal split (an empty string removes it, so the rule applies) and the active calibration (an
+    empty string removes it, so the code tables decide). A None value leaves its key untouched.
     """
     cfg = read_config()
-    lines = _apply_config(cfg, profile, models, reset_models=reset_models, judge=judge, arbiter=arbiter)
+    lines = _apply_config(cfg, profile, models, reset_models=reset_models, judge=judge, arbiter=arbiter,
+                          calibration=calibration)
     if not lines:
         return
     path = save_config(cfg)
@@ -182,7 +184,7 @@ def remember(
 
 def _apply_config(
     cfg: dict[str, Any], profile: Path | None, models: list[str] | None, *, reset_models: bool, judge: str | None,
-    arbiter: str | None,
+    arbiter: str | None, calibration: str | None = None,
 ) -> list[str]:
     """Apply the requested changes to `cfg` in place and return one line per change, for the user."""
     lines = []
@@ -204,6 +206,12 @@ def _apply_config(
         else:
             cfg.pop("arbiter", None)
         lines.append(f"arbiter for a tribunal split: {arbiter or 'by rule'}")
+    if calibration is not None:
+        if calibration:
+            cfg["calibration"] = calibration
+        else:
+            cfg.pop("calibration", None)
+        lines.append(f"calibration: {calibration or 'none, the built-in tables decide'}")
     return lines
 
 

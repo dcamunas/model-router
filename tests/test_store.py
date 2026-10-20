@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from model_router.catalog import Usage
 from model_router.ledger import Ledger, summarize
 from model_router.runner import Router
-from model_router.store import Store
+from model_router.store import SCHEMA_VERSION, Store
 from model_router.task import Task, contains_checker
 from model_router.testing import FakeClient, Reply
 from model_router.verify import Verdict
@@ -185,5 +185,5 @@ def test_an_index_from_an_older_schema_is_replaced_on_first_use(tmp_path):
     assert store.stale([(path, None)])
     assert store.sync([(path, None)]) and store.counts()["tasks"] == 1
     with sqlite3.connect(db) as conn:
-        assert conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == ("2",)
+        assert conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == (str(SCHEMA_VERSION),)
     conn.close()
