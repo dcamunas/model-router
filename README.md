@@ -69,7 +69,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.6.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.6.1
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -80,7 +80,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.6.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.6.1
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -225,6 +225,10 @@ print(result.status, result.final_cell, f"${result.total_cost_usd:.4f}")
 print(result.answer)
 ```
 
+With judges from other providers, register them and wrap the client: `load_external(read_config())`
+(from `model_router.catalog` and `model_router.paths`), then `Router(MultiClient(LiveClient()))` with
+`MultiClient` from `model_router.providers`.
+
 `Task` takes `output_schema` (a pydantic model for structured output), `system`, `budget_usd`,
 `max_attempts` and `verify` to force the mode. `Router` accepts any object with
 `complete(cell, prompt=..., ...)`, so it can be tested without a network
@@ -234,8 +238,8 @@ print(result.answer)
 
 1. Kind and risk. You pass them or rules infer them (the rules know English and Spanish prompts);
    `--classify-llm` uses Haiku.
-2. Start cell. The `START` table in `policy.py` (kind × risk). With 10 or more verdicts for that
-   kind, the feedback store moves it up when its first-attempt pass rate falls below the break-even
+2. Start cell. The `START` table in `policy.py` (kind × risk). With 10 or more verified verdicts (checker,
+   judge, panel or tribunal) for that kind, the feedback store moves it up when its first-attempt pass rate falls below the break-even
    `c1 / c2` (the cost of an attempt on that cell, verification included, over the cost of the next
    step): below that, starting cheap costs more. The risk floors (`high` ≥ sonnet/low, `critical`
    ≥ opus/medium) cannot be lowered.
@@ -250,7 +254,8 @@ print(result.answer)
    `tribunal` of both instead of the full judge alone; `--verify full` forces one judge, `--verify
    panel` or `--verify tribunal` force two on any task.
 5. Stopping. A passing verdict, the ladder exhausted, the budget by risk (0.10 / 0.50 / 2 / 10 USD),
-   two refusals in the same task, or the API down. An answer cut by `max_tokens` is retried once on
+   two refusals in the same task, the API down, or a judge that cannot be reached (the answer is
+   kept and the status is `error`). An answer cut by `max_tokens` is retried once on
    the same cell with twice the room.
 6. Ledger. `~/.model-router/ledger.jsonl` (`MODEL_ROUTER_HOME` moves it): every attempt with its
    real tokens, cost, the model that served it (when a fallback ran), verdict and reason.
@@ -348,7 +353,8 @@ structured output goes through `parse`; above 16K tokens the call streams.
 - The hook calls no API: it classifies by rules, locally. It saves every decision in
   `~/.model-router/hook.jsonl` with the first 60 characters of the subagent's prompt.
 - `router run` and `router bench` send the prompt to Anthropic, through your API key or your Claude
-  Code account. To nobody else.
+  Code account. With a judge or an arbiter from another provider (`router config --external`), the
+  task and the answer go to that provider too, with its key. To nobody else.
 - The ledger keeps tokens, cost, cell, verdict and reason for every attempt; it keeps neither the
   prompt nor the answer.
 - `router plan`, `router stats`, `router cells` and `router doctor` without `--live` call nothing.
@@ -369,7 +375,7 @@ structured output goes through `parse`; above 16K tokens the call streams.
 An evaluation set of your own: 20 to 30 real tasks, frozen, with a checker or a reference answer,
 run through `router bench tasks.yaml` with several strategies. Until then, the only reliable number
 this gives you is the real cost per solved task in the ledger. `evals/v1.yaml` is a starter set of
-fifteen made-up tasks (ten with a checker, two critical ones without so the panel runs): copy it and
+fifteen made-up tasks (ten with a checker, two critical ones without so the tribunal runs): copy it and
 replace the tasks with yours.
 
 ## Development

@@ -1,7 +1,7 @@
 # Evaluation set v1 for `router bench evals/v1.yaml --strategies "router,sonnet/medium>opus/high,fable/low"`.
 # Fifteen made-up tasks across every kind the cli backend can run (no tools, so no `agentic`), frozen
 # on 2026-10-20. A programmatic checker wherever the answer can be checked by code; the two critical
-# tasks without one are there on purpose: they are the ones the panel verifies.
+# tasks without one are there on purpose: they are the ones the tribunal verifies.
 tasks:
   - id: classify-01
     kind: classify

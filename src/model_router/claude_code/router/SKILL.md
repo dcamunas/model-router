@@ -62,6 +62,9 @@ fails, `router doctor` says so.
      with the brief, the result and both verdicts (as judge A and judge B, no model names) and ask it
      to decide for itself; its verdict is final. Say in the final message who split and who was
      backed.
+   - A judge from another provider (declared with `router config --external`) is not a Claude Code
+     model, so it cannot be a subagent: for that seat use the Anthropic cell the plan prints for the
+     other judge, and know that the cross-provider check only happens in `router run`.
 
 4. On failure, relaunch on the next cell of the ladder with the reason for the failure in the brief.
    Stop when it passes, when the ladder runs out, or when the cost is not worth it.
