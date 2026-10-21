@@ -184,7 +184,7 @@ def test_policy_starts_from_the_calibration_and_carries_its_id(tmp_path, monkeyp
 def test_classifier_report_counts_misses_and_whether_they_move_the_start():
     specs = [
         {"id": "a", "kind": "classify", "risk": "low", "prompt": "Classify these tickets as billing or bug"},
-        {"id": "b", "kind": "write", "risk": "critical", "prompt": "Summarise the outage for the customers, critical"},
+        {"id": "b", "kind": "write", "risk": "critical", "prompt": "Summarise the outage for the customers. risk: critical"},
         {"id": "c", "kind": "classify", "risk": "low", "prompt": "Review each ticket and label it billing or bug"},
         {"id": "d", "prompt": "no labels here"},
     ]

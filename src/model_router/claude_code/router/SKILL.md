@@ -6,8 +6,13 @@ description: Verify and escalate subagent work by risk with the model router (`r
 # The model router inside Claude Code
 
 What already happens on its own: a `PreToolUse` hook on the Agent tool sets `model` and `effort`
-on every general-purpose subagent you launch without `model`, from the kind and the risk it infers
-from the prompt. What this skill adds is the rest of the loop: verify by risk and escalate on failure.
+on every general-purpose subagent you launch without `model`, from the kind and the risk of the
+task. Declare both in the subagent's description or in the first line of its prompt, `kind: review`
+and `risk: high`; a declared value beats what the hook infers from the text, and `critical` is never
+inferred, only declared. The risk is the damage a wrong result does (low: you read it and can redo
+it; medium: used without a second read; high: money, customers, production, legal, deletions,
+publishing; critical: high and hard to detect), and only you know what the result is for.
+What this skill adds is the rest of the loop: verify by risk and escalate on failure.
 
 ## Plain text: `router run`, not a subagent
 

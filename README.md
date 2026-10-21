@@ -219,8 +219,10 @@ Two pieces, one source of truth (the `model_router` package), delivered the same
 and by `router install`:
 
 - Hook `router-hook`: `PreToolUse` on the Agent tool sets `model` and `effort` for every
-  general-purpose subagent Claude launches without choosing a model, from the kind and the risk it
-  infers from the prompt. `SessionStart` tells Claude the hook exists so it does not fight it. It
+  general-purpose subagent Claude launches without choosing a model, from the kind and the risk
+  declared in the description or the prompt (`kind: review`, `risk: high`), else inferred from the
+  text. `SessionStart` tells Claude the hook exists, and to declare both, since only the
+  orchestrator knows what the result is for. It
   calls no API, takes a few tenths of a second and never blocks: on any error it exits quietly.
 - Skill `router`: what a hook cannot do. Verify with a second subagent, escalate, and send text-only
   subtasks (classify, extract, summarise, draft) through `router run` instead of a subagent, which
@@ -267,8 +269,14 @@ With models from other providers, register them and wrap the client: `load_exter
 
 ## How it decides
 
-1. Kind and risk. You pass them or rules infer them (the rules know English and Spanish prompts);
-   `--classify-llm` uses Haiku.
+1. Kind and risk. You pass them (`--kind`, `--risk`), or the text declares them (`kind: review`,
+   `risk: high`, also `tipo:` and `riesgo:`; the first declaration wins), or rules infer them (the
+   rules know English and Spanish prompts); `--classify-llm` uses Haiku. The risk is the damage a
+   wrong answer does, and the text does not carry it: on 28 real tasks the rules got it right 9
+   times and Haiku 5 to 10, both reading difficulty or vocabulary instead of consequences. So
+   `critical` is never inferred, only declared or passed, and a text that says "critical" or
+   "production" is not a critical task for it; the high-risk keywords (money, customers,
+   production, deletions, legal, health, credentials) still raise an undeclared risk to `high`.
 2. Start cell. The `START` table in `policy.py` (kind × risk), or the table of the active calibration
    (`router calibrate --apply`; `router plan` names it, see "Assumptions"). With 10 or more verified verdicts (checker,
    judge, panel or tribunal) for that kind, the feedback store moves it up when its first-attempt pass rate falls below the break-even

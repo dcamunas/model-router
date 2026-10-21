@@ -101,7 +101,7 @@ def test_main_model_reads_last_non_sidechain_assistant_entry(tmp_path):
 
 def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    prompt = "Review this critical design of the payments migration before running it"
+    prompt = "risk: critical. Review this design of the payments migration before running it"
     event = agent_event(prompt=prompt)
     event["transcript_path"] = _transcript(tmp_path, {"type": "assistant", "message": {"model": "claude-opus-5-5"}})
     out = routed(event)
@@ -134,7 +134,7 @@ def test_a_log_that_cannot_be_written_does_not_stop_the_routing(tmp_path, monkey
 
 
 def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp_path):
-    critical = "Review this critical design of the payments migration"
+    critical = "risk: critical. Review this design of the payments migration"
     updated, record = decided({"prompt": critical}, chat_model="fable")
     assert updated["model"] == "opus" and updated["effort"] == "high" and "cross" not in record
     updated, record = decided({"prompt": critical}, chat_model=None)
@@ -151,7 +151,7 @@ def test_an_external_judge_never_becomes_a_subagents_model(tmp_path, monkeypatch
         "judge": "gpt/high", "external": {"gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}))
     try:
         load_external(json.loads((tmp_path / "config.json").read_text()))
-        updated, record = decided({"prompt": "Review this critical design of the payments migration"}, chat_model="opus")
+        updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
         assert updated["model"] == "opus" and "cross" not in record
     finally:
         load_external({})
@@ -160,9 +160,9 @@ def test_an_external_judge_never_becomes_a_subagents_model(tmp_path, monkeypatch
 def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
-    updated, record = decided({"prompt": "Analyse the critical design of the payments migration"})
+    updated, record = decided({"prompt": "risk: critical. Analyse the design of the payments migration"})
     assert updated["model"] == "opus" and record["cell"] == "opus/medium"  # fable/low degraded, then the floor
-    updated, record = decided({"prompt": "Review this critical design of the payments migration"}, chat_model="opus")
+    updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
     assert updated["model"] == "opus" and "cross" not in record  # no other model can take the cross-check
 
 

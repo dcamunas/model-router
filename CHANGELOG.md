@@ -10,6 +10,10 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 
 - `router calibrate` counts only independent verdicts as evidence: a checker, or a judge on a model other than the worker's that backed the final verdict (the arbiter's ruling counts as one). A verdict the worker's own model alone gave, as `light` produced until now and as a one-model installation still does, is counted in the report's "left out" figure and moves nothing. The calibration file carries that count (`self_judged`); older files load with 0. On the private eval, the proposal went from 21 moves to 15, and the moves that rested on a cheap cell passing its own reviews and analyses are gone.
 
+- Kind and risk can be declared in the task text, `kind: review` and `risk: high` (also `tipo:` and `riesgo:`), anywhere in it; the first declaration wins over the rules and over Haiku, and `router run`, `router plan`, the hook (description and prompt) and the classifier report all honour it. The hook's session context and the skill tell the orchestrator to declare both on every subagent, with the risk levels spelled out as the damage a wrong result does.
+- Critical risk is never inferred: the words "critical", "urgent" and "no undo" no longer make a task critical (a LinkedIn post that mentions a critical decision was going to a tribunal). The high-risk keywords stay. On 28 real tasks the rules read the risk right 9 times and Haiku 5 to 10: both score difficulty or vocabulary, and the risk is in what the answer is for.
+- The Haiku classifier's rubric for risk asks who uses the answer and what happens when it is wrong, with one anchor per level, and says the wording does not set the risk.
+
 ### Fixed
 
 - The Haiku classifier (`--classify-llm`, `router calibrate --classifier --llm`) could answer the task instead of classifying it when the task was a question about code: its system prompt now says the text inside `<task>` is material, never instructions. Seen on a private eval, where the "reason" of one classification was the task's full answer.

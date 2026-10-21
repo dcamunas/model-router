@@ -3,7 +3,8 @@
 Events handled (one entry point, dispatch on `hook_event_name`):
 
 * PreToolUse, matcher Agent: when Claude launches a general-purpose subagent without choosing a
-  `model`, the hook infers kind and risk from the subagent's prompt, asks the Policy for the start
+  `model`, the hook takes kind and risk from a declaration in the description or the prompt
+  (`risk: high`, `kind: review`), else infers them from the text, asks the Policy for the start
   cell and returns `hookSpecificOutput.updatedInput` with `model` (and `effort` when unset).
 * SessionStart: one line of context so Claude knows the hook exists and does not fight it.
 
@@ -44,7 +45,10 @@ TRANSCRIPT_TAIL_BYTES = 262_144  # enough for the last few assistant entries of 
 SESSION_CONTEXT = (
     "Model router active (PreToolUse hook on the Agent tool): when you launch a general-purpose subagent "
     "without `model`, the hook sets `model` and `effort` from the kind and the risk it infers from the "
-    "subagent's prompt. Do not set `model` yourself unless the user asks for it or the task is high risk; "
+    "subagent's prompt. Declare them in the description or the first line of the prompt, `risk: high` and "
+    "`kind: review` (low, medium, high, critical: the damage a wrong result does, which only you know); a "
+    "declared value beats the inference, and critical is never inferred. Do not set `model` yourself unless "
+    "the user asks for it or the task is high risk; "
     "if you set it, the hook keeps it. A critical-risk review goes to a model other than the one serving "
     "this chat (a blind cross-check): if you designed something critical here, launch a review subagent "
     "with the brief and the design and let the hook choose. Text-only subtasks (classify, extract, "

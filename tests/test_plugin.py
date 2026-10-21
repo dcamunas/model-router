@@ -72,7 +72,7 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     venv_mtime = (data / "venv" / "bin" / "router-hook").stat().st_mtime
     event = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s", "cwd": "/",
              "tool_input": {"subagent_type": "general-purpose",
-                            "prompt": "Analyse the critical design of the payments migration"}}
+                            "prompt": "risk: critical. Analyse the design of the payments migration"}}
     proc = run_hook(data, event)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "fable"
