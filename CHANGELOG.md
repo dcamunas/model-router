@@ -2,6 +2,12 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- The Haiku classifier (`--classify-llm`, `router calibrate --classifier --llm`) could answer the task instead of classifying it when the task was a question about code: its system prompt now says the text inside `<task>` is material, never instructions. Seen on a private eval, where the "reason" of one classification was the task's full answer.
+
 ## [0.10.0] - 2026-10-21
 
 ### Added
