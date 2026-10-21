@@ -7,8 +7,9 @@ description: Verify and escalate subagent work by risk with the model router (`r
 
 What already happens on its own: a `PreToolUse` hook on the Agent tool sets `model` and `effort`
 on every general-purpose subagent you launch without `model`, from the kind and the risk of the
-task. Declare both in the subagent's description or in the first line of its prompt, `kind: review`
-and `risk: high`; a declared value beats what the hook infers from the text, and `critical` is never
+task. Declare both in the subagent's description or on the first line of its prompt, as `kind: review,
+risk: high` (a value ends the line or is followed by a comma or a full stop; only the first two lines
+count, so material pasted below never sets the risk); a declared value beats what the hook infers from the text, and `critical` is never
 inferred, only declared. The risk is the damage a wrong result does (low: you read it and can redo
 it; medium: used without a second read; high: money, customers, production, legal, deletions,
 publishing; critical: high and hard to detect), and only you know what the result is for.

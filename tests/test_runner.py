@@ -53,7 +53,7 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
 def test_panel_needs_both_judges_and_a_split_escalates():
     client = FakeClient(
         script={"opus/medium": [Reply("draft")], "fable/low": [Reply("better draft")]},
-        judge={"sonnet/low": [ok()], "fable/low": [ko("thin")], "opus/xhigh": [ok()]},
+        judge={"sonnet/low": [ok()], "fable/low": [ko("thin"), ok()], "opus/xhigh": [ok()]},
     )
     result = Router(client).run(Task(prompt="write the incident report", kind="write", risk="critical", verify="panel"))
     assert result.verify == "panel" and result.solved
@@ -62,11 +62,11 @@ def test_panel_needs_both_judges_and_a_split_escalates():
     assert [j.label for j in first.judges] == ["sonnet/low", "fable/low"] and first.verifier == parse_cell("fable/low")
     assert "panel split: sonnet/low passed, fable/low failed" in first.reason and "thin" in first.reason
     assert second.cell.label == "fable/low" and second.verdict is True
-    assert [j.label for j in second.judges] == ["sonnet/low", "opus/xhigh"] and "panel agreed" in second.reason
+    assert [j.label for j in second.judges] == ["opus/xhigh", "fable/low"] and "panel agreed" in second.reason
     judge_calls = [c["cell"] for c in client.calls if c["output_format"] == "Verdict"]
-    assert judge_calls == ["sonnet/low", "fable/low", "sonnet/low", "opus/xhigh"]
+    assert judge_calls == ["sonnet/low", "fable/low", "opus/xhigh", "fable/low"]  # a Fable worker: nothing a tier up
     assert first.verify_cost_usd == pytest.approx(0.030)  # sonnet/low 0.005 + fable/low 0.025 on Usage(2000, 100)
-    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.045)
+    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.065)
     assert result.to_dict()["attempts"][0]["judges"] == ["sonnet/low", "fable/low"]
 
 

@@ -64,13 +64,24 @@ from .paths import (
     save_config,
     write_config,
 )
-from .policy import DEFAULT_JUDGE, FLOOR, START, LadderPolicy, Policy, PolicyProtocol, default_arbiter, default_judge
+from .policy import (
+    DEFAULT_JUDGE,
+    FLOOR,
+    JUDGE_INPUT_TOKENS,
+    JUDGE_OUTPUT_TOKENS_AT_HIGH,
+    START,
+    LadderPolicy,
+    Policy,
+    PolicyProtocol,
+    default_arbiter,
+    default_judge,
+)
 from .runner import Router, TaskResult
 from .store import Store
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFIED_SOURCES, VERIFY_MODES, Task, json_checker, regex_checker
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
-JUDGE_COST_ESTIMATE_USD = {"light": 0.005, "full": 0.02, "panel": 0.025, "tribunal": 0.03}  # per attempt, rough
+ARBITER_SHARE = 0.3  # the share of tribunals assumed to split, for the estimate
 REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
 MIN_REASON_CHARS = 16
 PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
@@ -324,7 +335,11 @@ def _bench_estimate(tasks: list[Task], strategies: list[tuple[str, PolicyProtoco
             plan = policy.plan(t)
             first = plan.start.expected_cost(t.estimated_input_tokens, t.planned_output_tokens)
             estimate += first * (1.0 if len(plan.ladder) == 1 else ESCALATION_COST_FACTOR)
-            estimate += JUDGE_COST_ESTIMATE_USD.get(plan.verify, 0.0)
+            judges = policy.judges_for(plan.start, plan.verify)
+            estimate += sum(j.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH) for j in judges)
+            arbiter = policy.arbiter_for(plan.start) if plan.verify == "tribunal" else None
+            if arbiter is not None:
+                estimate += ARBITER_SHARE * arbiter.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
     return estimate
 
 

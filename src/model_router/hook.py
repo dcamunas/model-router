@@ -45,8 +45,9 @@ TRANSCRIPT_TAIL_BYTES = 262_144  # enough for the last few assistant entries of 
 SESSION_CONTEXT = (
     "Model router active (PreToolUse hook on the Agent tool): when you launch a general-purpose subagent "
     "without `model`, the hook sets `model` and `effort` from the kind and the risk it infers from the "
-    "subagent's prompt. Declare them in the description or the first line of the prompt, `risk: high` and "
-    "`kind: review` (low, medium, high, critical: the damage a wrong result does, which only you know); a "
+    "subagent's prompt. Declare them in the description or on the first line of the prompt, as `kind: review, "
+    "risk: high` (each value ends the line or is followed by a comma or a full stop; the risk is the damage a "
+    "wrong result does, low, medium, high or critical, which only you know); a "
     "declared value beats the inference, and critical is never inferred. Do not set `model` yourself unless "
     "the user asks for it or the task is high risk; "
     "if you set it, the hook keeps it. A critical-risk review goes to a model other than the one serving "

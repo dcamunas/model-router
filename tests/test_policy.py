@@ -117,10 +117,23 @@ def test_panel_pairs_the_fixed_judge_with_a_light_judge_on_a_third_model():
     panel = choose_panel(parse_cell("sonnet/medium"), cells)
     assert [c.label for c in panel] == ["opus/xhigh", "fable/low"]  # Opus is the full judge: the light one skips it
     panel = choose_panel(parse_cell("fable/max"), cells)
-    assert [c.label for c in panel] == ["sonnet/low", "opus/xhigh"]
-    for worker in ("haiku/low", "sonnet/medium", "opus/high", "fable/max"):
+    assert [c.label for c in panel] == ["opus/xhigh", "fable/xhigh"]  # Opus judges; Sonnet is two tiers down: itself
+    for worker in ("haiku/low", "sonnet/medium", "opus/high"):
         panel = choose_panel(parse_cell(worker), cells)
         assert len({c.model for c in panel} | {parse_cell(worker).model}) == 3  # no two of the three share a model
+
+
+def test_light_judge_stays_within_a_tier_and_falls_back_to_the_worker(monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,opus")
+    cells = lattice()
+    light = choose_verifier(parse_cell("opus/high"), "light", cells)
+    assert light is not None and light.label == "opus/high"  # Haiku is two tiers down: no check, itself instead
+    assert [c.label for c in choose_panel(parse_cell("opus/high"), cells)] == ["haiku/xhigh", "opus/high"]
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus,fable")
+    cells = lattice()
+    assert [c.label for c in choose_panel(parse_cell("opus/high"), cells)] == ["opus/high", "fable/low"]  # never one judge
+    assert [c.label for c in choose_panel(parse_cell("fable/low"), cells)] == ["opus/xhigh", "fable/low"]
+    assert choose_arbiter(parse_cell("fable/low"), cells) == parse_cell("fable/medium")
 
 
 def test_panel_with_one_model_uses_two_cells_and_degrades_to_one_at_the_top(monkeypatch):

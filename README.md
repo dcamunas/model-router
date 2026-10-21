@@ -269,8 +269,9 @@ With models from other providers, register them and wrap the client: `load_exter
 
 ## How it decides
 
-1. Kind and risk. You pass them (`--kind`, `--risk`), or the text declares them (`kind: review`,
-   `risk: high`, also `tipo:` and `riesgo:`; the first declaration wins), or rules infer them (the
+1. Kind and risk. You pass them (`--kind`, `--risk`), or the first two lines of the text declare them
+   (`kind: review, risk: high`; also `tipo:` and `riesgo: alto`; a value ends the line or is followed
+   by a comma or a full stop, and material pasted below the head never counts), or rules infer them (the
    rules know English and Spanish prompts); `--classify-llm` uses Haiku. The risk is the damage a
    wrong answer does, and the text does not carry it: on 28 real tasks the rules got it right 9
    times and Haiku 5 to 10, both reading difficulty or vocabulary instead of consequences. So

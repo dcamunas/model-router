@@ -123,21 +123,19 @@ def default_judge(models: Iterable[str] | None = None) -> Cell:
 
 
 def _light_judge(worker: Cell, cells: list[Cell], *, avoid: Cell | None = None) -> Cell:
-    """Return the light judge of `worker`: the nearest other model at low effort, the tier above before the one
-    below, then another model of the same tier; in a panel, a model other than `avoid` (the full judge) when
-    `cells` hold one. The worker's own cell, effort capped, only when no other model is available: a worker
-    judging itself in a fresh context passed a quarter of the answers an independent judge failed.
+    """Return the light judge of `worker`: the nearest other model at low effort, the tiers above first (the
+    lowest of them), then another model of the worker's tier, then the tier just below, never further down;
+    in a panel, a model other than `avoid` (the full judge). The worker's own cell, effort capped, when no
+    such model is available: a worker judging itself in a fresh context passed a quarter of the answers an
+    independent judge failed, but a judge two tiers down is no check either.
     """
     models = _by_tier(cells)
     above = [m for m in models if MODELS[m].tier > worker.tier]
-    below = sorted((m for m in models if MODELS[m].tier < worker.tier), key=lambda m: -MODELS[m].tier)  # stable: Claude first
     same = [m for m in models if MODELS[m].tier == worker.tier and m != worker.model]
-    others = above + below + same
-    for m in others:
+    below = [m for m in models if MODELS[m].tier == worker.tier - 1]
+    for m in above + same + below:
         if avoid is None or m != avoid.model:
             return _at(m, "low")
-    if others:
-        return _at(others[0], "low")
     return _cap_effort(worker)
 
 
@@ -206,9 +204,10 @@ def choose_arbiter(
     that is not a judge (a cell at an effort its door does not accept counts as the nearest it does), the
     cells that share a company with neither the full judge nor the worker first,
     then those that do not share the worker's (an arbiter with the worker's blind spots passes what it
-    passed), then those that do not share the full judge's, the highest tier first: the models above the full
-    judge and the worker at low effort, the full judge's model one effort up, the worker's model one effort up,
-    the light judge's model one effort up.
+    passed), then those that do not share the full judge's; among those, a cell at the worker's tier or above
+    before one below it, a model other than the worker's before the worker's own, the highest tier first. The
+    candidates: the models above the full judge and the worker at low effort, the full judge's model one effort
+    up, the worker's model one effort up, the light judge's model one effort up.
     """
     judges = choose_panel(worker, cells, judge=judge)
     arbiter = _cap_effort(arbiter) if arbiter else default_arbiter({c.model for c in cells})
@@ -223,7 +222,8 @@ def choose_arbiter(
     candidates += [_effort_up(full), _effort_up(worker), _effort_up(light)]
     candidates.sort(key=lambda c: (
         (c.spec.family == full.spec.family) + (c.spec.family == worker.spec.family),
-        c.spec.family == worker.spec.family, c.spec.family == full.spec.family, -c.tier,
+        c.spec.family == worker.spec.family, c.spec.family == full.spec.family,
+        c.tier < worker.tier, c.model == worker.model, -c.tier,
     ))
     return next((c for c in candidates if c not in judges), None)
 

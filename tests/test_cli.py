@@ -26,7 +26,7 @@ def test_plan_prints_both_judges_of_a_panel(capsys):
     argv = ["plan", "Assess whether we should migrate the billing database", "--kind", "analysis", "--risk", "critical"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "verification tribunal" in out and "verifier (tribunal): sonnet/low then opus/xhigh" in out
+    assert "verification tribunal" in out and "verifier (tribunal): opus/xhigh then fable/low" in out
     assert "arbiter on a split: fable/medium" in out
 
 

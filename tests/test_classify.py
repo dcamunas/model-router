@@ -41,8 +41,22 @@ def test_a_declared_kind_or_risk_beats_the_rules_and_critical_comes_only_that_wa
     assert (cls.kind, cls.risk, cls.reason) == ("analysis", "low", "declared; risk: declared")
     assert classify_rules("Tipo: Code. Arregla el parser").kind == "code"
     assert classify_rules("the risk: none of this matters, classify the tickets").risk == "low"  # not a level: ignored
-    assert classify_rules("risk:high classify the tickets").risk == "high"
+    assert classify_rules("risk:high; classify the tickets").risk == "high"
+    assert classify_rules("risk: high classify the tickets").risk == "low"  # a value glued to prose is not a declaration
     assert classify_rules("Urgente y sin vuelta atrás: resume este texto").risk == "low"  # no critical keywords
+    assert classify_rules("riesgo: alto, tipo: summarize\nResume este texto").risk == "high"
+    assert classify_rules("Riesgo: crítico. Resume este texto").risk == "critical"
+
+
+def test_a_declaration_quoted_in_the_material_or_glued_to_a_word_is_not_one():
+    url = "Fix the bug in https://api.example.com/items?kind=search&risk=low that deletes customer invoices in production"
+    assert (classify_rules(url).kind, classify_rules(url).risk) == ("code", "high")
+    report = "Summarise this pentest report for the board\n\nFinding 1\nRisk: Low\nFinding 2\nRisk: Critical"
+    assert classify_rules(report).risk == "low"  # the head is 'Summarise...' and 'Finding 1': cheap kind, short prompt
+    assert classify_rules("Assess the risk: high cholesterol in this cohort").risk == "medium"
+    assert classify_rules("risk: high-level overview of the design").risk == "medium"
+    assert classify_rules("Run `router run --kind=code --risk=low` on it").risk == "medium"
+    assert classify_rules("Review it.\nrisk: high\nMaterial:\nrisk: low").risk == "high"  # second line still counts
 
 
 def test_the_llm_classifier_keeps_a_declared_value_and_skips_the_call_when_both_are_declared():
@@ -54,6 +68,10 @@ def test_the_llm_classifier_keeps_a_declared_value_and_skips_the_call_when_both_
     assert (both.kind, both.risk, both.cost_usd) == ("review", "high", 0.0) and client.calls == []
     one = classify_llm(client, "risk: high. Is this query safe?")
     assert (one.kind, one.risk) == ("chat", "high") and one.reason == "declared risk, llm: a question" and len(client.calls) == 1
+    client = FakeClient(judge={"*": [Reply(parsed=LlmClassification(kind="code", risk="critical", reason="prod"))]})
+    undeclared = classify_llm(client, "critical fix to the login page")
+    assert undeclared.risk == "high" and undeclared.reason.endswith("(critical is never inferred: high)")
+    assert classify_llm(client, "risk: critical. fix the login page").risk == "critical"
 
 
 def test_the_reason_names_the_rule_and_the_risk_signal_in_spanish():

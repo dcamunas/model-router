@@ -200,15 +200,17 @@ def _independent(attempt: dict[str, Any], worker: Cell) -> bool:
     if attempt.get("verdict_source") == "checker":
         return True
     final = bool(attempt["verdict"])
-    votes = attempt.get("verdicts") or []
+    votes = attempt.get("verdicts")
+    votes = [v for v in votes if isinstance(v, dict)] if isinstance(votes, list) else []
     if not votes:  # a record from before verdicts were kept: the single verifier is all there is
         votes = [{"cell": attempt.get("verifier"), "passed": final}]
     for vote in votes:
+        label = str(vote.get("cell") or "")
         try:
-            cell = parse_cell(str(vote.get("cell") or ""))
-        except (UnknownModelError, ValueError):
-            continue
-        if cell.model != worker.model and bool(vote.get("passed")) == final:
+            other = parse_cell(label).model != worker.model
+        except (UnknownModelError, ValueError):  # a judge no longer declared: its name still says whose it was
+            other = bool(label) and label.split("/")[0] != worker.spec.short
+        if other and vote.get("passed") is final:
             return True
     return False
 
@@ -231,6 +233,8 @@ def _collect(records: Iterable[dict[str, Any]], eval_id: str | None) -> tuple[di
         if not first or first.get("verdict") is None or first.get("verdict_source") not in VERIFIED_SOURCES:
             continue
         if first.get("cost_usd") is None:  # a record this router did not write: without a cost it cannot be priced
+            continue
+        if first.get("stop_reason") == "external":  # `router judge`: an answer made elsewhere, at no cost here
             continue
         label = str(first.get("cell", ""))
         try:

@@ -19,7 +19,7 @@ from model_router.task import Task
 
 def _record(kind: str, cell: str, passed: bool, *, cost: float = 0.01, verify_cost: float = 0.0, source: str = "checker",
             eval_id: str | None = "ev1", overridden: bool = False, status: str | None = None,
-            verdicts: list[dict] | None = None, verifier: str | None = None) -> dict:
+            verdicts: list | None = None, verifier: str | None = None) -> dict:
     return {
         "type": "task", "task_id": "t", "kind": kind, "risk": "low", "eval_id": eval_id,
         "status": status or ("solved" if passed else "unsolved"), "overridden": overridden,
@@ -54,11 +54,21 @@ def test_a_verdict_only_the_workers_own_model_backed_is_no_evidence():
                 verdicts=[vote("haiku/medium", True), vote("opus/xhigh", False), vote("fable/low", True, "arbiter")]),
         _record("write", "haiku/medium", False, source="judge", verifier="haiku/medium", overridden=True),  # a human
     ]
+    records += [
+        _record("write", "haiku/medium", True, source="judge", verifier="gpt/high"),  # a judge no longer declared
+        _record("write", "haiku/medium", True, source="judge", verifier="haiku/high"),  # unknown effort, same model
+        _record("write", "haiku/medium", True, source="tribunal", verdicts=["opus/xhigh", {"cell": 1}]),  # malformed
+    ]
+    records[-3]["attempts"][0]["verdicts"] = "not a list"
+    external = _record("write", "opus/low", True, source="judge", verifier="fable/low")
+    external["attempts"][0]["stop_reason"] = "external"  # `router judge`: no worker cost to measure
+    records.append(external)
     cal = measure(records, current=START, floors=FLOOR, min_n=1)
     m = cal.measured["write"]["haiku/medium"]
-    assert (cal.records, cal.evidence, cal.self_judged) == (6, 4, 2) and (m["n"], m["passes"]) == (4, 3)
-    assert "4 first attempts with an independent verdict (2 left out" in report(cal)
-    assert Calibration.from_dict(cal.to_dict()).self_judged == 2
+    assert (cal.records, cal.evidence, cal.self_judged) == (10, 5, 4) and (m["n"], m["passes"]) == (5, 4)
+    assert "opus/low" not in cal.measured["write"]
+    assert "5 first attempts with an independent verdict (4 left out" in report(cal)
+    assert Calibration.from_dict(cal.to_dict()).self_judged == 4
     legacy = {k: v for k, v in cal.to_dict().items() if k != "self_judged"}
     assert Calibration.from_dict(legacy).self_judged == 0
 

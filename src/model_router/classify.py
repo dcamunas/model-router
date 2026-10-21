@@ -29,9 +29,15 @@ KIND_RULES: list[tuple[str, str]] = [
     ("write", r"\b(escribe\w*|write|redacta\w*|draft|post|email|correo|art[ií]culo|article|carta|letter|descripci[oó]n|description|copy|gui[oó]n)\b"),
 ]
 HIGH_RISK = r"\b(producci[oó]n|production|dinero|money|pago\w*|payment\w*|factura\w*|invoice\w*|legal|contrato|contract|cliente\w*|customer\w*|b[oó]rra(r|rl[oa]s?|l[oa]s?|d[oa]s?)?|delete|elimina\w*|irreversible|m[eé]dic[oa]s?|medicina|medicamento\w*|medical|salud|health|seguridad|security|credencial\w*|password|contrase[ñn]a)\b"
-# A declaration anywhere in the text: `risk: high`, `kind=review`, `riesgo: critical`, `tipo: code`. The first one wins.
-DECLARED_KIND = re.compile(r"\b(?:kind|tipo)\s*[:=]\s*(" + "|".join(k for k in KINDS if k != "unknown") + r")\b", re.I)
-DECLARED_RISK = re.compile(r"\b(?:risk|riesgo)\s*[:=]\s*(" + "|".join(RISKS) + r")\b", re.I)
+# A declaration in the head of the text (its first DECLARATION_LINES non-empty lines, where the orchestrator or the
+# user writes, never the material pasted below): `risk: high`, `kind=review`, `riesgo: alto`, `tipo: code`. The
+# value is a whole token (`risk: high-level` and `?risk=low` are not declarations). The first one wins.
+DECLARATION_LINES = 2
+SPANISH_RISK = {"bajo": "low", "medio": "medium", "alto": "high", "crítico": "critical", "critico": "critical"}
+_RISK_VALUES = "|".join(list(RISKS) + list(SPANISH_RISK))
+_KIND_VALUES = "|".join(k for k in KINDS if k != "unknown")
+DECLARED_KIND = re.compile(r"(?:^|[\s,;(\[])(?:kind|tipo)\s*[:=]\s*(" + _KIND_VALUES + r")(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
+DECLARED_RISK = re.compile(r"(?:^|[\s,;(\[])(?:risk|riesgo)\s*[:=]\s*(" + _RISK_VALUES + r")(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
 
 
 @dataclass(frozen=True)
@@ -45,12 +51,15 @@ class Classification:
 
 
 def declared(prompt: str) -> tuple[str | None, str | None]:
-    """Return the (kind, risk) the text declares (`kind: review`, `risk: high`, or `tipo:` / `riesgo:`), None
-    for each one it does not.
+    """Return the (kind, risk) the head of the text declares (`kind: review`, `risk: high`, or `tipo:` /
+    `riesgo: alto`), None for each one it does not. Only the first DECLARATION_LINES non-empty lines count,
+    so a declaration quoted in the material (a URL, a pasted report, an eval file) never sets the risk.
     """
-    kind = DECLARED_KIND.search(prompt)
-    risk = DECLARED_RISK.search(prompt)
-    return (kind.group(1).lower() if kind else None), (risk.group(1).lower() if risk else None)
+    head = "\n".join([line for line in prompt.splitlines() if line.strip()][:DECLARATION_LINES])
+    kind = DECLARED_KIND.search(head)
+    risk = DECLARED_RISK.search(head)
+    risk_value = risk.group(1).lower() if risk else None
+    return (kind.group(1).lower() if kind else None), (SPANISH_RISK.get(risk_value, risk_value) if risk_value else None)
 
 
 def classify_rules(prompt: str) -> Classification:
@@ -107,8 +116,7 @@ Ask who uses the answer and what happens when it is wrong:
   system, sent on, built upon.
 - high: a mistake costs money, a customer, a deployment, a legal or health consequence, or
   something that cannot be undone (deleting, sending, publishing under the person's name).
-- critical: high, and the mistake is hard to detect before it does its damage; or the text itself
-  says the task is critical.
+- critical: high, and the mistake is hard to detect before it does its damage.
 The wording does not set the risk: a text that mentions money, production or the word "critical"
 is not high risk for that; what the answer is used for is.
 
@@ -131,6 +139,9 @@ def classify_llm(client: ClaudeClient, prompt: str) -> Classification:
     if not isinstance(parsed, LlmClassification) or parsed.kind not in KINDS or parsed.risk not in RISKS:
         fallback = classify_rules(prompt)
         return Classification(fallback.kind, fallback.risk, f"llm unusable, rules: {fallback.reason}", cost)
-    return Classification(kind or parsed.kind, risk or parsed.risk,
-                          ("declared kind, " if kind else "") + ("declared risk, " if risk else "") + f"llm: {parsed.reason}",
+    llm_risk, note = parsed.risk, ""
+    if risk is None and llm_risk == "critical":  # critical is declared, never inferred: the floor is the caller's call
+        llm_risk, note = "high", " (critical is never inferred: high)"
+    return Classification(kind or parsed.kind, risk or llm_risk,
+                          ("declared kind, " if kind else "") + ("declared risk, " if risk else "") + f"llm: {parsed.reason}" + note,
                           cost)
