@@ -735,11 +735,11 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
     if off:
         print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router config --models`)")
     if external_models():
-        rows = [[spec.short, spec.provider, spec.id, "/".join(spec.efforts), spec.input, spec.output,
+        rows = [[spec.short, spec.provider, spec.id, spec.tier, "/".join(spec.efforts), spec.input, spec.output,
                  "yes" if spec.id in available_models() else "no"] for spec in external_models()]
         print("\nmodels from other providers (they judge; they work when `router config --models` lists them; "
-              "prices as you declared them; `router doctor` says whether each door opens)")
-        print(table(["name", "door", "model id", "efforts", "$/M in", "$/M out", "works"], rows))
+              "tier and prices as you declared them; `router doctor` says whether each door opens)")
+        print(table(["name", "door", "model id", "tier", "efforts", "$/M in", "$/M out", "works"], rows))
     return 0
 
 
@@ -768,7 +768,8 @@ def _cmd_config(args: argparse.Namespace) -> int:
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
         print(f"arbiter for a tribunal split: {cfg.get('arbiter') or 'by rule (the next model up from the judge)'}")
         print(f"calibration: {cfg.get('calibration') or 'none (the built-in tables decide)'}")
-        shown = ", ".join(f"{s.short}={s.provider}/{s.id}@{s.input:g}/{s.output:g}" for s in external_models()) or "none"
+        shown = ", ".join(f"{s.short}={s.provider}/{s.id}@{s.input:g}/{s.output:g}/{s.tier}"
+                          for s in external_models()) or "none"
         print(f"models from other providers: {shown}")
         print(f"Codex home for `codex` cells: {cfg.get('codex_home') or 'not set'}")
         print(f"(in {config_path()})")
@@ -779,7 +780,8 @@ def _cmd_config(args: argparse.Namespace) -> int:
         if spec is None:
             external.pop(name, None)
         else:
-            external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output}
+            external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output,
+                              "tier": spec.tier}
         path = write_config(external=external)
         print(f"models from other providers: {', '.join(external) or 'none'} (in {path})")
         load_external(read_config())
@@ -929,9 +931,10 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--arbiter", help="cell that settles a tribunal split, e.g. fable/low; `rule` goes back to the default")
     sg.add_argument("--calibration", help="the calibration that decides: an id from `router calibrate --apply`, or a "
                                           "file; `none` goes back to the built-in tables")
-    sg.add_argument("--external", action="append", metavar="NAME=PROVIDER/MODEL_ID@IN/OUT",
-                    help="declare a model of another provider with its API list prices in USD per million tokens, e.g. "
-                         "gpt=openai/gpt-5.5@5/30 or luna=codex/gpt-5.5@5/30 (doors: openai, codex, deepseek, xai, "
+    sg.add_argument("--external", action="append", metavar="NAME=PROVIDER/MODEL_ID@IN/OUT[/TIER]",
+                    help="declare a model of another provider with its API list prices in USD per million tokens and, "
+                         "after them, the tier you take it to be, 0 Haiku to 3 Fable (2 when omitted), e.g. "
+                         "gpt=openai/gpt-5.5@5/30 or luna=codex/gpt-5.5@5/30/1 (doors: openai, codex, deepseek, xai, "
                          "gemini); it judges, and works once --models lists it; NAME= removes it")
     sg.set_defaults(func=_cmd_config)
     return p

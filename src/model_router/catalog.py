@@ -21,9 +21,10 @@ NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT` and `load_external` registers them at start
 door: `openai`, `deepseek` and `xai` by API key, `codex` (ChatGPT through the Codex CLI) and `gemini`
 (Google through its CLI) by subscription; PROVIDER_FAMILY says which doors lead to the same company, so
 a judge and an arbiter can be kept on different ones. A declared model judges and arbitrates; it does
-the work too once `router config --models` lists it. Its tier is a fixed assumption (EXTERNAL_TIER)
-until a calibration measures it, its efforts are the ones its door accepts (PROVIDER_EFFORTS), and its
-cached tokens are priced at the input rate. Declare the API list price even when you pay by
+the work too once `router config --models` lists it. Its tier is the one declared (`/TIER`, 0 Haiku to 3
+Fable; EXTERNAL_TIER when omitted): an assumption that says where the ladder places it, until a
+calibration measures where it should start. Its efforts are the ones its door accepts (PROVIDER_EFFORTS),
+and its cached tokens are priced at the input rate. Declare the API list price even when you pay by
 subscription: the ledger prices every call at list price, so strategies stay comparable.
 """
 
@@ -41,9 +42,9 @@ PRICES_AS_OF = "2026-10-06"
 KNOWN_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "codex", "deepseek", "xai", "gemini")
 PROVIDER_FAMILY: dict[str, str] = {"anthropic": "anthropic", "openai": "openai", "codex": "openai", "deepseek": "deepseek",
                                    "xai": "xai", "gemini": "google"}  # which doors lead to the same company
-EXTERNAL_TIER = 2  # a declared model is assumed as capable as Opus until a calibration measures it
+EXTERNAL_TIER = 2  # the tier of a declared model whose declaration gives none: as capable as Opus
 TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}
-EXTERNAL_SYNTAX = re.compile(r"^([a-z][a-z0-9-]*)=(?:([a-z]+)/([^@\s]+)@([0-9.]+)/([0-9.]+))?$")
+EXTERNAL_SYNTAX = re.compile(r"^([a-z][a-z0-9-]*)=(?:([a-z]+)/([^@\s]+)@([0-9.]+)/([0-9.]+)(?:/([0-3]))?)?$")
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 # The efforts each door accepts: one cell per effort in the lattice, so a door without an effort setting gets one cell.
@@ -100,16 +101,17 @@ SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
 
 
 def parse_external(text: str) -> tuple[str, ModelSpec | None]:
-    """Parse one `router config --external` value, `NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT` (prices in USD per
-    million tokens), into the short name and its spec; `NAME=` alone means remove, and returns None.
+    """Parse one `router config --external` value, `NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT[/TIER]` (prices in
+    USD per million tokens; TIER 0 Haiku to 3 Fable, EXTERNAL_TIER when omitted), into the short name and its
+    spec; `NAME=` alone means remove, and returns None.
 
     Raises:
         ValueError: the syntax, the provider or the name is not acceptable.
     """
     m = EXTERNAL_SYNTAX.match(text.strip())
     if m is None:
-        raise ValueError(f"expected NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT (or NAME= to remove), got {text!r}")
-    name, provider, model_id, price_in, price_out = m.groups()
+        raise ValueError(f"expected NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT[/TIER] (TIER 0 to 3; NAME= removes), got {text!r}")
+    name, provider, model_id, price_in, price_out, tier = m.groups()
     if any(spec.short == name and spec.provider == "anthropic" for spec in MODELS.values()):
         raise ValueError(f"{name!r} is an Anthropic model; pick another short name")
     if provider is None:
@@ -119,7 +121,8 @@ def parse_external(text: str) -> tuple[str, ModelSpec | None]:
     cost_in, cost_out = float(price_in), float(price_out)
     efforts = PROVIDER_EFFORTS[provider]
     default = "medium" if "medium" in efforts else efforts[0]
-    return name, ModelSpec(model_id, name, EXTERNAL_TIER, cost_in, cost_out, cost_in, cost_in, default, False,
+    tier_n = int(tier) if tier else EXTERNAL_TIER
+    return name, ModelSpec(model_id, name, tier_n, cost_in, cost_out, cost_in, cost_in, default, False,
                            provider=provider, efforts=efforts)
 
 
@@ -136,6 +139,8 @@ def load_external(config: dict[str, Any]) -> list[str]:
         if not isinstance(entry, dict):
             continue
         declared_as = f"{name}={entry.get('provider')}/{entry.get('id')}@{entry.get('input')}/{entry.get('output')}"
+        if entry.get("tier") is not None:
+            declared_as += f"/{entry['tier']}"
         try:
             _, spec = parse_external(declared_as)
         except ValueError:

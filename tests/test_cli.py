@@ -133,13 +133,15 @@ def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monk
     try:
         assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19", "--judge", "deepseek/high"]) == 0
         cfg = json.loads((home / "config.json").read_text())
-        assert cfg["external"] == {"deepseek": {"provider": "deepseek", "id": "deepseek-reasoner", "input": 0.55, "output": 2.19}}
+        assert cfg["external"] == {"deepseek": {"provider": "deepseek", "id": "deepseek-reasoner", "input": 0.55,
+                                                "output": 2.19, "tier": 2}}
         assert cfg["judge"] == "deepseek/high"
         main(["config"])
         assert "models from other providers: deepseek=deepseek/deepseek-reasoner@0.55/2.19" in capsys.readouterr().out
         main(["cells"])
         out = capsys.readouterr().out
-        assert "models from other providers" in out and "deepseek  deepseek  deepseek-reasoner  medium" in out and "  no" in out
+        assert "models from other providers" in out and "  no" in out
+        assert re.search(r"deepseek\s+deepseek\s+deepseek-reasoner\s+2\s+medium", out)
         main(["doctor"])
         assert "deepseek (judges): deepseek deepseek-reasoner, DEEPSEEK_API_KEY missing" in capsys.readouterr().out
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
@@ -150,6 +152,10 @@ def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monk
         assert "verifier (tribunal): deepseek/high then fable/low" in out and "arbiter on a split: deepseek/xhigh" in out
         with pytest.raises(SystemExit, match="invalid value"):
             main(["config", "--external", "gpt=openai/x"])
+        assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1"]) == 0
+        assert json.loads((home / "config.json").read_text())["external"]["deepseek"]["tier"] == 1
+        main(["config"])
+        assert "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1" in capsys.readouterr().out
         assert main(["config", "--external", "deepseek="]) == 0
         assert json.loads((home / "config.json").read_text())["external"] == {}
     finally:

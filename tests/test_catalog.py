@@ -98,6 +98,11 @@ def test_declared_models_get_their_doors_efforts_and_family_and_work_only_when_l
     name, luna = parse_external("luna=codex/gpt-5.5@5/30")
     assert name == "luna" and luna is not None and (luna.provider, luna.family) == ("codex", "openai")
     assert luna.efforts == ("low", "medium", "high", "xhigh") and luna.default_effort == "medium"
+    assert luna.tier == 2  # Opus-class until the declaration says otherwise
+    _, weak = parse_external("weak=codex/gpt-6-luna@2.5/12.5/0")
+    assert weak is not None and weak.tier == 0
+    with pytest.raises(ValueError, match=r"\[/TIER\]"):
+        parse_external("weak=codex/gpt-6-luna@2.5/12.5/4")
     _, gem = parse_external("gem=gemini/gemini-3-pro@2/12")
     assert gem is not None and (gem.family, gem.efforts, gem.default_effort) == ("google", ("medium",), "medium")
     _, grok = parse_external("grok=xai/grok-4.7@2/6")
@@ -126,5 +131,21 @@ def test_declared_models_get_their_doors_efforts_and_family_and_work_only_when_l
         assert len(cells) == 25 and sum(c.spec.short == "luna" for c in cells) == 4
         assert sum(c.spec.short == "gem" for c in cells) == 1
         assert worker_cell(cell).label == "luna/high"
+    finally:
+        load_external({})
+
+
+def test_a_declared_tier_places_the_model_in_the_ladder(monkeypatch, tmp_path):
+    from model_router.catalog import load_external, parse_cell, worker_cell
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    declared = {"weak": {"provider": "codex", "id": "gpt-6-luna", "input": 2.5, "output": 12.5, "tier": 0},
+                "bad": {"provider": "codex", "id": "x", "input": 1, "output": 2, "tier": 9}}
+    assert load_external({"external": declared}) == ["weak"]  # a tier outside 0..3 does not load
+    try:
+        assert parse_cell("weak/medium").capability == 0.37  # Haiku-class, not Opus-class
+        assert worker_cell(parse_cell("haiku/low"), ["weak"]).label == "weak/low"  # it stands in for Haiku, not Opus
+        assert worker_cell(parse_cell("opus/high"), ["weak"]).label == "weak/high"  # the only model there is
     finally:
         load_external({})
