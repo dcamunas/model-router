@@ -50,11 +50,13 @@ from .catalog import (
 )
 from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError, Completion
+from .codex_models import Proposal
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
 from .paths import (
     ARBITER_ENV,
     CALIBRATION_ENV,
+    CODEX_HOME_ENV,
     CONFIG_DIR_ENV,
     JUDGE_ENV,
     MAIN_LEDGER,
@@ -688,7 +690,8 @@ def _external_check(spec: ModelSpec) -> tuple[bool, str]:
     head = f"{spec.short} ({role}): {spec.provider} {spec.id}, "
     if provider.transport == "api":
         has_key = bool(os.environ.get(provider.key_env))
-        return has_key, head + (f"{provider.key_env} set" if has_key else f"{provider.key_env} missing (export it)")
+        return has_key, head + (f"{provider.key_env} set" if has_key else f"{provider.key_env} missing (export it)") \
+            + _price_suffix(spec)
     binary = shutil.which(spec.provider)
     if binary is None:
         return False, head + f"the `{spec.provider}` executable is not on the PATH"
@@ -699,9 +702,23 @@ def _external_check(spec: ModelSpec) -> tuple[bool, str]:
         home_dir, source = resolve_codex_home()
     except ClientUnavailableError as exc:
         return False, head + str(exc)
+    from .codex_models import listed_models
+
     signed = (home_dir / "auth.json").exists()
     state = "signed in" if signed else f"not signed in: run `CODEX_HOME={home_dir} codex login`"
-    return signed, head + f"home {home_dir} (via {source}), {state}"
+    known = listed_models(home_dir, include_hidden=True)
+    if signed and known is not None and spec.id not in known:
+        return False, head + f"home {home_dir} (via {source}), signed in, but {spec.id} is not among the models it " \
+                             f"knows (Codex refreshes that list when it runs; `router config --codex-models` shows it)"
+    return signed, head + f"home {home_dir} (via {source}), {state}" + _price_suffix(spec)
+
+
+def _price_suffix(spec: ModelSpec) -> str:
+    """Return `; <note>` when a declared OpenAI model's price differs from the list price, else nothing."""
+    from .codex_models import price_note
+
+    note = price_note(spec.id, spec.input, spec.output) if spec.provider in ("codex", "openai") else None
+    return f"; {note}" if note else ""
 
 
 def _cmd_feedback(args: argparse.Namespace) -> int:
@@ -804,7 +821,8 @@ def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
     if (args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None
-            and args.calibration is None and args.codex_home is None and not args.external):
+            and args.calibration is None and args.codex_home is None and not args.external
+            and args.codex_models is None):
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
         anthropic = [m.short for m in MODELS.values() if m.provider == "anthropic"]
@@ -819,17 +837,12 @@ def _cmd_config(args: argparse.Namespace) -> int:
         print(f"(in {config_path()})")
         return 0
     for text in args.external or []:
-        name, spec = parse_external(text)
-        external = dict(read_config().get("external") or {})
-        if spec is None:
-            external.pop(name, None)
-            _forget_external(name)
-        else:
-            external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output,
-                              "tier": spec.tier}
-        path = write_config(external=external)
-        print(f"models from other providers: {', '.join(external) or 'none'} (in {path})")
-        load_external(read_config())
+        _declare_external(text)
+    codex_home = args.codex_home.expanduser().resolve() if args.codex_home is not None else None
+    if codex_home is not None:
+        remember(None, None, codex_home=codex_home)  # saved now: a later bad --models must not lose it
+    if codex_home is not None or args.codex_models is not None:
+        _codex_models(args.codex_models or "", codex_home)  # before --models and --judge, which may name them
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
     judge = parse_cell(args.judge).label if args.judge is not None else None
@@ -841,10 +854,92 @@ def _cmd_config(args: argparse.Namespace) -> int:
         calibration = "" if args.calibration.strip().lower() in NO_CALIBRATION else args.calibration.strip()
         if calibration:
             load_calibration(calibration)  # OSError or ValueError when it cannot be used; main() makes them one line
-    codex_home = args.codex_home.expanduser().resolve() if args.codex_home is not None else None
     remember(profile, names, reset_models=args.models is not None and names is None, judge=judge, arbiter=arbiter,
-             calibration=calibration, codex_home=codex_home)
+             calibration=calibration)
     return 0
+
+
+def _declare_external(text: str) -> None:
+    """Apply one `--external` value to config.json (declare, replace or, with `NAME=`, remove) and say so."""
+    name, spec = parse_external(text)
+    external = dict(read_config().get("external") or {})
+    if spec is None:
+        external.pop(name, None)
+        _forget_external(name)
+    else:
+        external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output,
+                          "tier": spec.tier}
+    path = write_config(external=external)
+    print(f"models from other providers: {', '.join(external) or 'none'} (in {path})")
+    load_external(read_config())
+
+
+def _declare_proposals(proposals: list[Proposal], names: list[str]) -> None:
+    """Declare the proposals named in `names`, all or none: a name the home does not list, or a model with no
+    known price, stops the command before anything is written.
+    """
+    by_name = {p.name: p for p in proposals}
+    unknown = [n for n in names if n not in by_name]
+    if unknown:
+        raise SystemExit(f"not in this home's list: {', '.join(unknown)}; it has {', '.join(by_name)}")
+    unpriced = [n for n in names if by_name[n].declared_as is None and by_name[n].declaration is None]
+    if unpriced:
+        raise SystemExit(f"no list price known here for {', '.join(unpriced)}; declare it by hand with --external "
+                         "(nothing was declared)")
+    for n in dict.fromkeys(names):
+        proposal = by_name[n]
+        if proposal.declared_as is not None:
+            print(f"{n}: already declared ({_door_note(proposal)})")
+        elif proposal.declaration is not None:
+            _declare_external(proposal.declaration)
+
+
+def _door_note(proposal: Proposal) -> str:
+    """Say through which door a declared model runs: through the Codex home, or another door that blocks it."""
+    if proposal.declared_door == "codex":
+        return "through this Codex home"
+    return f"through the {proposal.declared_door} door, not this Codex home; `--external {proposal.declared_as}=` frees it"
+
+
+def _codex_models(wanted: str, home_dir: Path | None = None) -> None:
+    """Print what the Codex home can run, as ready declarations; with `wanted` (comma-separated names from that
+    list), declare those. `home_dir` is the home just given; otherwise the one `codex` cells use. Nothing is
+    declared that was not named.
+    """
+    from .codex_models import OPENAI_PRICES_DATE, listed_models, propose
+    from .providers import resolve_codex_home
+
+    if home_dir is None:
+        try:
+            home_dir, _ = resolve_codex_home()
+        except ClientUnavailableError as exc:
+            raise SystemExit(str(exc)) from exc
+    elif os.environ.get(CODEX_HOME_ENV):
+        print(f"note: {CODEX_HOME_ENV} is set, so `codex` cells run on {os.environ[CODEX_HOME_ENV]}, not on {home_dir}")
+    ids = listed_models(home_dir)
+    if ids is None:
+        print(f"no model list in {home_dir} yet: run `CODEX_HOME={home_dir} codex` once and ask again "
+              "(or declare by hand with --external)")
+        return
+    proposals = propose(ids, {s.id: (s.short, s.provider) for s in external_models()})
+    names = [n.strip() for n in wanted.split(",") if n.strip()]
+    if names:
+        _declare_proposals(proposals, names)
+        return
+    print(f"models this Codex home can run ({home_dir}):")
+    for proposal in proposals:
+        if proposal.declared_as is not None:
+            what = f"declared as {proposal.declared_as}, {_door_note(proposal)}"
+        elif proposal.declaration is not None:
+            what = f"--external {proposal.declaration}"
+        else:
+            what = "no list price known here: declare it by hand with --external"
+        print(f"  {proposal.name:<10} {proposal.model_id:<16} {what}")
+    print(f"prices: OpenAI's list as of {OPENAI_PRICES_DATE}; tiers (after the last /): an assumption, "
+          "`router calibrate` measures them")
+    if any(p.declared_as is None for p in proposals):
+        print("the ones not declared stay out until you name them: `router config --codex-models NAME,NAME`; "
+              "they judge, and work once --models lists them")
 
 
 def _add_profile_args(p: argparse.ArgumentParser) -> None:
@@ -982,6 +1077,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "after them, the tier you take it to be, 0 Haiku to 3 Fable (2 when omitted), e.g. "
                          "gpt=openai/gpt-5.5@5/30 or luna=codex/gpt-5.5@5/30/1 (doors: openai, codex, deepseek, xai, "
                          "gemini); it judges, and works once --models lists it; NAME= removes it")
+    sg.add_argument("--codex-models", nargs="?", const="", metavar="NAME,NAME",
+                    help="list the models the Codex home can run, with OpenAI's list prices and a default tier; "
+                         "with names, declare those")
     sg.set_defaults(func=_cmd_config)
     return p
 

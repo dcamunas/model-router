@@ -614,6 +614,62 @@ def test_config_declares_a_codex_door_and_doctor_says_whether_it_opens(home, mon
         load_external({})
 
 
+def test_config_lists_what_a_codex_home_can_run_and_declares_only_what_is_named(home, monkeypatch, capsys):
+    import json
+
+    from model_router.catalog import load_external
+
+    monkeypatch.delenv("MODEL_ROUTER_CODEX_HOME", raising=False)
+    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/opt/bin/{name}")
+    codex_home = home / "codex-work"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text("{}")
+    try:
+        assert main(["config", "--codex-home", str(codex_home)]) == 0
+        assert "no model list in" in capsys.readouterr().out  # Codex has not run with this home yet
+        models = [{"slug": s, "visibility": "list"} for s in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")]
+        (codex_home / "models_cache.json").write_text(json.dumps({"models": models}))
+        assert main(["config", "--codex-models"]) == 0
+        out = capsys.readouterr().out
+        assert "--external sol=codex/gpt-6-sol@2/10/1" in out and "astra=codex/gpt-6-astra@10/50/3" in out
+        assert "stay out until you name them" in out and not cli.external_models()
+        assert main(["config", "--codex-models", "sol,luna", "--models", "haiku,sonnet,opus,sol", "--judge", "luna/high"]) == 0
+        capsys.readouterr()  # declared first, so --models and --judge in the same command may name them
+        assert sorted(s.short for s in cli.external_models()) == ["luna", "sol"]  # astra stays out: it was not named
+        assert json.loads((home / "config.json").read_text())["judge"] == "luna/high"
+        assert main(["config", "--models", "all", "--judge", "opus/xhigh"]) == 0
+        assert main(["config", "--codex-models"]) == 0
+        assert "declared as sol, through this Codex home" in capsys.readouterr().out
+        with pytest.raises(SystemExit, match="not in this home's list: nova"):
+            main(["config", "--codex-models", "nova"])
+        models.append({"slug": "gpt-7-nova", "visibility": "list"})
+        (codex_home / "models_cache.json").write_text(json.dumps({"models": models}))
+        with pytest.raises(SystemExit, match="nothing was declared"):
+            main(["config", "--codex-models", "astra,nova"])  # nova has no list price: astra is not written either
+        assert "astra" not in {s.short for s in cli.external_models()}
+        assert main(["config", "--external", "gpt=openai/gpt-6-astra@10/50/3"]) == 0
+        assert main(["config", "--codex-models"]) == 0
+        assert "declared as gpt, through the openai door, not this Codex home" in capsys.readouterr().out
+        assert main(["config", "--external", "gpt="]) == 0
+        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "sol"))
+        assert ok and "signed in" in line and "OpenAI lists" not in line
+        assert main(["config", "--external", "sol=codex/gpt-6-sol@5/30/1"]) == 0
+        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "sol"))
+        assert ok and "declared at 5/30, OpenAI lists 2/10" in line  # a price typed by hand that is not the list one
+        assert main(["config", "--external", "old=codex/gpt-6.1-sol@2/10/1"]) == 0
+        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "old"))
+        assert not ok and "gpt-6.1-sol is not among the models it knows" in line
+        other = home / "codex-other"
+        other.mkdir()
+        monkeypatch.setenv("MODEL_ROUTER_CODEX_HOME", str(home / "elsewhere"))
+        assert main(["config", "--codex-home", str(other)]) == 0
+        out = capsys.readouterr().out
+        assert f"no model list in {other}" in out and "MODEL_ROUTER_CODEX_HOME is set" in out  # the home just given
+    finally:
+        load_external({})
+
+
 def test_every_subcommand_prints_its_help(capsys):
     import pytest as _pytest
 

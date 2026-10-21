@@ -2,6 +2,13 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.12.0] - 2026-10-22
+
+### Added
+
+- `router config --codex-models` lists the models the configured Codex home can run, read from the home's own model list (`models_cache.json`, which Codex writes), each as a ready declaration with OpenAI's list price as of 2026-10-22 and a tier by family (Luna 0, Sol and Terra 1, Astra 3); `--codex-models sol,luna` declares those and nothing else, all or none, before `--models` and `--judge` in the same command so they may name them; a model already declared through another door is shown as such. `--codex-home` prints the same list when it sets the home. The quota is not read: no stable interface carries it, which is why nothing is declared without being named. A model with no list price known here is shown and left to `--external`.
+- `router doctor` says when a declared OpenAI model's price is not the list one, and fails a `codex` model that is not among the models its home knows (hidden ones included; a home with no list yet is not judged).
+
 ## [0.11.1] - 2026-10-21
 
 ### Added

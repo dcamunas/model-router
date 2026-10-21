@@ -97,7 +97,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.11.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.12.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -108,7 +108,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.11.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.12.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -405,16 +405,23 @@ may. Five doors: `openai`, `deepseek` and `xai` by API key; `codex` (ChatGPT thr
 and `gemini` (Google through its CLI) by subscription, as `claude -p` does for Anthropic.
 
 ```bash
-router config --external gpt=openai/gpt-5.5@5/30        # NAME=DOOR/MODEL_ID@$ per M in/$ per M out
-router config --external luna=codex/gpt-5.5@5/30/1      # the same model through your ChatGPT account; /1 = its tier, 0 Haiku to 3 Fable
-router config --codex-home ~/.codex-personal             # a Codex home signed in with that account; never ~/.codex by accident
-router config --judge gpt/high --arbiter deepseek/high   # after declaring deepseek the same way
+router config --codex-home ~/.codex-personal             # a Codex home signed in with your ChatGPT account; never ~/.codex by accident
+router config --codex-models                             # what that account can run, with OpenAI's list price and a default tier
+router config --codex-models sol,luna                    # declare those two; the rest stay out
+router config --external gpt=openai/gpt-5.5@5/30        # by hand: NAME=DOOR/MODEL_ID@$ per M in/$ per M out[/TIER]
+router config --judge sol/high --arbiter deepseek/high   # after declaring deepseek the same way
 router config --models haiku,sonnet,opus,fable,luna      # now luna may take tasks too; without this it only judges
 router doctor                                            # per model: key set, home signed in; --live makes one call each
 ```
 
-The ids and the prices are yours to type, on purpose: they change, and a wrong number in the ledger
-is worse than none. Declare the API list price even when you pay by subscription: the ledger prices
+For a Codex home, the router reads from the home itself which models the account can run, and
+proposes each one with OpenAI's list price on a stated date and a tier by family (Luna 0, Sol and
+Terra 1, Astra 3). Nothing is declared until you name it. Being able to reach a model is not the
+same as wanting to spend it: a small quota shared by a whole workspace is not written anywhere, and
+the router does not try to read quotas. For the other doors the ids and prices are yours to type;
+they change, and a wrong number in the ledger is worse than none. `router doctor` says when a
+declared OpenAI price differs from the list one, and when a Codex home no longer lists a declared
+model. Declare the API list price even when you pay by subscription: the ledger prices
 every call at list price, so strategies stay comparable. A declared model enters the lattice with the
 efforts its door accepts (one cell for Gemini, four for Codex) and the tier you give it (`/TIER`, 0 Haiku
 to 3 Fable; Opus, 2, when omitted): an assumption that says where the ladder escalates to it, until
