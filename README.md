@@ -1,25 +1,58 @@
 # model-router
 
-A model router for Claude: given a task, it picks a model and an effort level, runs the task,
-verifies the answer according to the risk, escalates when the answer fails, and writes down what
-every solved task cost. You can use it from the command line, as a Python library and inside Claude
-Code, where a hook picks model and effort for every subagent launched without one.
-
-![A critical task on trial: the task reaches a worker on opus/medium, two judges read the answer blind to each other and split, the arbiter sides with the fail, a second attempt on fable/low passes, and the ledger keeps every verdict with its cost](docs/showcase/trial.gif)
+A model router for Claude. Give it a task and it picks a model and an effort level, runs the
+task, checks the answer as hard as the risk asks, moves to a stronger model when the answer fails,
+and writes down what every solved task cost. It works from the command line, as a Python library
+and inside Claude Code, where a hook picks model and effort for every subagent launched without one.
 
 Status: experimental. The capability of each cell is a stated assumption, not a measurement; the
-ledger and the feedback store exist to replace those assumptions with real verdicts (see
+ledger and `router calibrate` exist to replace those assumptions with real verdicts (see
 "Assumptions").
 
-The idea comes from a reel by @donimas ("router picks model + effort · verify by risk"). Four
-things are different here, and each one has its reason in the table.
+## How it works
 
-## How it differs from the reel
+Four steps, for every task:
+
+1. **Classify.** A kind (extract, code, write, review, analysis...) and a risk (low to critical).
+   You declare them, or rules guess them from the text.
+2. **Start cheap.** A table by kind and risk names the first cell, a model at an effort:
+   `haiku/medium` for a low-risk extraction, `opus/medium` for a high-risk review. Risk floors
+   keep critical work off the cheap cells.
+3. **Verify by risk.** A programmatic checker first, when the task has one: free, and final when
+   it fails. From high risk up, a judge on another model reads the answer in a fresh context. Low
+   and medium risk go unverified.
+4. **Escalate on a fail.** The next cell up the ladder gets the task again, with the reason it
+   failed. Every attempt, verdict and cost goes to the ledger, and `router calibrate` turns those
+   verdicts into a better start table.
+
+```mermaid
+flowchart LR
+  T[task: kind + risk] --> P[plan: start cell, ladder, verification, budget]
+  P --> A[attempt on the cell]
+  A --> C{checker}
+  C -- fails --> N[next cell up the ladder]
+  C -- passes or none --> J{judge}
+  J -- pass --> L[(ledger)]
+  J -- fail --> N
+  N --> A
+  N -- ladder or budget exhausted --> U[unsolved]
+```
+
+![router run on a critical writing task: the answer, one attempt on opus/medium judged by a tribunal of two, status solved](docs/showcase/router-run.gif)
+
+That is the whole router. The tribunal (two judges blind to each other and an arbiter when they
+split) is one verification mode on top of it: it runs only at critical risk, on tasks no checker
+can decide, and it has its own section further down.
+
+## Where the idea comes from
+
+A reel by @donimas ("router picks model + effort · verify by risk"). Four things are different
+here, and each one has its reason in the table.
 
 | Reel | Here | Why |
 |---|---|---|
 | A ladder of models: Sonnet ×1, then Opus ×2, then Fable ×5 | A lattice of (model, effort) cells sorted by cost, with an estimated capability per cell | Anthropic's cost guidance says Fable at `low` often costs less per solved task than Opus at `high`. A ladder of models never tries that cell; the lattice does. |
-| Verify "by risk" | Verify by risk with an order of trust: a programmatic checker first (free, and final when it fails), then a `light` judge (the nearest other model at low effort, fresh context), then a `full` judge (one fixed cell, `opus/xhigh` by default, on another model than the worker); at critical risk, when no checker can decide, a `tribunal`: both judges blind to each other and an arbiter if they split, with a scoreboard of who was right | A code checker beats any judge. The `full` judge is a blind cross-check between models, and the tribunal is what is left of an LLM council once you drop the parts that do not pay. |
+| Verify "by risk" | An order of trust: a programmatic checker first (free, and final when it fails), then a judge on another model than the worker; at critical risk, when no checker can decide, a tribunal of two blind judges and an arbiter, with a scoreboard of who was right | A code checker beats any judge. A judge on another model is a blind cross-check, and the tribunal is what is left of an LLM council once you drop the parts that do not pay. |
 | "Feedback" | First-attempt pass rate per (kind, cell), kept apart from escalated attempts; it moves the start cell once there are 10 verdicts or more; a human can override it with `router feedback` | Escalated attempts only see the tasks the cheap cell already failed. Mixing them inflates the failure rate of the expensive cell. |
 | "Simulated workload · real prices" | The same, but the simulation states its assumptions, includes the hard tail and the judge's false passes, and adds the honest cell the reel leaves out: Fable at low | A router that is never compared with "the best cheap model" proves nothing. |
 
@@ -32,21 +65,6 @@ ranks them. This is not one of those. Nothing is trained: the start cell comes f
 and a cell is model and effort inside one provider. The difference is what happens after the answer: a checker
 or a judge verifies it, a failure climbs the ladder, and every verdict feeds the table. If you want a learned
 router across providers, take one of those; this one picks the effort inside Claude Code and verifies by risk.
-
-![router run on a critical writing task: the answer, one attempt on opus/medium judged by a tribunal of two, status solved](docs/showcase/router-run.gif)
-
-```mermaid
-flowchart LR
-  T[task: kind + risk] --> P[plan: start cell, ladder, verification, budget]
-  P --> A[attempt on the cell]
-  A --> C{checker}
-  C -- fails --> N[next cell up the ladder]
-  C -- passes or none --> J{judge or tribunal}
-  J -- pass --> L[(ledger)]
-  J -- fail --> N
-  N --> A
-  N -- ladder or budget exhausted --> U[unsolved]
-```
 
 ## Install
 
@@ -79,7 +97,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.11.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.11.1
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -90,7 +108,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.11.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.11.1
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -267,7 +285,7 @@ With models from other providers, register them and wrap the client: `load_exter
 `complete(cell, prompt=..., ...)`, so it can be tested without a network
 (`model_router.testing.FakeClient`).
 
-## How it decides
+## How it decides, in detail
 
 1. Kind and risk. You pass them (`--kind`, `--risk`), or the first two lines of the text declare them
    (`kind: review, risk: high`; also `tipo:` and `riesgo: alto`; a value ends the line or is followed
@@ -309,9 +327,14 @@ With models from other providers, register them and wrap the client: `load_exter
 7. Escalation. After a verified fail, the next attempt's prompt carries the reason, so the next cell
    does not repeat the mistake; `router stats` counts the retries that repeat it anyway.
 
-## Tribunal: two judges and an arbiter, not a council
+## Extra: the tribunal, for critical risk only
 
-The figure at the top of this README walks through one case: a split, the arbiter, a retry on the next cell, the ledger.
+Everything above runs without this section. At critical risk, when a writing, analysis or review
+task has no checker, the router swaps the single judge for two, blind to each other, and an arbiter
+that settles a split. One case, start to finish: a split, the arbiter, a retry on the next cell,
+the ledger.
+
+![A critical task on trial: the task reaches a worker on opus/medium, two judges read the answer blind to each other and split, the arbiter sides with the fail, a second attempt on fable/low passes, and the ledger keeps every verdict with its cost](docs/showcase/trial.gif)
 
 ```mermaid
 flowchart LR
@@ -336,18 +359,16 @@ Who judges is a fixed choice, not a climb up the lattice. `full` uses one judge 
 unless `router config --judge` or `MODEL_ROUTER_JUDGE` say otherwise, in a fresh context. When the
 worker is already on that model the judge moves to the next model up at low effort (Fable at low
 for an Opus worker), or to the model below when there is nothing above, so the check stays a
-cross-check between models. No judge thinks above `xhigh`; a judge at `high` writes about 60 %
-less thinking than one at `xhigh`, and `router config --judge opus/high` is the cheaper setting
-when verification is most of the bill. Verifying is easier than producing, so
-the judge does not have to outrank the worker; it has to be independent and good enough. The
-earlier rule, the cheapest cell clearly more capable than the worker, put Fable at xhigh and max in
-the judge's seat for Fable workers, and one verdict cost $0.42 in the first real bench. `light` is
-the nearest other model at low effort, the tier above before the one below; in a tribunal it also
-avoids the full judge's model, so that no two of worker, judge A and judge B share a model when the
-available models allow it. Until 0.11.0 `light` was the worker's own cell in a fresh context: on a
-private eval of 28 real tasks, Haiku and Sonnet passed themselves on 89 % and 93 % of first attempts
-and an Opus judge passed 64 % and 68 % of the same answers, for word limits broken, formats ignored
-and facts invented. A model does not see its own blind spots in a fresh context either.
+cross-check between models. No judge thinks above `xhigh`, and `router config --judge opus/high`
+is the cheaper setting when verification is most of the bill: a judge at `high` writes about 60 %
+less thinking than one at `xhigh`. Verifying is easier than producing, so the judge does not have
+to outrank the worker; it has to be independent and good enough. `light` is the nearest other model
+at low effort, the tier above before the one below; in a tribunal it also avoids the full judge's
+model, so that no two of worker, judge A and judge B share a model when the available models allow
+it. Until 0.11.0 `light` was the worker's own cell in a fresh context. On a private eval of 28 real
+tasks, Haiku and Sonnet passed themselves on 89 % and 93 % of first attempts; an Opus judge passed
+64 % and 68 % of the same answers, for word limits broken, formats ignored and facts invented. A
+model does not see its own blind spots in a fresh context either.
 
 The `tribunal` mode asks those two judges, always, each blind to the other. If they agree, that is
 the verdict. If they split, an arbiter cell reads the task, the answer and both reasoned verdicts
