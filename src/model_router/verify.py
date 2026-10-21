@@ -1,6 +1,6 @@
 """Verification by risk. Order of trust: the task's programmatic checker (free, authoritative when
-it fails), then a judge model with a structured verdict. `light` uses the worker's own cell in a
-fresh context; `full` uses the configured judge cell on another model than the worker, a blind
+it fails), then a judge model with a structured verdict. `light` uses the nearest other model at low
+effort in a fresh context; `full` uses the configured judge cell on another model than the worker, a blind
 cross-check in a fresh context; `panel` asks those two judges, cheapest first, and passes only when
 both pass, skipping the second when the first fails; `tribunal` asks both, blind to each other, and
 when they split an arbiter cell reads the task, the answer and both reasoned verdicts and decides.

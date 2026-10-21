@@ -58,12 +58,15 @@ def test_feedback_demotes_below_the_break_even(tmp_path):
     assert plan.start.label == "fable/low" and any("threshold" in r for r in plan.rationale)
 
 
-def test_light_verifier_is_the_workers_own_cell_capped_at_xhigh():
+def test_light_verifier_is_the_nearest_other_model_at_low_effort(monkeypatch):
     cells = lattice()
     light = choose_verifier(parse_cell("haiku/medium"), "light", cells)
-    assert light is not None and light.label == "haiku/medium"
+    assert light is not None and light.label == "sonnet/low"  # the tier above first
     light = choose_verifier(parse_cell("fable/max"), "light", cells)
-    assert light is not None and light.label == "fable/xhigh"
+    assert light is not None and light.label == "opus/low"  # nothing above Fable: the tier below
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
+    light = choose_verifier(parse_cell("opus/max"), "light", lattice())
+    assert light is not None and light.label == "opus/xhigh"  # one model only: its own cell, effort capped
 
 
 def test_full_verifier_is_the_fixed_judge_on_another_model_than_the_worker():
@@ -107,15 +110,17 @@ def test_judge_on_a_single_model_falls_back_to_the_model_below_or_another_cell(m
     assert choose_verifier(parse_cell("opus/xhigh"), "full", cells) == parse_cell("opus/high")
 
 
-def test_panel_pairs_the_workers_fresh_context_with_the_fixed_judge():
+def test_panel_pairs_the_fixed_judge_with_a_light_judge_on_a_third_model():
     cells = lattice()
     panel = choose_panel(parse_cell("opus/high"), cells)
-    assert [c.label for c in panel] == ["opus/high", "fable/low"]  # cheapest first
+    assert [c.label for c in panel] == ["sonnet/low", "fable/low"]  # cheapest first; Fable is the full judge here
     panel = choose_panel(parse_cell("sonnet/medium"), cells)
-    assert [c.label for c in panel] == ["sonnet/medium", "opus/xhigh"]
+    assert [c.label for c in panel] == ["opus/xhigh", "fable/low"]  # Opus is the full judge: the light one skips it
     panel = choose_panel(parse_cell("fable/max"), cells)
-    assert [c.label for c in panel] == ["opus/xhigh", "fable/xhigh"]  # nobody judges above xhigh
-    assert len({c.model for c in panel}) == 2
+    assert [c.label for c in panel] == ["sonnet/low", "opus/xhigh"]
+    for worker in ("haiku/low", "sonnet/medium", "opus/high", "fable/max"):
+        panel = choose_panel(parse_cell(worker), cells)
+        assert len({c.model for c in panel} | {parse_cell(worker).model}) == 3  # no two of the three share a model
 
 
 def test_panel_with_one_model_uses_two_cells_and_degrades_to_one_at_the_top(monkeypatch):
@@ -147,14 +152,14 @@ def test_tribunal_is_automatic_at_critical_risk_for_judgement_kinds_without_chec
 def test_arbiter_is_the_next_model_up_from_the_judge_else_one_effort_up(monkeypatch):
     monkeypatch.delenv("MODEL_ROUTER_ARBITER", raising=False)
     cells = lattice()
-    # judges sonnet/medium + opus/xhigh: the model above the judge, at low
-    assert choose_arbiter(parse_cell("sonnet/medium"), cells) == parse_cell("fable/low")
+    # judges fable/low + opus/xhigh: fable/low and opus/xhigh are taken, so the light judge's model one effort up
+    assert choose_arbiter(parse_cell("sonnet/medium"), cells) == parse_cell("fable/medium")
     # judges opus/medium + fable/low: nothing above fable, so the judge one effort up
     assert choose_arbiter(parse_cell("opus/medium"), cells) == parse_cell("fable/medium")
-    # judges fable/low + opus/xhigh: fable/low and opus/xhigh are taken, so the worker's model one effort up
+    # judges sonnet/low + opus/xhigh: nothing above Fable and opus/xhigh is taken, so the worker one effort up
     assert choose_arbiter(parse_cell("fable/low"), cells) == parse_cell("fable/medium")
-    # judges sonnet/medium + haiku/xhigh (a judge below the worker): the model above both, not the worker's own at low
-    assert choose_arbiter(parse_cell("sonnet/medium"), cells, judge=parse_cell("haiku/xhigh")) == parse_cell("opus/low")
+    # judges opus/low + haiku/xhigh (a judge below the worker): the next model above both, never the worker's own
+    assert choose_arbiter(parse_cell("sonnet/medium"), cells, judge=parse_cell("haiku/xhigh")) == parse_cell("fable/low")
     # a configured arbiter wins unless it is one of the judges
     assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("sonnet/max")) == parse_cell("sonnet/xhigh")
     assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("fable/low")) == parse_cell("fable/medium")
@@ -185,7 +190,7 @@ def test_external_models_judge_and_arbitrate_but_never_route(monkeypatch, tmp_pa
         assert [s.short for s in external_models()] == ["gpt"]
         policy = Policy(judge=gpt)
         worker = parse_cell("fable/low")
-        assert choose_panel(worker, policy.cells, judge=gpt) == [gpt, worker]  # gpt/high judges for less than fable/low
+        assert choose_panel(worker, policy.cells, judge=gpt) == [parse_cell("opus/low"), gpt]  # cheapest first
         # gpt's door tops out at high, so the judge one effort up is the judge itself: the worker one effort up
         assert policy.arbiter_for(worker) == parse_cell("fable/medium")
         assert policy.attempt_cost(worker, "full", 2000, 1500) > worker.expected_cost(2000, 1500)
@@ -261,8 +266,8 @@ def test_a_declared_model_works_only_when_listed_and_the_plan_says_so(monkeypatc
         assert plan.start.label == "luna/medium" and plan.ladder[0].label == "luna/medium"
         full = policy.verifier_for(plan.start, "full")
         assert full is not None and full.label == "opus/xhigh"  # another model judges the ChatGPT worker
-        assert set(policy.judges_for(plan.start, "tribunal")) == {parse_cell("luna/medium"), parse_cell("opus/xhigh")}
-        assert policy.arbiter_for(plan.start) == parse_cell("fable/low")  # not luna/high: the worker's own company
+        assert set(policy.judges_for(plan.start, "tribunal")) == {parse_cell("fable/low"), parse_cell("opus/xhigh")}
+        assert policy.arbiter_for(plan.start) == parse_cell("fable/medium")  # not luna/high: the worker's own company
     finally:
         load_external({})
 
@@ -284,8 +289,8 @@ def test_judge_and_arbiter_cells_take_an_effort_their_door_accepts_and_never_dep
         judge = parse_cell("opus/xhigh")
         for _ in range(20):
             assert choose_verifier(parse_cell("opus/high"), "full", cells, judge=judge) == parse_cell("sonnet/xhigh")
-        # deepseek has one effort, so "the judge one effort up" is the judge: the arbiter is the worker one effort up
-        assert choose_arbiter(parse_cell("sonnet/medium"), cells, judge=parse_cell("ds/medium")) == parse_cell("opus/low")
+        # deepseek has one effort, so "the judge one effort up" is the judge; opus/low is the light judge: it goes one up
+        assert choose_arbiter(parse_cell("sonnet/medium"), cells, judge=parse_cell("ds/medium")) == parse_cell("opus/medium")
         assert choose_arbiter(parse_cell("opus/medium"), cells, judge=parse_cell("ds/medium")) == parse_cell("opus/high")
         # a codex judge at xhigh: one effort up is capped there, so again the worker one effort up
         assert choose_arbiter(parse_cell("opus/medium"), cells, judge=parse_cell("luna/xhigh")) == parse_cell("opus/high")

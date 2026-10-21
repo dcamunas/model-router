@@ -19,7 +19,7 @@ things are different here, and each one has its reason in the table.
 | Reel | Here | Why |
 |---|---|---|
 | A ladder of models: Sonnet ×1, then Opus ×2, then Fable ×5 | A lattice of (model, effort) cells sorted by cost, with an estimated capability per cell | Anthropic's cost guidance says Fable at `low` often costs less per solved task than Opus at `high`. A ladder of models never tries that cell; the lattice does. |
-| Verify "by risk" | Verify by risk with an order of trust: a programmatic checker first (free, and final when it fails), then a `light` judge (the worker's own cell, fresh context), then a `full` judge (one fixed cell, `opus/xhigh` by default, on another model than the worker); at critical risk, when no checker can decide, a `tribunal`: both judges blind to each other and an arbiter if they split, with a scoreboard of who was right | A code checker beats any judge. The `full` judge is a blind cross-check between models, and the tribunal is what is left of an LLM council once you drop the parts that do not pay. |
+| Verify "by risk" | Verify by risk with an order of trust: a programmatic checker first (free, and final when it fails), then a `light` judge (the nearest other model at low effort, fresh context), then a `full` judge (one fixed cell, `opus/xhigh` by default, on another model than the worker); at critical risk, when no checker can decide, a `tribunal`: both judges blind to each other and an arbiter if they split, with a scoreboard of who was right | A code checker beats any judge. The `full` judge is a blind cross-check between models, and the tribunal is what is left of an LLM council once you drop the parts that do not pay. |
 | "Feedback" | First-attempt pass rate per (kind, cell), kept apart from escalated attempts; it moves the start cell once there are 10 verdicts or more; a human can override it with `router feedback` | Escalated attempts only see the tasks the cheap cell already failed. Mixing them inflates the failure rate of the expensive cell. |
 | "Simulated workload · real prices" | The same, but the simulation states its assumptions, includes the hard tail and the judge's false passes, and adds the honest cell the reel leaves out: Fable at low | A router that is never compared with "the best cheap model" proves nothing. |
 
@@ -136,7 +136,7 @@ router plan "Review this SQL migration script before it goes to production"
 #     - table review x high -> opus/medium
 #     - ladder: opus/medium -> fable/low -> fable/xhigh
 #     - verification light (risk high); budget $2.00; max 4 attempts
-#   verifier (light): opus/medium
+#   verifier (light): fable/low
 
 # Only model/effort, for the frontmatter of a Claude Code agent
 router plan "classify these tickets" --claude-code
@@ -280,7 +280,8 @@ With models from other providers, register them and wrap the client: `load_exter
 4. Verification. `low` and `medium` none, `high` light, `critical` full (full verification was the
    biggest cost sink; raise `high` to `full` with `--verify full`, or in `policy.py` once your bench
    justifies it). When the task has a checker, the checker goes first and is final when it fails.
-   `light` is the worker's own cell in a fresh context; `full` is one fixed judge, `opus/xhigh` unless
+   `light` is the nearest other model at low effort (the tier above first), in a fresh context: a worker
+   judging itself passed a quarter of the answers an independent judge failed. `full` is one fixed judge, `opus/xhigh` unless
    `router config --judge` or `MODEL_ROUTER_JUDGE` say otherwise, on another model than the worker
    (see below). At `critical`, an `analysis`, `write` or `review` task with no checker gets a
    `tribunal` of both instead of the full judge alone; `--verify full` forces one judge, `--verify
@@ -305,7 +306,7 @@ The figure at the top of this README walks through one case: a split, the arbite
 
 ```mermaid
 flowchart LR
-  W[worker's answer] --> A[judge A: the worker's cell, fresh context]
+  W[worker's answer] --> A[judge A: a third model at low effort, fresh context]
   W --> B[judge B: the fixed judge, another model]
   A & B --> D{agree?}
   D -- yes --> V[verdict]
@@ -332,7 +333,12 @@ when verification is most of the bill. Verifying is easier than producing, so
 the judge does not have to outrank the worker; it has to be independent and good enough. The
 earlier rule, the cheapest cell clearly more capable than the worker, put Fable at xhigh and max in
 the judge's seat for Fable workers, and one verdict cost $0.42 in the first real bench. `light` is
-the worker's own cell in a fresh context, capped the same way.
+the nearest other model at low effort, the tier above before the one below; in a tribunal it also
+avoids the full judge's model, so that no two of worker, judge A and judge B share a model when the
+available models allow it. Until 0.11.0 `light` was the worker's own cell in a fresh context: on a
+private eval of 28 real tasks, Haiku and Sonnet passed themselves on 89 % and 93 % of first attempts
+and an Opus judge passed 64 % and 68 % of the same answers, for word limits broken, formats ignored
+and facts invented. A model does not see its own blind spots in a fresh context either.
 
 The `tribunal` mode asks those two judges, always, each blind to the other. If they agree, that is
 the verdict. If they split, an arbiter cell reads the task, the answer and both reasoned verdicts

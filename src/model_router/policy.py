@@ -1,8 +1,8 @@
 """Routing policy: which cell starts a task, how it escalates, how it is verified and what it may
 spend. Everything is a table you can read and edit; the feedback store nudges the start cell once
-it has seen enough verdicts for a kind. Verification has four modes: none; `light`, the worker's own
-cell in a fresh context; `full`, a fixed judge cell (opus/xhigh unless configured) on another model
-than the worker; `panel`, those two together, both must agree; `tribunal`, those two blind to each
+it has seen enough verdicts for a kind. Verification has four modes: none; `light`, the nearest other
+model at low effort in a fresh context; `full`, a fixed judge cell (opus/xhigh unless configured) on
+another model than the worker; `panel`, those two together, both must agree; `tribunal`, those two blind to each
 other plus an arbiter that settles a split (the default at critical risk, with no checker, for kinds
 where only judgement can decide). Verifying is easier than producing, so the judge does not have to
 outrank the worker: it has to be independent and good enough, and it never thinks above `xhigh`.
@@ -122,7 +122,22 @@ def default_judge(models: Iterable[str] | None = None) -> Cell:
     return _cap_effort(nearest_available(parse_cell(str(raw)), models))
 
 
-def _light_judge(worker: Cell) -> Cell:
+def _light_judge(worker: Cell, cells: list[Cell], *, avoid: Cell | None = None) -> Cell:
+    """Return the light judge of `worker`: the nearest other model at low effort, the tier above before the one
+    below, then another model of the same tier; in a panel, a model other than `avoid` (the full judge) when
+    `cells` hold one. The worker's own cell, effort capped, only when no other model is available: a worker
+    judging itself in a fresh context passed a quarter of the answers an independent judge failed.
+    """
+    models = _by_tier(cells)
+    above = [m for m in models if MODELS[m].tier > worker.tier]
+    below = sorted((m for m in models if MODELS[m].tier < worker.tier), key=lambda m: -MODELS[m].tier)  # stable: Claude first
+    same = [m for m in models if MODELS[m].tier == worker.tier and m != worker.model]
+    others = above + below + same
+    for m in others:
+        if avoid is None or m != avoid.model:
+            return _at(m, "low")
+    if others:
+        return _at(others[0], "low")
     return _cap_effort(worker)
 
 
@@ -143,8 +158,8 @@ def _full_judge(worker: Cell, judge: Cell, cells: list[Cell]) -> Cell:
 
 
 def choose_verifier(worker: Cell, mode: str, cells: list[Cell], *, judge: Cell | None = None) -> Cell | None:
-    """Return the judge for `mode`, or None for `none`. light: the worker's own cell in a fresh context,
-    effort capped at JUDGE_MAX_EFFORT. full: `judge` (the configured one when None) in a fresh context;
+    """Return the judge for `mode`, or None for `none`. light: the nearest other model at low effort (the
+    tier above first; see `_light_judge`). full: `judge` (the configured one when None) in a fresh context;
     when the worker is on the judge's model, so that the check stays a cross-check between models, the
     next model up at low effort, else the model below at the judge's effort, else another cell of that
     model at or under the judge's effort, else the worker's own cell.
@@ -152,17 +167,19 @@ def choose_verifier(worker: Cell, mode: str, cells: list[Cell], *, judge: Cell |
     if mode == "none":
         return None
     if mode == "light":
-        return _light_judge(worker)
+        return _light_judge(worker, cells)
     judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
     return _full_judge(worker, judge, cells)
 
 
 def choose_panel(worker: Cell, cells: list[Cell], *, judge: Cell | None = None) -> list[Cell]:
-    """Return the judges of a panel or a tribunal for `worker`, cheapest first: the light judge (the worker's
-    own cell, fresh context) and the full judge (see `choose_verifier`). When both are the same cell, one judge.
+    """Return the judges of a panel or a tribunal for `worker`, cheapest first: the full judge (see
+    `choose_verifier`) and the light judge, on a model other than the worker's and the full judge's when the
+    cells hold one (see `_light_judge`). When both are the same cell, one judge.
     """
     judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
-    return sorted({_light_judge(worker), _full_judge(worker, judge, cells)}, key=_judge_cost)
+    full = _full_judge(worker, judge, cells)
+    return sorted({_light_judge(worker, cells, avoid=full), full}, key=_judge_cost)
 
 
 def default_arbiter(models: Iterable[str] | None = None) -> Cell | None:
@@ -189,22 +206,24 @@ def choose_arbiter(
     that is not a judge (a cell at an effort its door does not accept counts as the nearest it does), the
     cells that share a company with neither the full judge nor the worker first,
     then those that do not share the worker's (an arbiter with the worker's blind spots passes what it
-    passed), then those that do not share the full judge's: the next model up from the full judge and the worker
-    at low effort, the full judge's model one effort up, the worker's model one effort up from the light judge.
+    passed), then those that do not share the full judge's, the highest tier first: the models above the full
+    judge and the worker at low effort, the full judge's model one effort up, the worker's model one effort up,
+    the light judge's model one effort up.
     """
     judges = choose_panel(worker, cells, judge=judge)
     arbiter = _cap_effort(arbiter) if arbiter else default_arbiter({c.model for c in cells})
     if arbiter is not None and arbiter not in judges:
         return arbiter
     judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
-    full, light = _full_judge(worker, judge, cells), _light_judge(worker)
+    full = _full_judge(worker, judge, cells)
+    light = _light_judge(worker, cells, avoid=full)
     models = _by_tier(cells)
     above = [m for m in models if MODELS[m].tier > max(full.tier, worker.tier)]
-    candidates = [_at(above[0], "low")] if above else []
-    candidates += [_effort_up(full), _effort_up(light)]
+    candidates = [_at(m, "low") for m in above]
+    candidates += [_effort_up(full), _effort_up(worker), _effort_up(light)]
     candidates.sort(key=lambda c: (
         (c.spec.family == full.spec.family) + (c.spec.family == worker.spec.family),
-        c.spec.family == worker.spec.family, c.spec.family == full.spec.family,
+        c.spec.family == worker.spec.family, c.spec.family == full.spec.family, -c.tier,
     ))
     return next((c for c in candidates if c not in judges), None)
 

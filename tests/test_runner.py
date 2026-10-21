@@ -53,44 +53,44 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
 def test_panel_needs_both_judges_and_a_split_escalates():
     client = FakeClient(
         script={"opus/medium": [Reply("draft")], "fable/low": [Reply("better draft")]},
-        judge={"opus/medium": [ok()], "fable/low": [ko("thin"), ok()], "opus/xhigh": [ok()]},
+        judge={"sonnet/low": [ok()], "fable/low": [ko("thin")], "opus/xhigh": [ok()]},
     )
     result = Router(client).run(Task(prompt="write the incident report", kind="write", risk="critical", verify="panel"))
     assert result.verify == "panel" and result.solved
     first, second = result.attempts
     assert first.cell.label == "opus/medium" and first.verdict is False and first.verdict_source == "panel"
-    assert [j.label for j in first.judges] == ["opus/medium", "fable/low"] and first.verifier == parse_cell("fable/low")
-    assert "panel split: opus/medium passed, fable/low failed" in first.reason and "thin" in first.reason
+    assert [j.label for j in first.judges] == ["sonnet/low", "fable/low"] and first.verifier == parse_cell("fable/low")
+    assert "panel split: sonnet/low passed, fable/low failed" in first.reason and "thin" in first.reason
     assert second.cell.label == "fable/low" and second.verdict is True
-    assert [j.label for j in second.judges] == ["opus/xhigh", "fable/low"] and "panel agreed" in second.reason
+    assert [j.label for j in second.judges] == ["sonnet/low", "opus/xhigh"] and "panel agreed" in second.reason
     judge_calls = [c["cell"] for c in client.calls if c["output_format"] == "Verdict"]
-    assert judge_calls == ["opus/medium", "fable/low", "opus/xhigh", "fable/low"]
-    assert first.verify_cost_usd == pytest.approx(0.035)  # opus/medium 0.010 + fable/low 0.025 on Usage(2000, 100)
-    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.070)
-    assert result.to_dict()["attempts"][0]["judges"] == ["opus/medium", "fable/low"]
+    assert judge_calls == ["sonnet/low", "fable/low", "sonnet/low", "opus/xhigh"]
+    assert first.verify_cost_usd == pytest.approx(0.030)  # sonnet/low 0.005 + fable/low 0.025 on Usage(2000, 100)
+    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.045)
+    assert result.to_dict()["attempts"][0]["judges"] == ["sonnet/low", "fable/low"]
 
 
 def test_tribunal_asks_both_judges_and_the_arbiter_settles_a_split(tmp_path: Path):
     client = FakeClient(
         script={"*": [Reply("the notice")]},
-        judge={"opus/medium": [ok("fine")], "fable/low": [ko("thin")], "fable/medium": [ok("judge A was right")]},
+        judge={"sonnet/low": [ok("fine")], "fable/low": [ko("thin")], "fable/medium": [ok("judge A was right")]},
     )
     ledger = Ledger(tmp_path / "ledger.jsonl")
     result = Router(client, ledger=ledger).run(Task(prompt="write the incident report", kind="write", risk="critical"))
     assert result.verify == "tribunal" and result.solved and len(result.attempts) == 1
     attempt = result.attempts[0]
     assert attempt.verdict is True and attempt.verdict_source == "tribunal" and attempt.arbiter == parse_cell("fable/medium")
-    assert [j.label for j in attempt.judges] == ["opus/medium", "fable/low"]
+    assert [j.label for j in attempt.judges] == ["sonnet/low", "fable/low"]
     assert [(v.cell.label, v.passed, v.role) for v in attempt.verdicts] == [
-        ("opus/medium", True, "judge"), ("fable/low", False, "judge"), ("fable/medium", True, "arbiter"),
+        ("sonnet/low", True, "judge"), ("fable/low", False, "judge"), ("fable/medium", True, "arbiter"),
     ]
-    assert "tribunal split: opus/medium passed, fable/low failed; arbiter fable/medium sided with opus/medium" in attempt.reason
+    assert "tribunal split: sonnet/low passed, fable/low failed; arbiter fable/medium sided with sonnet/low" in attempt.reason
     calls = [c for c in client.calls if c["output_format"] == "Verdict"]
-    assert [c["cell"] for c in calls] == ["opus/medium", "fable/low", "fable/medium"]
+    assert [c["cell"] for c in calls] == ["sonnet/low", "fable/low", "fable/medium"]
     ruling = calls[-1]["prompt"]
     assert "<verdicts>" in ruling and "Judge A passed" in ruling and "Judge B failed" in ruling
     assert "fable" not in ruling.split("<verdicts>")[1]  # the arbiter does not see who the judges were
-    assert attempt.verify_cost_usd == pytest.approx(0.010 + 0.025 + 0.025)
+    assert attempt.verify_cost_usd == pytest.approx(0.005 + 0.025 + 0.025)
     record = ledger.tasks()[0]["attempts"][0]
     assert record["arbiter"] == "fable/medium" and [v["role"] for v in record["verdicts"]] == ["judge", "judge", "arbiter"]
 
@@ -117,29 +117,29 @@ def test_scoreboard_counts_agreement_arbiter_backing_and_human_contradictions(tm
     ledger = Ledger(tmp_path / "ledger.jsonl")
     client = FakeClient(
         script={"*": [Reply("x")]},
-        judge={"opus/medium": [ok(), ok(), ok()], "fable/low": [ko("thin"), ok(), ok()], "fable/medium": [ok()]},
+        judge={"sonnet/low": [ok(), ok(), ok()], "fable/low": [ko("thin"), ok(), ok()], "fable/medium": [ok()]},
     )
     router = Router(client, ledger=ledger)
     for i in range(3):
         router.run(Task(prompt="x", kind="write", risk="critical", id=f"w{i}"))
     ledger.override("w2", passed=False, note="it was bad")
     board = summarize(ledger.tasks()).by_judge
-    assert board["opus/medium"] == {"verdicts": 3, "passes": 3, "agreed": 2, "split": 1, "backed": 1, "overruled": 0,
+    assert board["sonnet/low"] == {"verdicts": 3, "passes": 3, "agreed": 2, "split": 1, "backed": 1, "overruled": 0,
                                     "contradicted": 1}
     assert board["fable/low"] == {"verdicts": 3, "passes": 2, "agreed": 2, "split": 1, "backed": 0, "overruled": 1,
                                   "contradicted": 1}
     assert "fable/medium" not in board  # the arbiter is not a judge on the scoreboard
     text = summarize(ledger.tasks()).text()
-    assert "judges' scoreboard" in text and "opus/medium" in text
+    assert "judges' scoreboard" in text and "sonnet/low" in text
 
 
 def test_panel_stops_at_the_first_failing_judge():
-    client = FakeClient(script={"*": [Reply("draft")]}, judge={"opus/medium": [ko("vague")], "*": [ok()]})
+    client = FakeClient(script={"*": [Reply("draft")]}, judge={"sonnet/low": [ko("vague")], "*": [ok()]})
     result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1, verify="panel"))
     assert result.status == "unsolved"
     attempt = result.attempts[0]
     assert attempt.verdict is False and attempt.verdict_source == "panel"
-    assert [j.label for j in attempt.judges] == ["opus/medium"] and "was not asked" in attempt.reason
+    assert [j.label for j in attempt.judges] == ["sonnet/low"] and "was not asked" in attempt.reason
     assert len([c for c in client.calls if c["output_format"] == "Verdict"]) == 1
 
 
@@ -166,7 +166,7 @@ def test_judge_records_an_external_answer_without_worker_cost(tmp_path: Path):
     assert all(c["output_format"] == "Verdict" for c in client.calls)  # no worker call
     assert ledger.tasks()[0]["attempts"][0]["stop_reason"] == "external" and store.data == {}
     light = router.judge(Task(prompt="x", kind="chat", risk="low"), "hi", worker=parse_cell("sonnet/low"), mode="light")
-    assert light.attempts[0].verdict_source == "judge" and light.attempts[0].judges == [parse_cell("sonnet/low")]
+    assert light.attempts[0].verdict_source == "judge" and light.attempts[0].judges == [parse_cell("opus/low")]
     failed = router.judge(Task(prompt="x", kind="code", risk="low", checker=contains_checker("42")), "41")
     assert failed.status == "unsolved" and failed.attempts[0].verdict_source == "checker"
 

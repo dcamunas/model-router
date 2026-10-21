@@ -10,8 +10,8 @@ Needs Google Chrome; no other tool. The terminal frames reveal the lines of `rou
 output of `router run --file docs/showcase/notice.md --kind write --risk critical` in a terminal of 126
 columns (COLUMNS=126, what the drawn window holds at 22 px), never text typed in. The trial is an
 example case on that same task: the cells are what `router plan` gives for it (worker opus/medium,
-judges opus/medium and fable/low, arbiter fable/medium; after a fail, worker fable/low with judges
-opus/xhigh and fable/low); the split and the retry are made up to show the arbiter and the ladder.
+judges sonnet/low and fable/low, arbiter fable/medium; after a fail, worker fable/low with judges
+sonnet/low and opus/xhigh); the split and the retry are made up to show the arbiter and the ladder.
 """
 
 from __future__ import annotations
@@ -93,14 +93,14 @@ EDGES = {
     "arbiter-ledger": [(1420, 528), (1420, 590)],
     "you-ledger": [(1075, 672), (1210, 672)],
 }
-DEFAULT_CELLS = {"worker": "opus/medium", "a": "opus/medium", "b": "fable/low", "arbiter": "fable/medium",
+DEFAULT_CELLS = {"worker": "opus/medium", "a": "sonnet/low", "b": "fable/low", "arbiter": "fable/medium",
                  "you": "router feedback --ko"}
 
 # Every word on the canvas, so a translation for a carousel elsewhere is one dict, not a copy of the code.
 EN = {
     "title": "A critical task on trial",
     "subtitle": "model-router · an example case · every seat is a cell, model/effort, chosen per task",
-    "legend": [("opus", DARK), ("fable", ACCENT), ("you", ACCENT2)],
+    "legend": [("sonnet", MODEL_COLOUR["sonnet"]), ("opus", DARK), ("fable", ACCENT), ("you", ACCENT2)],
     "roles": {"worker": "worker", "a": "judge A", "b": "judge B", "arbiter": "arbiter", "you": "you"},
     "blind": "blind",
     "labels": {"task": "the task · write · critical", "answer": "the answer", "ledger": "ledger · scoreboard"},
@@ -118,13 +118,13 @@ EN = {
         "and starts on the cheapest cell that should do: opus/medium.",
         "The worker writes the answer. At low or medium risk that would be the end. Critical prose has no "
         "programmatic check, so the answer goes to trial.",
-        "Two judges read the task and the answer, each in a fresh context: judge A on the worker's own cell, "
+        "Two judges read the task and the answer, each in a fresh context: judge A on a third model at low effort, "
         "judge B on another model. Neither knows the other exists.",
         "They split. Judge A passes it. Judge B fails it: “We apologise for the disruption” is not in the facts.",
         "On a split, the arbiter reads the task, the answer and both reasoned verdicts, with no names on them. "
         "One extra call, only on a split.",
         "Verdict: fail, siding with judge B. The task climbs the ladder. Next cell: fable/low.",
-        "Second attempt on fable/low. The seats follow the worker: judge A opus/xhigh, judge B fable/low. "
+        "Second attempt on fable/low. The seats follow the worker: judge A sonnet/low, judge B opus/xhigh. "
         "Both pass. Solved.",
         "Every verdict and its cost go to the ledger. The scoreboard says which judge was right. router feedback "
         "--ko is your appeal, and it counts against the judges you overrule.",
@@ -150,7 +150,7 @@ class TrialFrame:
 
 _SPLIT = {"doc_a": "pass", "doc_b": "fail"}
 _SPLIT_CONTENT = {"doc_a": "reason_pass", "doc_b": "reason_fail", "doc_arb": "arb_lines"}
-_TAKE2_CELLS = {"worker": "fable/low", "a": "opus/xhigh", "b": "fable/low"}
+_TAKE2_CELLS = {"worker": "fable/low", "a": "sonnet/low", "b": "opus/xhigh"}
 _TAKE2 = {"doc_a": "pass", "doc_b": "pass"}
 _TAKE2_CONTENT = {"doc_a": "reason_pass", "doc_b": "reason_pass"}
 

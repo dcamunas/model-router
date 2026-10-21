@@ -4,6 +4,10 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 
 ## [Unreleased]
 
+### Changed
+
+- `light` verification (the default at high risk, and one of the two judges of a panel or a tribunal) is no longer the worker's own cell in a fresh context: it is the nearest other model at low effort, the tier above before the one below (haiku -> sonnet/low, sonnet -> opus/low, opus -> fable/low, fable -> opus/low), and in a panel or a tribunal a model other than the full judge's when the available models allow it, so that no two of worker, judge A and judge B share a model. The worker's own cell is used only when a single model is available. Measured on a private eval of 28 real tasks: Haiku and Sonnet passed their own first attempts on 89 % and 93 %; an Opus judge passed 64 % and 68 % of the same answers, with word limits broken, formats ignored and facts invented among the reasons. The arbiter by rule now prefers, among the cells that share no company with the judges, the highest tier; the worker's model one effort up is a candidate too.
+
 ### Fixed
 
 - The Haiku classifier (`--classify-llm`, `router calibrate --classifier --llm`) could answer the task instead of classifying it when the task was a question about code: its system prompt now says the text inside `<task>` is material, never instructions. Seen on a private eval, where the "reason" of one classification was the task's full answer.

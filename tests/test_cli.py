@@ -26,7 +26,7 @@ def test_plan_prints_both_judges_of_a_panel(capsys):
     argv = ["plan", "Assess whether we should migrate the billing database", "--kind", "analysis", "--risk", "critical"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "verification tribunal" in out and "verifier (tribunal): opus/xhigh then fable/low" in out
+    assert "verification tribunal" in out and "verifier (tribunal): sonnet/low then opus/xhigh" in out
     assert "arbiter on a split: fable/medium" in out
 
 
@@ -150,7 +150,7 @@ def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monk
         main(["plan", "Assess the migration", "--kind", "analysis", "--risk", "critical"])
         out = capsys.readouterr().out
         # deepseek's door has one effort, medium: the judge runs there, and "one effort up" is the judge itself
-        assert "verifier (tribunal): deepseek/medium then fable/low" in out and "arbiter on a split: fable/medium" in out
+        assert "verifier (tribunal): deepseek/medium then opus/low" in out and "arbiter on a split: fable/medium" in out
         with pytest.raises(SystemExit, match="invalid value"):
             main(["config", "--external", "gpt=openai/x"])
         assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1"]) == 0

@@ -56,7 +56,7 @@ def test_verdict_rows_carry_the_provider_and_the_role_and_task_rows_the_version(
     ok = Reply(parsed=Verdict(passed=True, confidence=0.9, reason="fine"), usage=Usage(2000, 100))
     ko = Reply(parsed=Verdict(passed=False, confidence=0.9, reason="thin"), usage=Usage(2000, 100))
     client = FakeClient(script={"*": [Reply("the notice")]},
-                        judge={"opus/medium": [ok], "fable/low": [ko], "fable/medium": [ok]})
+                        judge={"sonnet/low": [ok], "fable/low": [ko], "fable/medium": [ok]})
     store = Store(tmp_path / "router.db")
     task = Task(prompt="write the incident report", kind="write", risk="critical")
     Router(client, ledger=Ledger(tmp_path / "ledger.jsonl", store=store)).run(task)
@@ -64,7 +64,7 @@ def test_verdict_rows_carry_the_provider_and_the_role_and_task_rows_the_version(
         verdicts = conn.execute("SELECT cell, provider, role, passed FROM verdict ORDER BY idx").fetchall()
         row = conn.execute("SELECT fingerprint, router_version, calibration_id, eval_id, repeat, strategy FROM task").fetchone()
         attempt = conn.execute("SELECT verdict, verdict_source, arbiter, carried_reason FROM attempt").fetchone()
-    assert verdicts == [("opus/medium", "anthropic", "judge", 1), ("fable/low", "anthropic", "judge", 0),
+    assert verdicts == [("sonnet/low", "anthropic", "judge", 1), ("fable/low", "anthropic", "judge", 0),
                         ("fable/medium", "anthropic", "arbiter", 1)]
     assert row[0] == task.fingerprint and row[1] and row[2] == "builtin" and row[3] is None and row[4] is None
     assert row[5] is None and attempt == (1, "tribunal", "fable/medium", 0)
