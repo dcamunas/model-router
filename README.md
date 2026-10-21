@@ -79,7 +79,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.10.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.11.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -90,7 +90,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.10.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.11.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
