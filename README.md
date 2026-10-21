@@ -423,7 +423,10 @@ structured output goes through `parse`; above 16K tokens the call streams.
   benches and your ledger, the first-attempt pass rate per kind and cell with its 95 % interval, the
   mean cost of an attempt and the expected cost per solved task, and proposes a table; a change
   needs evidence (a cheaper cell that was measured and passes, or the current cell measured and
-  beaten), six first attempts at least, and the risk floors hold. `--apply` makes it the table that
+  beaten), six first attempts at least, and the risk floors hold. Only independent verdicts count: a
+  checker, or a judge on a model other than the worker's that backed the final verdict (the arbiter's
+  ruling included); a verdict the worker's own model alone gave is reported and left out, because a
+  cheap cell passes itself. `--apply` makes it the table that
   decides: `router plan` names it, `router doctor` names it, and every record carries its id. A
   calibration moves where a task starts, not the ladder: escalation still climbs by the capability
   below. No calibration ships with the package; the only measured numbers are yours.

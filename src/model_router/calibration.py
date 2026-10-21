@@ -51,7 +51,7 @@ def wilson(passes: int, n: int, z: float = Z95) -> tuple[float, float]:
 
 @dataclass
 class Measure:
-    """What the records say about one cell on one kind: first attempts with a verified verdict, how many
+    """What the records say about one cell on one kind: first attempts with an independent verdict, how many
     passed, the cost of those attempts (work plus verification) and, once priced, the expected cost per
     solved task: the attempt, plus the next cell up on the share that fails.
     """
@@ -95,7 +95,7 @@ class Calibration:
     min_rate: float
     min_saving: float
     records: int  # task records looked at
-    evidence: int  # first attempts with a verified verdict among them
+    evidence: int  # first attempts with an independent verdict among them (see `_independent`)
     sources: dict[str, int]  # records from benches and from the ledger
     against: str  # the table the changes compare with: `builtin`, or a calibration id
     start: dict[str, dict[str, str]]
@@ -103,6 +103,7 @@ class Calibration:
     changes: list[dict[str, Any]]
     no_data: list[str]  # kinds with no cell at `min_n` first attempts
     path: Path | None = field(default=None, compare=False)
+    self_judged: int = 0  # verified first attempts left out because only the worker's own model backed the verdict
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if k != "path"}
@@ -115,7 +116,8 @@ class Calibration:
             ValueError: a field is missing or has the wrong shape.
         """
         try:
-            cal = cls(**{k: data[k] for k in cls.__dataclass_fields__ if k != "path"}, path=path)
+            cal = cls(**{k: data[k] for k in cls.__dataclass_fields__ if k not in ("path", "self_judged")},
+                  path=path, self_judged=int(data.get("self_judged", 0)))
         except (KeyError, TypeError) as exc:
             raise ValueError(f"not a calibration file: {exc}") from exc
         _check_table(cal.start)
@@ -190,9 +192,31 @@ def load_calibration(name: str) -> Calibration:
     return Calibration.from_dict(data, path)
 
 
+def _independent(attempt: dict[str, Any], worker: Cell) -> bool:
+    """Say whether the verdict on `attempt` is evidence: a checker decided, or a judge on a model other than
+    `worker`'s backed the final verdict (the arbiter's ruling counts as such a judge). A worker judging itself
+    in a fresh context passed a quarter of the answers an independent judge failed, so its lone verdict is not.
+    """
+    if attempt.get("verdict_source") == "checker":
+        return True
+    final = bool(attempt["verdict"])
+    votes = attempt.get("verdicts") or []
+    if not votes:  # a record from before verdicts were kept: the single verifier is all there is
+        votes = [{"cell": attempt.get("verifier"), "passed": final}]
+    for vote in votes:
+        try:
+            cell = parse_cell(str(vote.get("cell") or ""))
+        except (UnknownModelError, ValueError):
+            continue
+        if cell.model != worker.model and bool(vote.get("passed")) == final:
+            return True
+    return False
+
+
 def _collect(records: Iterable[dict[str, Any]], eval_id: str | None) -> tuple[dict[tuple[str, str], Measure], Calibration]:
     """Bucket the first attempts of `records` by (kind, cell); return the buckets and a calibration shell
-    with the counts filled in.
+    with the counts filled in. A verdict that only the worker's own model backed is counted in
+    `self_judged` and left out (see `_independent`).
     """
     buckets: dict[tuple[str, str], Measure] = {}
     shell = Calibration("", "", "", eval_id, 0, 0.0, 0.0, 0, 0, {"bench": 0, "ledger": 0}, "", {}, {}, [], [])
@@ -210,12 +234,15 @@ def _collect(records: Iterable[dict[str, Any]], eval_id: str | None) -> tuple[di
             continue
         label = str(first.get("cell", ""))
         try:
-            parse_cell(label)
+            worker = parse_cell(label)
         except (UnknownModelError, ValueError):
             continue
         passed = bool(first["verdict"])
         if r.get("overridden") and len(attempts) == 1:  # a human corrected the only verdict there is
             passed = r.get("status") == "solved"
+        elif not _independent(first, worker):
+            shell.self_judged += 1
+            continue
         m = buckets.setdefault((str(r.get("kind", "unknown")), label), Measure())
         m.n += 1
         m.passes += passed
@@ -307,8 +334,9 @@ def report(cal: Calibration) -> str:
     """
     lines = [
         f"calibration {cal.id} · {cal.records} task records ({cal.sources.get('bench', 0)} from benches, "
-        f"{cal.sources.get('ledger', 0)} from the ledger) · {cal.evidence} first attempts with a verified verdict · "
-        f"min n {cal.min_n}, min pass rate {cal.min_rate:.0%}, min saving {cal.min_saving:.0%} · compared with "
+        f"{cal.sources.get('ledger', 0)} from the ledger) · {cal.evidence} first attempts with an independent verdict"
+        + (f" ({cal.self_judged} left out: only the worker's own model judged them)" if cal.self_judged else "")
+        + f" · min n {cal.min_n}, min pass rate {cal.min_rate:.0%}, min saving {cal.min_saving:.0%} · compared with "
         + ("the built-in table" if cal.against == BUILTIN else f"calibration {cal.against}"),
     ]
     rows: list[list[object]] = []
@@ -320,7 +348,7 @@ def report(cal: Calibration) -> str:
                          money(m["cost_per_solved"]) if m["cost_per_solved"] is not None else "-",
                          "" if n >= cal.min_n else "n too small"])
     if rows:
-        lines += ["", "measured (first attempts with a verified verdict; $/solved = the attempt plus one on the next "
+        lines += ["", "measured (first attempts with an independent verdict; $/solved = the attempt plus one on the next "
                       "cell up when it fails, or on itself at the top)",
                   table(["kind", "cell", "n", "pass", "95% CI", "$/attempt", "$/solved", "note"], rows)]
     else:

@@ -506,7 +506,7 @@ def test_calibrate_reports_from_the_index_and_apply_makes_the_policy_start_from_
     capsys.readouterr()
     assert main(["calibrate"]) == 0
     out = capsys.readouterr().out
-    assert "12 first attempts with a verified verdict" in out and "compared with the built-in table" in out
+    assert "12 first attempts with an independent verdict" in out and "compared with the built-in table" in out
     assert "classify x medium: haiku/medium -> haiku/low (100% of 6" in out and "--apply writes" in out
     assert main(["plan", "classify this", "--kind", "classify", "--risk", "medium"]) == 0
     assert "start: haiku/medium" in capsys.readouterr().out

@@ -18,12 +18,13 @@ from model_router.task import Task
 
 
 def _record(kind: str, cell: str, passed: bool, *, cost: float = 0.01, verify_cost: float = 0.0, source: str = "checker",
-            eval_id: str | None = "ev1", overridden: bool = False, status: str | None = None) -> dict:
+            eval_id: str | None = "ev1", overridden: bool = False, status: str | None = None,
+            verdicts: list[dict] | None = None, verifier: str | None = None) -> dict:
     return {
         "type": "task", "task_id": "t", "kind": kind, "risk": "low", "eval_id": eval_id,
         "status": status or ("solved" if passed else "unsolved"), "overridden": overridden,
         "attempts": [{"n": 1, "cell": cell, "verdict": passed, "verdict_source": source, "cost_usd": cost,
-                      "verify_cost_usd": verify_cost}],
+                      "verify_cost_usd": verify_cost, "verifier": verifier, "verdicts": verdicts or []}],
     }
 
 
@@ -36,6 +37,30 @@ def test_wilson_interval_narrows_with_n_and_stays_in_range():
     low6, high6 = wilson(5, 6)
     low60, high60 = wilson(50, 60)
     assert 0.0 <= low6 < low60 < 50 / 60 < high60 < high6 <= 1.0
+
+
+def test_a_verdict_only_the_workers_own_model_backed_is_no_evidence():
+    def vote(cell: str, passed: bool, role: str = "judge") -> dict:
+        return {"cell": cell, "passed": passed, "role": role}
+
+    records = [
+        _record("write", "haiku/medium", True, source="judge", verifier="haiku/medium"),  # itself, fresh context
+        _record("write", "haiku/medium", True, source="judge", verifier="sonnet/low"),  # another model
+        _record("write", "haiku/medium", True, source="tribunal",  # both agreed: the other model backs it
+                verdicts=[vote("haiku/medium", True), vote("opus/xhigh", True)]),
+        _record("write", "haiku/medium", False, source="panel",  # its own fail stopped the panel: no evidence
+                verdicts=[vote("haiku/medium", False)]),
+        _record("write", "haiku/medium", True, source="tribunal",  # a split the arbiter (another model) settled
+                verdicts=[vote("haiku/medium", True), vote("opus/xhigh", False), vote("fable/low", True, "arbiter")]),
+        _record("write", "haiku/medium", False, source="judge", verifier="haiku/medium", overridden=True),  # a human
+    ]
+    cal = measure(records, current=START, floors=FLOOR, min_n=1)
+    m = cal.measured["write"]["haiku/medium"]
+    assert (cal.records, cal.evidence, cal.self_judged) == (6, 4, 2) and (m["n"], m["passes"]) == (4, 3)
+    assert "4 first attempts with an independent verdict (2 left out" in report(cal)
+    assert Calibration.from_dict(cal.to_dict()).self_judged == 2
+    legacy = {k: v for k, v in cal.to_dict().items() if k != "self_judged"}
+    assert Calibration.from_dict(legacy).self_judged == 0
 
 
 def test_only_verified_first_attempts_count_and_overrides_flip_a_single_verdict():
@@ -106,7 +131,7 @@ def test_eval_filter_and_the_report_name_the_evidence():
     cal = measure(records, current=START, floors=FLOOR, min_n=6, eval_id="ev1")
     assert cal.records == 6 and cal.measured["classify"]["haiku/low"]["rate"] == 1.0 and cal.id.endswith("-ev1")
     text = report(cal)
-    assert "6 first attempts with a verified verdict" in text
+    assert "6 first attempts with an independent verdict" in text
     assert "classify x medium: haiku/medium -> haiku/low (100% of 6, $0.010 per solved; was not measured)" in text
     assert cal.changes[0]["from_n"] == 0 and cal.changes[0]["from_cost_per_solved"] is None
     assert "haiku/low*" in text and "compared with the built-in table" in text
