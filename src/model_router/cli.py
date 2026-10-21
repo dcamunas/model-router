@@ -79,6 +79,7 @@ from .policy import (
 from .runner import Router, TaskResult
 from .store import Store
 from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFIED_SOURCES, VERIFY_MODES, Task, json_checker, regex_checker
+from .version import router_version
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 ARBITER_SHARE = 0.3  # the share of tribunals assumed to split, for the estimate
@@ -452,7 +453,8 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
             print(f"warning: the active calibration {active} cannot be loaded ({exc}); comparing with the built-in table",
                   file=sys.stderr)
     cal = measure(store.task_records(tagged=True), current=current, floors=FLOOR, min_n=args.min_n,
-                  min_rate=args.min_rate, min_saving=args.min_saving, eval_id=args.eval, against=against)
+                  min_rate=args.min_rate, min_saving=args.min_saving, eval_id=args.eval, against=against,
+                  version=router_version() if args.version == "this" else args.version)
     print(calibration_report(cal))
     if not args.apply:
         print(f"\n--apply writes {calibrations_dir() / (cal.id + '.json')} and makes it the calibration that decides")
@@ -910,13 +912,14 @@ def build_parser() -> argparse.ArgumentParser:
     sca = sub.add_parser("calibrate",
                          help="measure the start table from the benches and the ledger; --apply makes it the one that decides")
     sca.add_argument("--eval", help="only the records of this eval id (what `router bench` prints)")
+    sca.add_argument("--version", help="only the records written by this router version (`this` = the one running)")
     sca.add_argument("--min-n", type=int, default=MIN_N,
                      help=f"first attempts a (kind, cell) needs before its rate counts (default {MIN_N})")
     sca.add_argument("--min-rate", type=float, default=MIN_RATE,
-                     help=f"the lowest first-attempt pass rate a start cell may have (default {MIN_RATE:.0%})")
+                     help=f"the lowest first-attempt pass rate a start cell may have (default {MIN_RATE:.0%})".replace("%", "%%"))
     sca.add_argument("--min-saving", type=float, default=MIN_SAVING,
                      help=f"a measured start cell is replaced only by one at least this much cheaper per solved task "
-                          f"(default {MIN_SAVING:.0%})")
+                          f"(default {MIN_SAVING:.0%})".replace("%", "%%"))
     sca.add_argument("--apply", action="store_true", help="save the calibration and make it the one that decides")
     sca.add_argument("--classifier", metavar="FILE",
                      help="instead: compare the rule classifier with the kind and risk this eval file gives each task")

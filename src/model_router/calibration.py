@@ -215,7 +215,9 @@ def _independent(attempt: dict[str, Any], worker: Cell) -> bool:
     return False
 
 
-def _collect(records: Iterable[dict[str, Any]], eval_id: str | None) -> tuple[dict[tuple[str, str], Measure], Calibration]:
+def _collect(
+    records: Iterable[dict[str, Any]], eval_id: str | None, version: str | None = None
+) -> tuple[dict[tuple[str, str], Measure], Calibration]:
     """Bucket the first attempts of `records` by (kind, cell); return the buckets and a calibration shell
     with the counts filled in. A verdict that only the worker's own model backed is counted in
     `self_judged` and left out (see `_independent`).
@@ -224,6 +226,8 @@ def _collect(records: Iterable[dict[str, Any]], eval_id: str | None) -> tuple[di
     shell = Calibration("", "", "", eval_id, 0, 0.0, 0.0, 0, 0, {"bench": 0, "ledger": 0}, "", {}, {}, [], [])
     for r in records:
         if eval_id is not None and r.get("eval_id") != eval_id:
+            continue
+        if version is not None and r.get("router_version") != version:
             continue
         shell.records += 1
         bench = bool(r.get("eval_id")) or bool(r.get("source") and r.get("source") != MAIN_LEDGER)
@@ -298,14 +302,16 @@ def _propose(now_label: str, good: dict[str, Measure], floor: str | None, min_ra
 def measure(
     records: Iterable[dict[str, Any]], *, current: dict[str, dict[str, str]], floors: dict[str, str],
     min_n: int = MIN_N, min_rate: float = MIN_RATE, min_saving: float = MIN_SAVING, cells: list[Cell] | None = None,
-    eval_id: str | None = None, against: str = BUILTIN,
+    eval_id: str | None = None, against: str = BUILTIN, version: str | None = None,
 ) -> Calibration:
     """Measure `records` and propose a start table from `current` (the table in force, whose name is `against`),
     with `floors` (risk -> the lowest cell allowed) respected; `cells` are the ones a task may escalate to. Records
-    tagged with their `source` file (see `Store.task_records`) are counted as bench or ledger by it.
+    tagged with their `source` file (see `Store.task_records`) are counted as bench or ledger by it. `eval_id`
+    keeps the records of one eval and `version` those written by one router version (a verification rule that
+    changed between versions changes what a verdict means).
     """
     cells = cells or lattice()
-    buckets, cal = _collect(records, eval_id)
+    buckets, cal = _collect(records, eval_id, version)
     _price(buckets, cells)
     cal.start = {kind: dict(row) for kind, row in current.items()}
     for kind, row in current.items():

@@ -612,3 +612,14 @@ def test_config_declares_a_codex_door_and_doctor_says_whether_it_opens(home, mon
         assert f"Codex home for `codex` cells: {codex_home}" in out
     finally:
         load_external({})
+
+
+def test_every_subcommand_prints_its_help(capsys):
+    import pytest as _pytest
+
+    for cmd in ("plan", "run", "judge", "bench", "calibrate", "stats", "db", "feedback", "doctor", "cells", "install",
+                "uninstall", "config"):
+        with _pytest.raises(SystemExit) as exc:
+            main([cmd, "--help"])
+        assert exc.value.code == 0, cmd
+        assert "usage: router " + cmd in capsys.readouterr().out

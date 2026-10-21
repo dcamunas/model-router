@@ -147,6 +147,10 @@ def test_eval_filter_and_the_report_name_the_evidence():
     assert "haiku/low*" in text and "compared with the built-in table" in text
     cal = measure(records, current=START, floors=FLOOR, min_n=6)
     assert cal.measured["classify"]["haiku/low"]["rate"] == 0.5 and cal.sources == {"bench": 6, "ledger": 6}
+    for r in records[:6]:
+        r["router_version"] = "0.11.0"
+    cal = measure(records, current=START, floors=FLOOR, min_n=6, version="0.11.0")
+    assert cal.records == 6 and cal.measured["classify"]["haiku/low"]["rate"] == 1.0
 
 
 def test_save_load_and_the_active_name_from_env_then_config(tmp_path, monkeypatch):

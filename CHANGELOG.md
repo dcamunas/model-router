@@ -2,6 +2,16 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `router calibrate --version VERSION` keeps the records one router version wrote (`this` = the one running): a verification rule that changes between versions changes what a verdict means, so a calibration measured after 0.11.0 should not mix in verdicts the worker gave itself under 0.10.0.
+
+### Fixed
+
+- `router calibrate --help` crashed on the `%` of its defaults; every subcommand's `--help` is now tested.
+
 ## [0.11.0] - 2026-10-21
 
 ### Changed
