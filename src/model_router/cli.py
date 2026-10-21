@@ -61,6 +61,7 @@ from .paths import (
     config_path,
     home,
     read_config,
+    save_config,
     write_config,
 )
 from .policy import DEFAULT_JUDGE, FLOOR, START, LadderPolicy, Policy, PolicyProtocol, default_arbiter, default_judge
@@ -592,7 +593,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     checks.append((hook_bin is not None, f"hook binary: {hook_bin or missing}"))
     try:
         avail = available_models()
-        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if len(avail) < len(MODELS) else "catalogue")
+        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if read_config().get("models") else "catalogue")
         checks.append((True, f"available models: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
     except UnknownModelError as exc:
         checks.append((False, f"available models: {exc.name!r} does not exist (check {MODELS_ENV} or `router install --models`)"))
@@ -663,7 +664,10 @@ def _external_check(spec: ModelSpec) -> tuple[bool, str]:
     from .providers import PROVIDERS, resolve_codex_home
 
     provider = PROVIDERS[spec.provider]
-    role = "works and judges" if spec.id in available_models() else "judges"
+    try:
+        role = "works and judges" if spec.id in available_models() else "judges"
+    except ValueError:  # a model list that cannot be read; the available-models check reports it
+        role = "judges"
     head = f"{spec.short} ({role}): {spec.provider} {spec.id}, "
     if provider.transport == "api":
         has_key = bool(os.environ.get(provider.key_env))
@@ -756,6 +760,29 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     return uninstall(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill)
 
 
+def _forget_external(name: str) -> None:
+    """Drop a removed declared model from `models`, `judge` and `arbiter` in config.json, saying so: a reference
+    left behind would stop every command with an unknown model.
+    """
+    cfg = read_config()
+    changes: dict[str, Any] = {}
+    listed = cfg.get("models")
+    if isinstance(listed, list) and name in listed:
+        changes["models"] = [m for m in listed if m != name]
+    for key in ("judge", "arbiter"):
+        if str(cfg.get(key) or "").partition("/")[0] == name:
+            changes[key] = None
+    if not changes:
+        return
+    for key, value in changes.items():
+        if value is None:
+            cfg.pop(key, None)
+        else:
+            cfg[key] = value
+    save_config(cfg)
+    print(f"{name} was also removed from: {', '.join(changes)}")
+
+
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
@@ -779,6 +806,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
         external = dict(read_config().get("external") or {})
         if spec is None:
             external.pop(name, None)
+            _forget_external(name)
         else:
             external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output,
                               "tier": spec.tier}

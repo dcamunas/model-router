@@ -186,7 +186,8 @@ def test_external_models_judge_and_arbitrate_but_never_route(monkeypatch, tmp_pa
         policy = Policy(judge=gpt)
         worker = parse_cell("fable/low")
         assert choose_panel(worker, policy.cells, judge=gpt) == [gpt, worker]  # gpt/high judges for less than fable/low
-        assert policy.arbiter_for(worker) == parse_cell("gpt/xhigh")  # not the worker's company, not a judge
+        # gpt's door tops out at high, so the judge one effort up is the judge itself: the worker one effort up
+        assert policy.arbiter_for(worker) == parse_cell("fable/medium")
         assert policy.attempt_cost(worker, "full", 2000, 1500) > worker.expected_cost(2000, 1500)
         assert load_external({"external": {"gpt": {"provider": "openai", "id": "gpt-6", "input": 1, "output": 2}}}) == ["gpt"]
         assert parse_cell("gpt").spec.id == "gpt-6" and "gpt-5.5" not in MODELS
@@ -262,5 +263,31 @@ def test_a_declared_model_works_only_when_listed_and_the_plan_says_so(monkeypatc
         assert full is not None and full.label == "opus/xhigh"  # another model judges the ChatGPT worker
         assert set(policy.judges_for(plan.start, "tribunal")) == {parse_cell("luna/medium"), parse_cell("opus/xhigh")}
         assert policy.arbiter_for(plan.start) == parse_cell("fable/low")  # not luna/high: the worker's own company
+    finally:
+        load_external({})
+
+
+def test_judge_and_arbiter_cells_take_an_effort_their_door_accepts_and_never_depend_on_set_order(monkeypatch, tmp_path):
+    from model_router.catalog import load_external
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv("MODEL_ROUTER_ARBITER", raising=False)
+    try:
+        load_external({"external": {
+            "ds": {"provider": "deepseek", "id": "deepseek-reasoner", "input": 1, "output": 2, "tier": 1},
+            "luna": {"provider": "codex", "id": "gpt-6-luna", "input": 1, "output": 2, "tier": 1},
+        }})
+        cells = lattice(["haiku", "sonnet", "opus", "ds", "luna"])
+        # the configured judge at an effort deepseek ignores: judged, priced and recorded at the one it accepts
+        assert choose_verifier(parse_cell("opus/high"), "full", cells, judge=parse_cell("ds/high")) == parse_cell("ds/medium")
+        # a worker on the judge's model: the model below at the judge's effort is Sonnet, not a declared model of its tier
+        judge = parse_cell("opus/xhigh")
+        for _ in range(20):
+            assert choose_verifier(parse_cell("opus/high"), "full", cells, judge=judge) == parse_cell("sonnet/xhigh")
+        # deepseek has one effort, so "the judge one effort up" is the judge: the arbiter is the worker one effort up
+        assert choose_arbiter(parse_cell("sonnet/medium"), cells, judge=parse_cell("ds/medium")) == parse_cell("opus/low")
+        assert choose_arbiter(parse_cell("opus/medium"), cells, judge=parse_cell("ds/medium")) == parse_cell("opus/high")
+        # a codex judge at xhigh: one effort up is capped there, so again the worker one effort up
+        assert choose_arbiter(parse_cell("opus/medium"), cells, judge=parse_cell("luna/xhigh")) == parse_cell("opus/high")
     finally:
         load_external({})

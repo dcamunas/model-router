@@ -292,3 +292,54 @@ def test_strict_schema_closes_every_object_and_requires_every_field():
     inner = schema["$defs"]["Inner"]
     assert inner["additionalProperties"] is False and inner["required"] == ["a", "b"]
     assert Outer.model_json_schema()["required"] == ["inner"]  # the model itself is untouched
+
+
+def test_codex_resolves_a_relative_home_and_keeps_keys_out_of_the_child_environment(doors, tmp_path, monkeypatch):
+    (tmp_path / "rel-home").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_API_KEY", "sk-not-this-account")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-nor-this")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://elsewhere.example")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient"))
+    monkeypatch.setenv("UNRELATED", "stays")
+    run = FakeRun(_codex_events("ok"))
+    CodexClient(Path("rel-home"), binary="python3", run=run).complete(parse_cell("luna/low"), prompt="x")
+    env = run.calls[0]["env"]
+    assert env["CODEX_HOME"] == str((tmp_path / "rel-home").resolve()) and env["UNRELATED"] == "stays"
+    assert not any(k in env for k in ("CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"))
+
+
+def test_cli_error_text_never_carries_the_answer(doors, tmp_path):
+    answer = "THE ANSWER TEXT"
+    # codex: a non-zero exit with the answer on stdout and nothing else
+    run = FakeRun(_codex_events(answer), returncode=1, stderr="", last=None)
+    with pytest.raises(ClientUnavailableError, match="code 1: no error message") as info:
+        CodexClient(tmp_path, binary="python3", run=run).complete(parse_cell("luna/low"), prompt="x")
+    assert answer not in str(info.value)
+    # codex: exit 0 with no final message and no events is an error, not an empty answer at no cost
+    with pytest.raises(ClientUnavailableError, match="gave no answer"):
+        CodexClient(tmp_path, binary="python3", run=FakeRun("", last=None)).complete(parse_cell("luna/low"), prompt="x")
+    # gemini: a failed run whose JSON has the response but no error message, and one that is not JSON
+    body = json.dumps({"response": answer, "stats": {}})
+    with pytest.raises(ClientUnavailableError, match="no error message") as info:
+        GeminiClient(binary="python3", run=FakeRun(body, returncode=1)).complete(parse_cell("gem"), prompt="x")
+    assert answer not in str(info.value)
+    with pytest.raises(ClientUnavailableError, match="nothing on stderr") as info:
+        GeminiClient(binary="python3", run=FakeRun(answer, returncode=1)).complete(parse_cell("gem"), prompt="x")
+    assert answer not in str(info.value)
+
+
+def test_strict_schema_recurses_into_tuples_and_mappings():
+    from pydantic import BaseModel
+
+    class Pair(BaseModel):
+        a: int
+
+    class Shape(BaseModel):
+        pair: tuple[Pair, int]
+        by_name: dict[str, Pair]
+
+    schema = strict_schema(Shape.model_json_schema())
+    assert schema["properties"]["pair"]["prefixItems"][0] == {"$ref": "#/$defs/Pair"}
+    assert schema["properties"]["by_name"]["additionalProperties"] == {"$ref": "#/$defs/Pair"}
+    assert schema["$defs"]["Pair"]["additionalProperties"] is False

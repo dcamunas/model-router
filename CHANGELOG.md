@@ -2,23 +2,22 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.10.0] - 2026-10-21
 
 ### Added
 
-- Models of other providers do the work too, once `router config --models` lists them: the lattice takes them with the efforts their door accepts, a start table may name them, and a declared model that is not listed keeps judging while the Claude of its tier takes its tasks (the plan says so). Two new doors by subscription, next to the API ones: `codex` (ChatGPT through `codex exec`, on a Codex home given with `router config --codex-home` or `MODEL_ROUTER_CODEX_HOME`, never the ambient `~/.codex`) and `gemini` (`gemini -p`). Each CLI call runs in an empty directory with read-only tools and nothing persisted (Gemini has no home switch: that door runs on the machine's own `~/.gemini`); a verdict is asked for with Codex's `--output-schema` or in Gemini's prompt, validated here, tried once more when it is not JSON, and otherwise reported as a judge error. `router doctor` says per declared model whether its door opens (key, home signed in, executable) and `--live` makes one call through each CLI; `router cells` says which declared models work. The arbiter now prefers a company other than the full judge's (`codex` and `openai` are both OpenAI). The Claude Code hook keeps choosing among Claude models only.
+- Models of other providers do the work too, once `router config --models` lists them: the lattice takes them with the efforts their door accepts, a start table may name them, and a declared model that is not listed keeps judging while the Claude of its tier takes its tasks (the plan says so). Two new doors by subscription, next to the API ones: `codex` (ChatGPT through `codex exec`, on a Codex home given with `router config --codex-home` or `MODEL_ROUTER_CODEX_HOME`, never the ambient `~/.codex`) and `gemini` (`gemini -p`). Each CLI call runs in an empty directory with read-only tools and nothing persisted (Gemini has no home switch: that door runs on the machine's own `~/.gemini`), and the environment `codex exec` inherits carries no API key or base URL, since the home decides the account; a verdict is asked for with Codex's `--output-schema` (strict, as that backend demands) or in Gemini's prompt, validated here, tried once more when it is not JSON, and otherwise reported as a judge error; a run that ends without an answer is an error too, and an error text never carries the model's output (the ledger keeps error texts, never answers). `router doctor` says per declared model whether its door opens (key, home signed in, executable) and `--live` makes one call through each CLI; `router cells` says which declared models work. The arbiter now prefers a company other than the full judge's (`codex` and `openai` are both OpenAI). The Claude Code hook keeps choosing among Claude models only.
 
 - A declared model takes the tier you give it, `router config --external NAME=DOOR/ID@IN/OUT/TIER`, 0 Haiku to 3 Fable; Opus (2) when omitted, as before. The tier is where the ladder places the model when it escalates; `router calibrate` measures what it passes. `router cells` and `router config` show it.
-
-### Fixed
-
-- The `codex` door sends the verdict schema the way the Codex backend demands it, strict: every object closed and every field required. The first live tribunal through a ChatGPT account found it rejected as sent (`additionalProperties` missing).
 
 ### Changed
 
 - `--models` (install and config) lists the models that may do the work, declared ones included; `all` means every Anthropic model.
 - The arbiter by rule is the next model up from the full judge and the worker, not from the judge alone: with a judge below the worker (a declared model at tier 0, say) the old rule handed the split to the worker's own model at low effort.
-- The doors were built against the CLIs' documented flags and output (Codex 0.156, Gemini 0.46) and exercised with doubles; the first live run on a ChatGPT account is pending, and this is not released until it has happened.
+- Judge and arbiter cells take an effort their door accepts: a DeepSeek judge configured at high runs, is priced and is recorded at medium, and a cell one effort up that its door cannot give is not an arbiter, so the full judge is never asked twice. Which model is the next up, or the one below, no longer depends on set order when a declared model shares a tier with a Claude one: Claude first, then by name.
+- One declaration per model id: the catalogue is keyed by it, so `router config --external` refuses a second door for an id already declared under another name, or a Claude id through another door, and loading the config skips such an entry.
+- `router config --external NAME=` also drops the model from `models`, `judge` and `arbiter`, and says so; a reference left behind stopped every command.
+- The doors were built against the CLIs' documented flags and output (Codex 0.156, Gemini 0.46) and exercised with doubles. The `codex` door then ran live through a ChatGPT account, as the full judge of a tribunal: it passed a right answer, failed a wrong one with the right reasons, and failed a first attempt that broke the output constraint, which went up the ladder and passed. The `gemini` door has not run live yet.
 
 ## [0.9.0] - 2026-10-20
 

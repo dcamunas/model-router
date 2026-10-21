@@ -101,6 +101,8 @@ def test_declared_models_get_their_doors_efforts_and_family_and_work_only_when_l
     assert luna.tier == 2  # Opus-class until the declaration says otherwise
     _, weak = parse_external("weak=codex/gpt-6-luna@2.5/12.5/0")
     assert weak is not None and weak.tier == 0
+    with pytest.raises(ValueError, match="one declaration per model id"):
+        parse_external("x=codex/claude-opus-5-5@1/1")  # a Claude id through another door would replace Opus
     with pytest.raises(ValueError, match=r"\[/TIER\]"):
         parse_external("weak=codex/gpt-6-luna@2.5/12.5/4")
     _, gem = parse_external("gem=gemini/gemini-3-pro@2/12")
@@ -117,6 +119,14 @@ def test_declared_models_get_their_doors_efforts_and_family_and_work_only_when_l
         anthropic = [m for m, s in MODELS.items() if s.provider == "anthropic"]
         assert available_models() == anthropic and len(lattice()) == 20  # declared, not listed: judges only
         assert [s.short for s in external_models()] == ["luna", "gem"]
+        with pytest.raises(ValueError, match="one declaration per model id"):
+            parse_external("gpt=openai/gpt-5.5@5/30")  # gpt-5.5 is already `luna`: the catalogue is keyed by id
+        assert parse_external("luna=codex/gpt-5.5@6/30")[1] is not None  # the same name may be declared again
+        twice = {"luna": {"provider": "codex", "id": "gpt-5.5", "input": 5, "output": 30},
+                 "gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}
+        assert load_external({"external": twice}) == ["luna"]  # the second declaration of an id is skipped
+        load_external({"external": {"luna": twice["luna"],
+                                    "gem": {"provider": "gemini", "id": "gemini-3-pro", "input": 2, "output": 12}}})
         cell = parse_cell("luna/high")
         assert nearest_available(cell, anthropic) == cell  # a judge is always available
         assert worker_cell(cell, anthropic).label == "opus/high"  # a worker is not: the Claude of its tier takes over

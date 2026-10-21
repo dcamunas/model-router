@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from .calibration import ACTIVE, Calibration, active_calibration_name, load_calibration
-from .catalog import EFFORTS, Cell, ladder, lattice, nearest_available, parse_cell, step_up, worker_cell
+from .catalog import EFFORTS, MODELS, Cell, ladder, lattice, nearest_available, nearest_effort, parse_cell, step_up, worker_cell
 from .paths import ARBITER_ENV, JUDGE_ENV, read_config
 from .task import Task
 
@@ -90,10 +90,23 @@ def _judge_cost(cell: Cell) -> float:
     return cell.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
 
 
+def _at(model: str, effort: str) -> Cell:
+    """Return `model` at `effort`, or at the nearest effort its door accepts: a cell that names an effort the door
+    ignores would be priced and recorded as something other than what is sent.
+    """
+    return Cell(model, nearest_effort(effort, MODELS[model].efforts))
+
+
+def _by_tier(cells: list[Cell]) -> list[str]:
+    """Return the models of `cells`, once each, by tier; within a tier a Claude model first, then by name, so
+    that the choice never depends on set order.
+    """
+    return sorted({c.model for c in cells}, key=lambda m: (MODELS[m].tier, MODELS[m].provider != "anthropic", m))
+
+
 def _cap_effort(cell: Cell) -> Cell:
-    if cell.effort_rank <= EFFORTS.index(JUDGE_MAX_EFFORT):
-        return cell
-    return Cell(cell.model, JUDGE_MAX_EFFORT)
+    capped = EFFORTS[min(cell.effort_rank, EFFORTS.index(JUDGE_MAX_EFFORT))]
+    return _at(cell.model, capped)
 
 
 def default_judge(models: Iterable[str] | None = None) -> Cell:
@@ -116,13 +129,13 @@ def _light_judge(worker: Cell) -> Cell:
 def _full_judge(worker: Cell, judge: Cell, cells: list[Cell]) -> Cell:
     if worker.model != judge.model:
         return judge
-    models = sorted({c.model for c in cells}, key=lambda m: Cell(m, "low").tier)
-    above = [m for m in models if Cell(m, "low").tier > worker.tier]
+    models = _by_tier(cells)
+    above = [m for m in models if MODELS[m].tier > worker.tier]
     if above:
-        return Cell(above[0], "low")
-    below = [m for m in models if Cell(m, "low").tier < worker.tier]
-    if below:
-        return Cell(below[-1], judge.effort)
+        return _at(above[0], "low")
+    below = [m for m in models if MODELS[m].tier < worker.tier]
+    if below:  # the highest tier below, a Claude model before a declared one of the same tier
+        return _at(max(below, key=lambda m: (MODELS[m].tier, MODELS[m].provider == "anthropic")), judge.effort)
     same = [c for c in cells if c.model == worker.model and c != worker and c.effort_rank <= judge.effort_rank]
     if not same:
         return _cap_effort(worker)
@@ -173,7 +186,8 @@ def choose_arbiter(
     """Return the cell that settles a split between the two judges of `worker`'s tribunal, or None when no
     cell other than the judges themselves is available (a split then fails, as in a panel). `arbiter`
     (the configured one when None) wins when it is not one of the judges; otherwise the first of these
-    that is not a judge, the cells that share a company with neither the full judge nor the worker first,
+    that is not a judge (a cell at an effort its door does not accept counts as the nearest it does), the
+    cells that share a company with neither the full judge nor the worker first,
     then those that do not share the worker's (an arbiter with the worker's blind spots passes what it
     passed), then those that do not share the full judge's: the next model up from the full judge and the worker
     at low effort, the full judge's model one effort up, the worker's model one effort up from the light judge.
@@ -184,9 +198,9 @@ def choose_arbiter(
         return arbiter
     judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
     full, light = _full_judge(worker, judge, cells), _light_judge(worker)
-    models = sorted({c.model for c in cells}, key=lambda m: Cell(m, "low").tier)
-    above = [m for m in models if Cell(m, "low").tier > max(full.tier, worker.tier)]
-    candidates = [Cell(above[0], "low")] if above else []
+    models = _by_tier(cells)
+    above = [m for m in models if MODELS[m].tier > max(full.tier, worker.tier)]
+    candidates = [_at(above[0], "low")] if above else []
     candidates += [_effort_up(full), _effort_up(light)]
     candidates.sort(key=lambda c: (
         (c.spec.family == full.spec.family) + (c.spec.family == worker.spec.family),
@@ -196,7 +210,8 @@ def choose_arbiter(
 
 
 def _effort_up(cell: Cell) -> Cell:
-    return Cell(cell.model, EFFORTS[min(cell.effort_rank + 1, EFFORTS.index(JUDGE_MAX_EFFORT))])
+    """Return `cell` one effort up (capped at JUDGE_MAX_EFFORT), or `cell` itself when its door accepts none above."""
+    return _at(cell.model, EFFORTS[min(cell.effort_rank + 1, EFFORTS.index(JUDGE_MAX_EFFORT))])
 
 
 def _resolve_calibration(value: Calibration | str | None) -> tuple[Calibration | None, str | None]:

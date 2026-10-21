@@ -65,6 +65,9 @@ ERROR_DETAIL_CHARS = 300
 SCHEMA_NOTE = "\n\nAnswer with one JSON object and nothing else; it must validate against this JSON schema:\n"
 Opener = Callable[..., Any]  # urllib.request.urlopen or a test double with the same shape
 Run = Callable[..., Any]  # subprocess.run or a test double that returns a CompletedProcess
+# Kept from `codex exec`: the home decides the account, and an API key or base URL in the environment would move the
+# call to API billing, maybe on another account.
+CODEX_ENV_DROPPED = ("CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 
 
 def reasoning_effort(effort: str, accepted: tuple[str, ...]) -> str | None:
@@ -167,8 +170,11 @@ def strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
         out["properties"] = {k: strict_schema(v) if isinstance(v, dict) else v for k, v in out["properties"].items()}
         out["required"] = list(out["properties"])
         out["additionalProperties"] = False
-    if isinstance(out.get("items"), dict):
-        out["items"] = strict_schema(out["items"])
+    for key in ("items", "additionalProperties"):
+        if isinstance(out.get(key), dict):
+            out[key] = strict_schema(out[key])
+    if isinstance(out.get("prefixItems"), list):
+        out["prefixItems"] = [strict_schema(v) if isinstance(v, dict) else v for v in out["prefixItems"]]
     for key in ("$defs", "definitions"):
         if isinstance(out.get(key), dict):
             out[key] = {k: strict_schema(v) if isinstance(v, dict) else v for k, v in out[key].items()}
@@ -241,6 +247,7 @@ class CodexClient:
     def __init__(self, home: Path, *, binary: str = "codex", timeout: float = CLI_TIMEOUT_SECONDS,
                  run: Run = subprocess.run) -> None:
         self.binary = _find(binary, "install the Codex CLI")
+        home = home.expanduser().resolve()  # the child runs elsewhere: a relative home would point somewhere else there
         if not home.is_dir():  # a typo must not make codex start a fresh home there
             raise ClientUnavailableError(f"Codex home {home} does not exist: sign in there first "
                                          f"(`CODEX_HOME={home} codex login`)")
@@ -273,7 +280,7 @@ class CodexClient:
                 schema.write_text(json.dumps(strict_schema(output_format.model_json_schema())), encoding="utf-8")
                 args += ["--output-schema", str(schema)]
             args.append("-")
-            env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+            env = {k: v for k, v in os.environ.items() if k not in CODEX_ENV_DROPPED}
             env["CODEX_HOME"] = str(self.home)
             t0 = time.monotonic()
             try:
@@ -287,11 +294,13 @@ class CodexClient:
             events = _events(proc.stdout or "")
             errors = _codex_errors(events)
             if proc.returncode != 0:
-                detail = (errors[0] if errors else (proc.stderr or proc.stdout or "").strip())[:ERROR_DETAIL_CHARS]
+                # never stdout: it carries the answer, and this text ends in the ledger
+                detail = (errors[0] if errors else (proc.stderr or "").strip() or "no error message")[:ERROR_DETAIL_CHARS]
                 raise ClientUnavailableError(f"codex exec exited with code {proc.returncode}: {detail}")
             text = (last.read_text(encoding="utf-8").strip() if last.exists() else "") or _last_message(events)
-            if not text and errors:  # an error event with no answer behind it; with an answer it was transient
-                raise ClientUnavailableError(f"codex exec: {errors[0][:ERROR_DETAIL_CHARS]}")
+            if not text:  # an error event with no answer behind it (with an answer it was transient), or no answer at all
+                detail = errors[0][:ERROR_DETAIL_CHARS] if errors else "no final message and no error event"
+                raise ClientUnavailableError(f"codex exec gave no answer: {detail}")
         return text, _codex_usage(events), seconds
 
 
@@ -375,12 +384,12 @@ class GeminiClient:
             data = json.loads(proc.stdout or "")
         except ValueError:
             data = None
-        if not isinstance(data, dict):
-            detail = (proc.stderr or proc.stdout or "").strip()[:ERROR_DETAIL_CHARS]
+        if not isinstance(data, dict):  # stderr only: stdout may be the answer, and this text ends in the ledger
+            detail = (proc.stderr or "").strip()[:ERROR_DETAIL_CHARS] or "nothing on stderr"
             raise ClientUnavailableError(f"gemini exited with code {proc.returncode} and no JSON object: {detail}")
         if data.get("error") or proc.returncode != 0:
             error = _dict(data.get("error"))
-            detail = str(error.get("message") or error or data)[:ERROR_DETAIL_CHARS]
+            detail = str(error.get("message") or error or "no error message")[:ERROR_DETAIL_CHARS]
             raise ClientUnavailableError(f"gemini exited with code {proc.returncode}: {detail}")
         usage, served = _gemini_usage(_dict(_dict(data.get("stats")).get("models")))
         return str(data.get("response") or ""), usage, seconds, served

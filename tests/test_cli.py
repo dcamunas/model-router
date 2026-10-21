@@ -149,14 +149,21 @@ def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monk
         assert "DEEPSEEK_API_KEY set" in capsys.readouterr().out
         main(["plan", "Assess the migration", "--kind", "analysis", "--risk", "critical"])
         out = capsys.readouterr().out
-        assert "verifier (tribunal): deepseek/high then fable/low" in out and "arbiter on a split: deepseek/xhigh" in out
+        # deepseek's door has one effort, medium: the judge runs there, and "one effort up" is the judge itself
+        assert "verifier (tribunal): deepseek/medium then fable/low" in out and "arbiter on a split: fable/medium" in out
         with pytest.raises(SystemExit, match="invalid value"):
             main(["config", "--external", "gpt=openai/x"])
         assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1"]) == 0
         assert json.loads((home / "config.json").read_text())["external"]["deepseek"]["tier"] == 1
         main(["config"])
         assert "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1" in capsys.readouterr().out
+        assert main(["config", "--models", "sonnet,opus,deepseek", "--arbiter", "deepseek/high"]) == 0
+        capsys.readouterr()
         assert main(["config", "--external", "deepseek="]) == 0
+        assert "deepseek was also removed from: models, judge, arbiter" in capsys.readouterr().out
+        cfg = json.loads((home / "config.json").read_text())
+        assert cfg["models"] == ["sonnet", "opus"] and "judge" not in cfg and "arbiter" not in cfg
+        assert main(["plan", "classify this"]) == 0  # nothing dangling: every command still runs
         assert json.loads((home / "config.json").read_text())["external"] == {}
     finally:
         from model_router.catalog import load_external

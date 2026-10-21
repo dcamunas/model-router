@@ -106,7 +106,8 @@ def parse_external(text: str) -> tuple[str, ModelSpec | None]:
     spec; `NAME=` alone means remove, and returns None.
 
     Raises:
-        ValueError: the syntax, the provider or the name is not acceptable.
+        ValueError: the syntax, the provider or the name is not acceptable, or the model id is already
+            declared under another name (an Anthropic model's id included).
     """
     m = EXTERNAL_SYNTAX.match(text.strip())
     if m is None:
@@ -118,6 +119,9 @@ def parse_external(text: str) -> tuple[str, ModelSpec | None]:
         return name, None
     if provider not in KNOWN_PROVIDERS or provider == "anthropic":
         raise ValueError(f"unknown provider {provider!r}; known: {', '.join(p for p in KNOWN_PROVIDERS if p != 'anthropic')}")
+    taken = MODELS.get(model_id)
+    if taken is not None and taken.short != name:  # the catalogue is keyed by model id: one door per model
+        raise ValueError(f"{model_id!r} is already {taken.short!r}; one declaration per model id")
     cost_in, cost_out = float(price_in), float(price_out)
     efforts = PROVIDER_EFFORTS[provider]
     default = "medium" if "medium" in efforts else efforts[0]
@@ -129,7 +133,7 @@ def parse_external(text: str) -> tuple[str, ModelSpec | None]:
 def load_external(config: dict[str, Any]) -> list[str]:
     """Register the external models declared in `config["external"]` (as `router config --external` writes
     them) in the catalogue, replacing any registered before, and return their short names. Entries that
-    do not parse are skipped.
+    do not parse are skipped, a second declaration of a model id among them.
     """
     for model_id in [m for m, spec in MODELS.items() if spec.provider != "anthropic"]:
         SHORT_TO_ID.pop(MODELS.pop(model_id).short, None)
