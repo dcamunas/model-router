@@ -10,9 +10,14 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 
 - A declared model takes the tier you give it, `router config --external NAME=DOOR/ID@IN/OUT/TIER`, 0 Haiku to 3 Fable; Opus (2) when omitted, as before. The tier is where the ladder places the model when it escalates; `router calibrate` measures what it passes. `router cells` and `router config` show it.
 
+### Fixed
+
+- The `codex` door sends the verdict schema the way the Codex backend demands it, strict: every object closed and every field required. The first live tribunal through a ChatGPT account found it rejected as sent (`additionalProperties` missing).
+
 ### Changed
 
 - `--models` (install and config) lists the models that may do the work, declared ones included; `all` means every Anthropic model.
+- The arbiter by rule is the next model up from the full judge and the worker, not from the judge alone: with a judge below the worker (a declared model at tier 0, say) the old rule handed the split to the worker's own model at low effort.
 - The doors were built against the CLIs' documented flags and output (Codex 0.156, Gemini 0.46) and exercised with doubles; the first live run on a ChatGPT account is pending, and this is not released until it has happened.
 
 ## [0.9.0] - 2026-10-20

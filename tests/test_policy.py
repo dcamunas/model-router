@@ -153,6 +153,8 @@ def test_arbiter_is_the_next_model_up_from_the_judge_else_one_effort_up(monkeypa
     assert choose_arbiter(parse_cell("opus/medium"), cells) == parse_cell("fable/medium")
     # judges fable/low + opus/xhigh: fable/low and opus/xhigh are taken, so the worker's model one effort up
     assert choose_arbiter(parse_cell("fable/low"), cells) == parse_cell("fable/medium")
+    # judges sonnet/medium + haiku/xhigh (a judge below the worker): the model above both, not the worker's own at low
+    assert choose_arbiter(parse_cell("sonnet/medium"), cells, judge=parse_cell("haiku/xhigh")) == parse_cell("opus/low")
     # a configured arbiter wins unless it is one of the judges
     assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("sonnet/max")) == parse_cell("sonnet/xhigh")
     assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("fable/low")) == parse_cell("fable/medium")

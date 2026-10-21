@@ -337,9 +337,9 @@ the worker's own cell in a fresh context, capped the same way.
 The `tribunal` mode asks those two judges, always, each blind to the other. If they agree, that is
 the verdict. If they split, an arbiter cell reads the task, the answer and both reasoned verdicts
 (as judge A and judge B, no names) and decides for itself; one extra call, only on a split, instead
-of a new attempt and a new pair of judges. The arbiter is the next model up from the full judge at
-low effort (Fable at low for an Opus judge), or the judge's model one effort up when nothing is
-above; `router config --arbiter` or `MODEL_ROUTER_ARBITER` fix it. When no cell other than the
+of a new attempt and a new pair of judges. The arbiter is the next model up from the full judge and
+the worker at low effort (Fable at low for an Opus judge), or the judge's model one effort up when
+nothing is above; `router config --arbiter` or `MODEL_ROUTER_ARBITER` fix it. When no cell other than the
 judges is available, a split fails. The policy uses the tribunal on its own at critical risk for
 analysis, writing and review tasks without a checker; `Policy(panel_kinds=...)` changes that list,
 `Policy(critical_mode="panel")` picks the cheaper variant, and a task can force `verify="tribunal"`

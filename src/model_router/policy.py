@@ -175,8 +175,8 @@ def choose_arbiter(
     (the configured one when None) wins when it is not one of the judges; otherwise the first of these
     that is not a judge, the cells that share a company with neither the full judge nor the worker first,
     then those that do not share the worker's (an arbiter with the worker's blind spots passes what it
-    passed), then those that do not share the full judge's: the next model up from the full judge at low
-    effort, the full judge's model one effort up, the worker's model one effort up from the light judge.
+    passed), then those that do not share the full judge's: the next model up from the full judge and the worker
+    at low effort, the full judge's model one effort up, the worker's model one effort up from the light judge.
     """
     judges = choose_panel(worker, cells, judge=judge)
     arbiter = _cap_effort(arbiter) if arbiter else default_arbiter({c.model for c in cells})
@@ -185,7 +185,7 @@ def choose_arbiter(
     judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
     full, light = _full_judge(worker, judge, cells), _light_judge(worker)
     models = sorted({c.model for c in cells}, key=lambda m: Cell(m, "low").tier)
-    above = [m for m in models if Cell(m, "low").tier > full.tier]
+    above = [m for m in models if Cell(m, "low").tier > max(full.tier, worker.tier)]
     candidates = [Cell(above[0], "low")] if above else []
     candidates += [_effort_up(full), _effort_up(light)]
     candidates.sort(key=lambda c: (

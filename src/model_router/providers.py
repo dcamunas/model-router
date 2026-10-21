@@ -157,6 +157,27 @@ def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return `schema` as OpenAI's strict structured output wants it: every object closed
+    (`additionalProperties: false`) with every property required, `$defs` included. Pydantic leaves a field with a
+    default out of `required`, and Codex rejects the schema for that.
+    """
+    out = dict(schema)
+    if out.get("type") == "object" and isinstance(out.get("properties"), dict):
+        out["properties"] = {k: strict_schema(v) if isinstance(v, dict) else v for k, v in out["properties"].items()}
+        out["required"] = list(out["properties"])
+        out["additionalProperties"] = False
+    if isinstance(out.get("items"), dict):
+        out["items"] = strict_schema(out["items"])
+    for key in ("$defs", "definitions"):
+        if isinstance(out.get(key), dict):
+            out[key] = {k: strict_schema(v) if isinstance(v, dict) else v for k, v in out[key].items()}
+    for key in ("anyOf", "oneOf", "allOf"):
+        if isinstance(out.get(key), list):
+            out[key] = [strict_schema(v) if isinstance(v, dict) else v for v in out[key]]
+    return out
+
+
 def _structured(text: str, output_format: type[BaseModel] | None) -> BaseModel | None:
     """Parse `text` into `output_format` (the first fenced block, else the whole text); None when it does not
     validate, which the verifier reports as a judge error.
@@ -249,7 +270,7 @@ class CodexClient:
                     "-c", f'model_reasoning_effort="{effort}"', "-o", str(last)]
             if output_format is not None:
                 schema = Path(scratch) / "schema.json"
-                schema.write_text(json.dumps(output_format.model_json_schema()), encoding="utf-8")
+                schema.write_text(json.dumps(strict_schema(output_format.model_json_schema())), encoding="utf-8")
                 args += ["--output-schema", str(schema)]
             args.append("-")
             env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}

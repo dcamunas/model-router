@@ -118,7 +118,7 @@ def test_multi_client_sends_each_cell_to_its_provider(externals):
 import subprocess  # noqa: E402 - the doors' tests need it after the API ones
 from pathlib import Path  # noqa: E402
 
-from model_router.providers import CodexClient, GeminiClient, build_client, resolve_codex_home  # noqa: E402
+from model_router.providers import CodexClient, GeminiClient, build_client, resolve_codex_home, strict_schema  # noqa: E402
 
 VERDICT = {"passed": True, "confidence": 0.9, "reason": "ok", "issues": []}
 
@@ -143,7 +143,8 @@ class FakeRun:
         self.outputs, self.returncode, self.stderr, self.last, self.calls = list(outputs), returncode, stderr, last, []
 
     def __call__(self, args, **kwargs):
-        self.calls.append({"args": args, **kwargs})
+        schema = json.loads(Path(args[args.index("--output-schema") + 1]).read_text()) if "--output-schema" in args else None
+        self.calls.append({"args": args, "schema": schema, **kwargs})
         stdout = self.outputs.pop(0) if self.outputs else ""
         if "-o" in args and self.last is not None:  # a Codex run
             text = self.last
@@ -175,6 +176,8 @@ def test_codex_runs_exec_on_the_given_home_with_the_schema_and_reads_usage_and_t
     assert args[1:5] == ["exec", "--json", "--ephemeral", "--ignore-user-config"] and "--skip-git-repo-check" in args
     assert args[args.index("-m") + 1] == "gpt-5.5" and args[args.index("-s") + 1] == "read-only"
     assert 'model_reasoning_effort="xhigh"' in args and args[-1] == "-" and "--output-schema" in args
+    assert call["schema"]["additionalProperties"] is False  # strict, as the Codex backend demands
+    assert call["schema"]["required"] == ["passed", "confidence", "reason", "issues"]
     assert call["env"]["CODEX_HOME"] == str(tmp_path / "codex-home") and call["input"].startswith("be strict\n\njudge this")
     assert call["cwd"] == args[args.index("-C") + 1]
     assert isinstance(c.parsed, Verdict) and c.parsed.passed and c.model == "gpt-5.5"
@@ -270,3 +273,22 @@ def test_multi_client_opens_each_door_on_first_use_and_a_missing_home_fails_only
     with pytest.raises(ClientUnavailableError, match="Codex home not set"):
         client.complete(parse_cell("luna/low"), prompt="x")
     assert type(build_client(PROVIDERS["openai"])).__name__ == "OpenAICompatibleClient"
+
+
+def test_strict_schema_closes_every_object_and_requires_every_field():
+    from pydantic import BaseModel
+
+    class Inner(BaseModel):
+        a: int
+        b: str = ""
+
+    class Outer(BaseModel):
+        inner: Inner
+        more: list[Inner] = []
+        maybe: Inner | None = None
+
+    schema = strict_schema(Outer.model_json_schema())
+    assert schema["additionalProperties"] is False and schema["required"] == ["inner", "more", "maybe"]
+    inner = schema["$defs"]["Inner"]
+    assert inner["additionalProperties"] is False and inner["required"] == ["a", "b"]
+    assert Outer.model_json_schema()["required"] == ["inner"]  # the model itself is untouched
