@@ -32,7 +32,7 @@ def test_lattice_is_sorted_by_expected_cost():
     cells = lattice()
     costs = [c.expected_cost() for c in cells]
     assert costs == sorted(costs)
-    assert cells[0].label == "haiku/low" and cells[-1].label == "fable/max"
+    assert cells[0].label == "haiku/low" and cells[-1].label == "fable/xhigh"
 
 
 def test_capability_tier_dominates_effort():
@@ -70,7 +70,7 @@ def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
     assert available_models() == ["claude-haiku-5-5", "claude-opus-5-5"]  # catalogue order, not config order
     monkeypatch.setenv(MODELS_ENV, "sonnet, claude-opus-5-5")
     assert available_models() == ["claude-sonnet-5-5", "claude-opus-5-5"]
-    assert [c.label for c in lattice()][-1] == "opus/max"
+    assert [c.label for c in lattice()][-1] == "opus/xhigh"
     monkeypatch.setenv(MODELS_ENV, "sonet")
     assert available_models() == list(MODELS)  # a name it does not know is ignored, and the plan says so
     monkeypatch.setenv(MODELS_ENV, "sonet,opus")
@@ -110,7 +110,7 @@ def test_a_registered_model_can_be_named_and_priced_but_never_enters_the_router_
         assert parse_cell("vendor/high").capability == 0.40 and parse_cell("vendor").effort == "medium"  # its tier's
         assert nearest_available(parse_cell("vendor/high"), ["opus"]) == parse_cell("vendor/high")  # its registrar serves it
         monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,vendor,nosuch")  # an older version's list
-        assert available_models() == claude and len(lattice()) == 20  # registered, listed, and still out
+        assert available_models() == claude and len(lattice()) == 16  # registered, listed, and still out
         assert worker_cell(parse_cell("haiku/low"), ["vendor"]).label == "vendor/low"  # asked for by name, it stands in
         assert nearest_effort("max", ("low", "high")) == "high" and nearest_effort("low", ("medium",)) == "medium"
         register(ModelSpec("vendor-model-1", "vendor-b", 1, 1, 1, 1, 1, "low", False, provider="vendor"))

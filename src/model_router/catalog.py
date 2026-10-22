@@ -33,6 +33,9 @@ CLAUDE = "anthropic"  # the provider of the models the router routes to
 TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}  # a registered model's capability, by tier
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+# The efforts the router chooses on its own. `max` is left out: it costs far more output than `xhigh` for little more
+# capability, so it runs only when someone names it (a cell given by hand, an agent's own effort, a bench matrix).
+AUTO_EFFORTS: tuple[str, ...] = EFFORTS[:-1]
 EFFORT_OUTPUT_MULT: dict[str, float] = {"low": 0.5, "medium": 0.75, "high": 1.0, "xhigh": 1.6, "max": 2.5}
 CAPABILITY_TIER: dict[str, float] = {"haiku": 0.40, "sonnet": 0.60, "opus": 0.75, "fable": 0.90}
 CAPABILITY_EFFORT: dict[str, float] = {"low": -0.06, "medium": -0.03, "high": 0.0, "xhigh": 0.03, "max": 0.05}
@@ -277,9 +280,10 @@ def parse_cell(text: str) -> Cell:
 
 def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None = None) -> list[Cell]:
     """Return every (model, effort) cell of the available models (or of `models`), cheapest first on the
-    reference request.
+    reference request: the efforts each model accepts up to `xhigh` (AUTO_EFFORTS), or exactly `efforts`.
     """
-    cells = [Cell(m, e) for m in (models or available_models()) for e in (efforts or MODELS[resolve_model(m)].efforts)]
+    cells = [Cell(m, e) for m in (models or available_models())
+             for e in (efforts or [x for x in MODELS[resolve_model(m)].efforts if x in AUTO_EFFORTS])]
     return sorted(cells, key=lambda c: (c.expected_cost(), c.capability))
 
 

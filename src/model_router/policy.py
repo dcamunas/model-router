@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol  # Any: a tuning file's decoded 
 
 from .calibration import ACTIVE, Calibration, active_calibration_name, load_calibration
 from .catalog import (
+    AUTO_EFFORTS,
     EFFORTS,
     MODELS,
     Cell,
@@ -246,10 +247,17 @@ class Policy:
                               f"sets another, `router doctor` shows it")
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
-        """Replace a cell whose model this installation lacks with the one `worker_cell` picks, and say so."""
+        """Replace a cell whose model this installation lacks with the one `worker_cell` picks, and a cell at an
+        effort the router never chooses (`max`, from a calibration or a tuning) with the same model at the top of
+        AUTO_EFFORTS, and say so.
+        """
         near = worker_cell(cell, self.models)
         if near != cell:
             rationale.append(f"{cell.spec.short} not available: {cell} -> {near}")
+        if near.effort not in AUTO_EFFORTS:
+            capped = _at(near.model, AUTO_EFFORTS[-1])
+            rationale.append(f"{near}: the router never chooses {near.effort} effort -> {capped}")
+            near = capped
         return near
 
     def plan(self, task: Task) -> Plan:

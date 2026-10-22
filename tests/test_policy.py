@@ -2,7 +2,7 @@ import pytest
 
 from model_router.catalog import lattice, parse_cell
 from model_router.feedback import FeedbackStore
-from model_router.policy import LadderPolicy, Policy, choose_verifier, default_judge
+from model_router.policy import START, LadderPolicy, Policy, choose_verifier, default_judge
 from model_router.task import Task, contains_checker
 
 
@@ -168,3 +168,21 @@ def test_judges_for_lists_the_one_judge_and_its_cost_counts_in_the_attempt():
     assert policy.judges_for(cell, "none") == []
     assert policy.judges_for(cell, "full") == [choose_verifier(cell, "full", policy.cells)]
     assert policy.attempt_cost(cell, "full", 2000, 1500) > policy.attempt_cost(cell, "none", 2000, 1500)
+
+
+def test_the_router_never_chooses_max_effort_on_its_own():
+    cells = lattice()
+    assert all(c.effort != "max" for c in cells)
+    for start in ladder_starts():
+        plan = Policy(cells=cells, start_table=start, calibration=None).plan(Task(prompt="x", kind="write", risk="high"))
+        assert all(c.effort != "max" for c in plan.ladder)
+    plan = Policy(cells=cells, start_table={"write": {"high": "opus/max"}, "unknown": START["unknown"]},
+                  calibration=None).plan(Task(prompt="x", kind="write", risk="high"))
+    assert plan.start.label == "opus/xhigh" and any("never chooses max" in r for r in plan.rationale)
+    tuned = Policy(cells=cells, calibration=None, tuning={"start": {"write": {"high": {"cell": "haiku/max"}}}})
+    assert tuned.plan(Task(prompt="x", kind="write", risk="high")).start.effort != "max"
+    assert parse_cell("opus/max").effort == "max"  # named by hand, it is still a cell
+
+
+def ladder_starts() -> list[dict[str, dict[str, str]]]:
+    return [{"write": {"high": cell}, "unknown": START["unknown"]} for cell in ("haiku/low", "sonnet/medium", "opus/high")]

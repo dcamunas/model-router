@@ -45,9 +45,10 @@ def test_bench_with_a_missing_file_is_a_one_line_error(tmp_path):
         main(["bench", str(tmp_path / "nope.yaml"), "--yes"])
 
 
-def test_cells_lists_every_cell_of_the_lattice(capsys):
+def test_cells_lists_every_cell_of_the_lattice_and_never_max(capsys):
     assert main(["cells"]) == 0
-    assert "fable/max" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "fable/xhigh" in out and "/max" not in out
 
 
 def test_stats_says_there_are_no_tasks_on_an_empty_home(home, capsys):
@@ -495,7 +496,7 @@ def test_bench_matrix_lists_every_cell_and_max_usd_guards_the_spend(home, monkey
     spec.write_text(json.dumps({"tasks": [{"id": "w", "kind": "write", "risk": "critical", "prompt": "write it"}]}))
     assert main(["bench", str(spec), "--matrix", "--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert "x 20 strategies" in out and "fable/max: verification full" in out
+    assert "x 16 strategies" in out and "fable/xhigh: verification full" in out and "/max" not in out
     assert main(["bench", str(spec), "--matrix", "--cells", "haiku/low,opus/low", "--verify", "none", "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "x 2 strategies" in out and "haiku/low: verification none" in out and "opus/low: verification none" in out
