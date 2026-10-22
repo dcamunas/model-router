@@ -1,6 +1,8 @@
 """`router` on the command line: plan (no API), run (live), judge (verify an answer written elsewhere),
-bench (simulated or a file of real tasks), stats, feedback, db (the SQLite index of the ledger), doctor,
-cells, config, install and uninstall. docs/cli.md documents each command.
+bench (simulated or a file of real tasks), calibrate (the start table from benches and the ledger), stats,
+feedback, db (the SQLite index of the ledger), doctor, cells, config, install, uninstall, project (what the
+hook learned in a repository, its floors, its team setup) and agents (advice for agents fixed by hand).
+docs/cli.md documents each command.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
-from . import agents, team
+from . import agents, floors, team
 from ._fmt import money, table
 from .calibration import (
     BUILTIN,
@@ -137,10 +139,9 @@ def _task_from(
         cls = classify_llm(client, prompt) if (args.classify_llm and client is not None) else classify_rules(prompt)
         kind = kind or cls.kind
         risk = risk or cls.risk
-    from . import floors
     from .projects import project_of
 
-    risk, floor = floors.apply(risk, floors.head(prompt), floors.load(project_of(str(Path.cwd()))))
+    risk, floor = floors.apply(risk, floors.head(prompt), floors=floors.load(project_of(str(Path.cwd()))))
     if floor is not None:
         print(f"risk raised to {risk} by this repository's floor: {floor.label}", file=sys.stderr)
     checker = None
@@ -567,7 +568,7 @@ def _cmd_agents(args: argparse.Namespace) -> int:
         raise SystemExit(f"not inside a git repository: {where}. Agents are advised per repository")
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)
-    advice = agents.advise(load_subagents(home() / SUBAGENT_LOG), project, lattice())
+    advice = agents.advise(load_subagents(home() / SUBAGENT_LOG), project, cells=lattice())
     if args.json:
         print(json.dumps([a.to_dict() for a in advice], indent=2))
         return 0
@@ -682,8 +683,6 @@ def _print_tuning(project: str, tuning: dict[str, Any]) -> None:
 
 def _print_floors(project: str) -> None:
     """Print the repository's risk floors, how often each raised a subagent's risk here, and what is wrong with any."""
-    from . import floors
-
     found = floors.load(project)
     if found.path is None:
         return
@@ -718,7 +717,6 @@ def _team_check(profile: Path) -> tuple[Path | None, tuple[bool, str] | None]:
 
 def _floors_check() -> tuple[bool, str] | None:
     """Check the floors of the repository the command runs in, when it has a floors file."""
-    from . import floors
     from .projects import project_of
 
     found = floors.load(project_of(str(Path.cwd())))

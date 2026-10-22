@@ -7,7 +7,9 @@ Events handled (one entry point, dispatch on `hook_event_name`):
   `model`, the hook takes kind and risk from a declaration in the description or the prompt
   (`risk: high`, `kind: review`), else infers them from the text, asks the Policy for the start
   cell (with the repository's tuning) and returns `hookSpecificOutput.updatedInput` with `model`
-  (and `effort` when unset). A launch that repeats a finished subagent's task higher is logged as
+  (and `effort` when unset). The repository's floors (`.claude/model-router.json`, see `floors.py`) can
+  raise the risk from what the brief says, never lower it; the start cell is never at `max` effort.
+  A launch that repeats a finished subagent's task higher is logged as
   its relaunch, the quality signal the learning uses.
 * SubagentStop: reads the finished subagent's transcript and records what it spent, next to the
   decision that routed it (`subagents.py`).
@@ -139,7 +141,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
     feedback = FeedbackStore(home() / "feedback.json")
     project = project_of(cwd)
-    risk, floor = floors.apply(cls.risk, floors.head(prompt, description), floors.load(project))
+    risk, floor = floors.apply(cls.risk, floors.head(prompt, description), floors=floors.load(project))
     tuning = load_tuning(project)
     try:
         policy = Policy(cells=claude, feedback=feedback, tuning=tuning)

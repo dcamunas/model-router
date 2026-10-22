@@ -54,8 +54,7 @@ setups are in [Install](docs/install.md).
 - **[Cheaper reading subagents](docs/claude-code.md#the-read-only-agent)**: 70 % less context cost in one measured review.
 - **[What each subagent really cost](docs/claude-code.md#measurement)**: turns, tokens and peak context.
 - **[Starts that learn per repository](docs/claude-code.md#learning-per-repository)**: up on their own, down by hand.
-- **[One setup for a team repository](docs/install.md#in-a-team-repository)**: the plugin, risk floors and
-  advice for agents fixed by hand.
+- **[One setup for a team repository](docs/install.md#in-a-team-repository)**: the plugin and risk floors for all.
 - **[Team pooling, if you want it](docs/claude-code.md#shared-with-your-team-optional)**: weekly counts, no prompts.
 - **[Cheap text-only tasks](docs/cli.md)**: `router run` carries about 900 tokens of context, not Claude Code's 100K.
 - **[A cost for every solved task](docs/calibration.md)**, and a start table you can calibrate from it.

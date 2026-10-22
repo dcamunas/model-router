@@ -24,10 +24,10 @@ def test_a_floor_raises_the_risk_and_never_lowers_it(tmp_path, monkeypatch):
                                          {"match": "typo", "risk": "low"}])
     rules = floors.load(repo)
     assert len(rules.rules) == 3 and not rules.problems
-    assert floors.apply("low", "fix the migration", rules) == ("high", rules.rules[1])
-    assert floors.apply("medium", "deploy to PRODUCCIÓN and the migration", rules)[0] == "critical"
-    assert floors.apply("critical", "a typo in the migration", rules) == ("critical", None)  # never down
-    assert floors.apply("medium", "nothing to see", rules) == ("medium", None)
+    assert floors.apply("low", "fix the migration", floors=rules) == ("high", rules.rules[1])
+    assert floors.apply("medium", "deploy to PRODUCCIÓN and the migration", floors=rules)[0] == "critical"
+    assert floors.apply("critical", "a typo in the migration", floors=rules) == ("critical", None)  # never down
+    assert floors.apply("medium", "nothing to see", floors=rules) == ("medium", None)
     assert rules.rules[0].label == "reaches production" and rules.rules[1].label == "migration"
 
 

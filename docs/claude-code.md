@@ -78,11 +78,11 @@ committed with the code:
 ```
 
 - **Where it looks.** Each `match` is a regular expression, case-insensitive, searched in the
-  subagent's description and the first four lines of its prompt, where the task is said. Material
+  subagent's description and the first four non-empty lines of its prompt, where the task is said. Material
   pasted below never sets a floor.
 - **Only up.** The risk is the highest of the declared one and every rule that matches. A floor can
   make work dearer, never cheaper.
-- **Seen.** Each decision records the rule that raised it; `router project` lists the rules with how
+- **Visible.** Each decision records the rule that raised it; `router project` lists the rules with how
   often each fired, and `router doctor` flags a rule it cannot use (a bad pattern, an unknown risk).
 - **Also outside the hook.** `router plan` and `router run` in that repository follow the same floors.
 - **Safe to commit.** The file is read as a regular file, never through a link, with limits on its
@@ -99,7 +99,7 @@ advice per agent and cell in the repository:
 |---|---|
 | measuring | fewer than 6 runs |
 | raise one step | 2 runs or more repeated, and at least 30 % of them |
-| lower | 10 runs or more and none repeated: the most capable cell that costs at least 20 % less |
+| lower | 10 runs or more and none repeated: the most capable cell that costs at least 20 % less and gives up little capability |
 | keep | anything else |
 
 A run counts as repeated when, in the same session and within 30 minutes of its end, another subagent
@@ -143,7 +143,7 @@ router stats                 # ... then "Claude Code subagents, measured from th
 router project               # this repo: routed subagents, relaunches, tuning in force, cheaper starts proposed
 router project --apply       # apply the proposed changes; --reset removes the project's tuning
 router project --share       # pool counts with the team through .claude/model-router/ in the repo
-router project --team        # turn the plugin on for everyone in the repo (see Install)
+router project --team        # turn the plugin on for everyone in the repo (Install, "In a team repository")
 router agents                # advice for the agents fixed by hand in this repo
 router config --lean off     # keep every subagent on the agent Claude chose
 ```

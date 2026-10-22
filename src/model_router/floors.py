@@ -127,7 +127,7 @@ def head(prompt: str, description: str = "") -> str:
     return "\n".join([description, *lines])[:MAX_HEAD_CHARS]
 
 
-def apply(risk: str, text: str, floors: Floors) -> tuple[str, FloorRule | None]:
+def apply(risk: str, text: str, *, floors: Floors) -> tuple[str, FloorRule | None]:
     """Return the risk after the floors that match `text`, and the rule that set it (None when none raised it)."""
     best: FloorRule | None = None
     for rule in floors.rules:

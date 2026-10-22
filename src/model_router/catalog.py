@@ -15,6 +15,8 @@ with real verdicts:
   and effort fine-tunes within the tier, following Anthropic's published guidance that a frontier
   model at low effort often beats a lower tier at high effort.
 
+The lattice the router chooses from stops at `xhigh` (AUTO_EFFORTS): `max` runs only when someone names it.
+
 The router works with Claude models only. Another package may `register` a model it serves itself (its
 `provider` says which door), so that model's cells can be named, priced and recorded; the router never routes
 to it: `available_models`, the lattice, the plans and the hook stay on Claude.

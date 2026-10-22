@@ -37,7 +37,7 @@ LOWER_MAX_LOSS = 0.08  # the capability a lower cell may give up
 
 @dataclass(frozen=True)
 class Advice:
-    """What the measurements say about one agent on one cell in one repository."""
+    """Hold what the measurements say about one agent on one cell in one repository, and the cell they advise."""
 
     agent: str
     cell: Cell
@@ -82,7 +82,7 @@ def repeated_ids(records: list[dict[str, Any]]) -> set[str]:
     return out
 
 
-def advise(records: list[dict[str, Any]], project: str, cells: list[Cell]) -> list[Advice]:
+def advise(records: list[dict[str, Any]], project: str, *, cells: list[Cell]) -> list[Advice]:
     """Return the advice for every agent fixed by hand that ran in `project`, the most spent first."""
     repeated = repeated_ids([r for r in records if r.get("project") == project])
     groups: dict[tuple[str, Cell], list[dict[str, Any]]] = {}
@@ -112,14 +112,14 @@ def _advice(agent: str, cell: Cell, records: list[dict[str, Any]], *, cells: lis
         return _with(base, "measuring")
     if fails >= MIN_FAILS and fails / runs >= RAISE_RATE:
         up = step_up(cell, cells)
-        return _with(base, "raise", up, records) if up else base
+        return _with(base, "raise", to=up, records=records) if up else base
     if runs >= DOWN_N and fails == 0:
         down = step_down(cell, cells, max_loss=LOWER_MAX_LOSS, min_saving=LOWER_SAVING)
-        return _with(base, "lower", down, records) if down else base
+        return _with(base, "lower", to=down, records=records) if down else base
     return base
 
 
-def _with(base: Advice, action: str, to: Cell | None = None, records: list[dict[str, Any]] | None = None) -> Advice:
+def _with(base: Advice, action: str, *, to: Cell | None = None, records: list[dict[str, Any]] | None = None) -> Advice:
     """Return `base` with its action, the cell it advises and, when the model changes, the measured tokens repriced."""
     saving = None
     if to is not None and records is not None and to.model != base.cell.model:

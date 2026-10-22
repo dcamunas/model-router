@@ -92,4 +92,3 @@ def read_regular(path: Path, max_bytes: int) -> bytes | None:
     finally:
         os.close(descriptor)
     return raw if len(raw) <= max_bytes else None
-

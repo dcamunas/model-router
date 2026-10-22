@@ -26,7 +26,7 @@ MAX_SETTINGS_BYTES = 1024 * 1024
 
 
 class SettingsError(ValueError):
-    """A repository's settings file that cannot be changed safely: a link, not JSON, or not a JSON object."""
+    """Signal that a repository's settings file cannot be changed safely: a link, not JSON, or not a JSON object."""
 
 
 def settings_path(project: str) -> Path:
@@ -82,7 +82,7 @@ def _write(path: Path, data: dict[str, Any]) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
         Path(tmp).replace(path)
-    except BaseException:
+    except BaseException:  # an interrupt too: never leave a half-written temporary file next to the settings
         Path(tmp).unlink(missing_ok=True)
         raise
 
