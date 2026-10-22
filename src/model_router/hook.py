@@ -152,7 +152,9 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None,
         "kind": cls.kind, "risk": cls.risk, "cell": cell.label, "set": fields, "why": cls.reason,
         "subagent": subagent or "general-purpose", "prompt_head": prompt.strip()[:PROMPT_HEAD_CHARS],
         "prompt_hash": prompt_hash(prompt), "project": project,
-        "router_chose": "effort" in fields,  # model and effort both the router's: evidence about its tables
+        # model and effort both the router's, on the table's cell: evidence about its tables (a cross-checked review
+        # runs another cell than the start, so its outcome says nothing about the start)
+        "router_chose": "effort" in fields and not cross,
     }
     if cross:
         record["cross"] = cross
@@ -248,7 +250,7 @@ def _tune(event: dict[str, Any]) -> list[str]:
         records = load_subagents(home() / SUBAGENT_LOG)
         mine = evidence(project, records, relaunched_ids(home() / "hook.jsonl"), tuning.get("since"))
         changes = raise_failing(project, combine(mine, pooled(project, tuning.get("since"))[0]),
-                                start_in_force(tuning))
+                                start_in_force(tuning), local=mine)
         write_own(project, records, home() / "hook.jsonl")  # only in a repository that shares, closed weeks only
     except Exception as exc:  # noqa: BLE001 - tuning is a side task: it must never cost the session its context
         sys.stderr.write(f"router-hook: tuning skipped: {type(exc).__name__}: {exc}\n")

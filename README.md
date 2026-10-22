@@ -268,27 +268,31 @@ works on three things, all of them on Claude models:
   kind and risk, an alike prompt, same session, within 30 minutes) on a bigger model or with more
   effort, the first launch counts as a fail. Moving from the read-only agent to the general one does
   not: the model was not the problem. Only launches where the router chose both model and effort
-  count, from the last 13 weeks. If the cell a kind and risk starts on fails in 2 of 6 launches or
-  more (30 % at least), it starts one step up in that project from the next session, and Claude Code
-  says so. Going back down is only proposed, after 10 launches without a fail, to the cell it was
+  count, from the last 13 whole weeks. If the cell a kind and risk starts on fails in 2 of 6 launches
+  or more (30 % at least), it starts one step up in that project from the next session, and Claude
+  Code says so. Going back down is only proposed, after 10 launches without a fail, to the cell it was
   raised from or to one at least 20 % cheaper, and you apply it. The risk floors always hold. The
   tuning lives in `~/.model-router/projects/`; `--reset` or `--apply` restart the count, so what was
   already weighed does not move it again.
 
 - **Shared through the repository (optional).** One person's numbers grow slowly. A team can pool them:
-  `router project --share` creates `.claude/model-router/` in the repo, and from then on every
-  installation keeps one small file there, to commit with the rest:
+  `router project --share` creates `.claude/model-router/` in the repo. Once that directory is
+  committed, every teammate's router adds one small file there per closed week, never changed
+  afterwards:
 
   ```json
-  {"v":1,"weeks":{"2026-W42":{"review|high|opus/medium":[12,1]}}}
+  {"v":1,"c":{"review|high|opus/medium":[12,1]}}
   ```
 
-  Launches and fails per closed week, kind, risk and start cell. No prompts, signatures, paths, names,
-  costs or times. The file name is a salted hash, and one file per installation means nobody edits
-  anyone else's. Each installation adds the others' files to its own log, never its own file (that
-  would count it twice), with the same rules: weeks before a reset do not count, nor weeks beyond the
-  13. The file changes at most once a week. Git still says who committed each file, so weekly counts
-  per person are visible to anyone who looks.
+  That is launches and fails per kind, risk and start cell. The file holds no prompts, signatures,
+  paths, names, costs or times. Its name is a salted hash plus the week. Files never change, so
+  branches and merges do not fight over them, and a file older than 13 weeks is deleted by whoever
+  wrote it. Each router adds the others' files to its own log, but never its own files, which would
+  count it twice. The same rules apply: weeks before a reset do not count, and one installation
+  weighs at most 30 launches per cell, at its own fail rate. The team's counts alone never raise a
+  start. A raise happens on its own only with at least one fail on your machine too; otherwise
+  `router project` proposes it. `MODEL_ROUTER_SHARE=0` keeps one installation out. Git still records
+  who committed each file, so anyone who looks can see weekly counts per person.
 
 ```bash
 router stats                 # ... then "Claude Code subagents, measured from their transcripts"
@@ -309,7 +313,8 @@ and never block: on any error they exit quietly. Agents defined in `.claude/agen
 left alone; they are still measured.
 
 Environment variables: `MODEL_ROUTER_HOOK=0` turns the hooks off without uninstalling;
-`MODEL_ROUTER_LEAN=0` keeps subagents off the read-only agent; `MODEL_ROUTER_HOOK_QUIET=1` removes
+`MODEL_ROUTER_LEAN=0` keeps subagents off the read-only agent; `MODEL_ROUTER_SHARE=0` keeps this
+installation out of a repository's shared counts; `MODEL_ROUTER_HOOK_QUIET=1` removes
 the one-line notice; `MODEL_ROUTER_HOOK_LOG=0` stops logging decisions and measurements;
 `MODEL_ROUTER_UV` tells the plugin where `uv` is. Decisions go to `~/.model-router/hook.jsonl` and
 measurements to `~/.model-router/subagents.jsonl`.
@@ -403,8 +408,8 @@ the numbers to pick a judge with, instead of the error rates the simulation assu
   it; every measurement goes to `~/.model-router/subagents.jsonl` with numbers, that hash, a
   signature of sixteen numbers (no text) and the project's path, read from the transcript Claude Code
   already keeps on your disk. A project's tuning goes to `~/.model-router/projects/`.
-- In a repository that shares counts, the hook writes one file to `.claude/model-router/` with the
-  counts above and nothing else. It leaves your machine only when you commit and push it.
+- In a repository that shares counts, the hook adds weekly files to `.claude/model-router/` with the
+  counts above and nothing else. They leave your machine only when you commit and push them.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
   or your Claude Code account, and to nobody else. (The tribunal plugin also sends a reviewed change
   to Codex; its README says what goes.)

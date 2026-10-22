@@ -12,23 +12,27 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
   a task of the same kind and risk with an alike prompt on a higher cell (a more capable model, or the same
   model with more effort), the first launch is recorded as relaunched: the quality signal a subagent
   otherwise lacks. Moving from the read-only agent to the general one is not a relaunch. Only launches where
-  the router chose both model and effort count, from the last 13 weeks and since the last reset or applied
-  change. The start cell in force for a kind and risk, relaunched in 2 of 6 launches or more and at least
+  the router chose both model and effort count (a review moved to another model than the chat's does not),
+  from the last 13 whole weeks and since the last reset or applied change. The start cell in force for a kind and risk, relaunched in 2 of 6 launches or more and at least
   30 %, moves one step up the ladder in that project at the next session start, with a line in Claude Code
   saying what moved and why. A cheaper start is only proposed, after 10 launches with none relaunched: the
   cell it was raised from, or the next one down if at least 20 % cheaper, never below a risk floor nor onto
   a failing cell. A tuned cell remembers the cell it replaced and is ignored once the table or the
   calibration no longer gives that cell. Tunings live in `~/.model-router/projects/`, written under a lock.
-- Shared counts, opt-in per repository: with `.claude/model-router/` in the repo, each installation writes
-  one file there with launches and relaunches per closed ISO week, kind, risk and start cell (no prompts,
-  signatures, paths, names or costs; a salted file name), and adds the other installations' files to its own
-  evidence. Its own file is never read back, malformed entries are skipped, and weeks before a reset or
-  beyond the window do not count.
+- Shared counts, opt-in per repository: with `.claude/model-router/` committed in the repo, each installation
+  adds one file per ISO week, a day after the week closes, and never changes it: launches and relaunches per
+  kind, risk and start cell (no prompts, signatures, paths, names or costs; a salted file name). It deletes
+  its files once they leave the window. Each installation adds the other installations' files to its own
+  evidence: never its own (under any id it used), only weeks after the last reset and inside the window, at
+  most 30 launches per installation and cell at its own fail rate, malformed entries skipped. Counts from
+  elsewhere alone never raise a start: a raise needs a relaunch on this machine too, or is only proposed.
+  `MODEL_ROUTER_SHARE=0` keeps an installation out.
 - `router project [PATH] [--apply] [--reset] [--share]`: the subagents routed in a project (with how many
   came from other installations), how many were relaunched, the tuning in force with its last changes, and
-  the cheaper starts the evidence supports; `--share` turns shared counts on.
-- `Policy(tuning=...)`: a project's start cells, applied after the risk floors; `router plan` applies the
-  current repository's tuning, as the hook does.
+  the changes the evidence supports that wait for a hand (cheaper starts, raises on the team's counts
+  alone); `--share` turns shared counts on.
+- `Policy(tuning=...)`: a project's start cells, applied after the risk floors and never weaker than the start
+  they replace; `router plan` applies the current repository's tuning, as the hook does.
 
 ## [0.14.0] - 2026-10-22
 

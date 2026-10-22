@@ -12,7 +12,8 @@ agent to the general one is not a relaunch of this kind: the model was not the p
 
 Only launches where the router chose both the model and the effort count, and only since the project's tuning
 was last reset or applied by hand. From them the start cell of a kind and risk moves in one direction on its
-own: up one step, when it keeps failing (MIN_N launches, MIN_FAILS relaunched, at least RAISE_RATE). Moving down
+own: up one step, when it keeps failing (MIN_N launches, MIN_FAILS relaunched, at least RAISE_RATE) with at least
+one relaunch on this machine (a raise on other installations' counts alone is only proposed). Moving down
 is only proposed, after DOWN_N launches with none relaunched, to the cell it was raised from or to one at least
 LOWER_SAVING cheaper, and applied by hand (`router project --apply`). A tuned cell remembers the cell it
 replaced and is ignored when the table or the calibration no longer gives that cell. The risk floors always
@@ -23,11 +24,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import tempfile
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -66,21 +68,39 @@ def project_of(cwd: str | None) -> str | None:
     return None
 
 
-def _salt() -> bytes:
+def install_key() -> tuple[bytes, bool]:
+    """Return this installation's secret salt and whether it is kept on disk. Two hooks starting at once agree on
+    one: the file is created exclusively and the loser reads the winner's. A salt that cannot be kept is this run's
+    only, and then nothing that must stay stable (the shared counts' file names) uses it.
+    """
     path = home() / SALT_FILE
-    try:
-        salt = path.read_bytes()
-        if len(salt) >= 16:
-            return salt[:32]
-    except OSError:
-        pass
     salt = secrets.token_bytes(32)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(salt)
-    except OSError:  # a state directory that cannot be written: this run's salt, signatures comparable only within it
-        pass
-    return salt
+    for _ in range(3):
+        try:
+            kept = path.read_bytes()
+            if len(kept) >= 16:
+                return kept[:32], True
+            path.write_bytes(salt)  # a damaged salt: replace it
+            return salt, True
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return salt, False
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue  # another process made it first: read theirs
+        except OSError:
+            return salt, False
+        with os.fdopen(fd, "wb") as f:
+            f.write(salt)
+        return salt, True
+    return salt, False
+
+
+def _salt() -> bytes:
+    return install_key()[0]
 
 
 def signature(prompt: str) -> list[int]:
@@ -162,15 +182,46 @@ def relaunched_ids(decision_log: Path) -> set[str]:
     return out
 
 
+# ---- weeks -------------------------------------------------------------------------------------------------------
+
+
+def week_of(moment: datetime) -> str:
+    """Return the ISO week of a moment, as `2026-W42`."""
+    year, week, _ = moment.astimezone(UTC).isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def week_start(label: str) -> datetime | None:
+    """Return the Monday 00:00 UTC a week label (`2026-W42`) starts on, or None for a bad label."""
+    m = re.fullmatch(r"(\d{4})-?W(\d{2})", label)
+    if not m:
+        return None
+    try:
+        day = date.fromisocalendar(int(m[1]), int(m[2]), 1)
+    except ValueError:
+        return None
+    return datetime(day.year, day.month, day.day, tzinfo=UTC)
+
+
+def window_start(now: datetime | None = None) -> datetime:
+    """Return where evidence starts counting: the first whole ISO week inside WINDOW, the same here and in the
+    shared counts, so both sources weigh the same weeks.
+    """
+    begins = week_start(week_of((now or datetime.now(UTC)) - WINDOW))
+    assert begins is not None  # week_of always gives a valid label
+    return begins + timedelta(weeks=1)
+
+
 # ---- evidence ----------------------------------------------------------------------------------------------------
 
 
 def evidence(project: str, records: list[dict[str, Any]], relaunched: set[str],
              since: str | None = None) -> dict[tuple[str, str, str], dict[str, int]]:
     """Count, per (kind, risk, start cell) in `project`, the subagents whose model and effort the router chose
-    (`router_chose`) in the last WINDOW and since `since` when given, and how many of them were relaunched higher.
+    (`router_chose`) in the whole weeks of the last WINDOW and since `since` when given, and how many of them
+    were relaunched higher.
     """
-    start = max(m for m in (_when(since), datetime.now(UTC) - WINDOW) if m is not None)
+    start = max(m for m in (_when(since), window_start()) if m is not None)
     out: dict[tuple[str, str, str], dict[str, int]] = {}
     for r in records:
         if r.get("project") != project or not r.get("routed") or not r.get("router_chose"):
@@ -233,7 +284,10 @@ def load_tuning(project: str | None) -> dict[str, Any]:
             if _valid(cell) and (not base or _valid(base)):
                 start.setdefault(str(kind), {})[str(risk)] = {"cell": str(cell), "base": str(base or "")}
     changes = data.get("changes") if isinstance(data.get("changes"), list) else []
-    return {**data, "start": start, "changes": changes}
+    out = {**data, "start": start, "changes": changes}
+    if not isinstance(data.get("since"), str) or _when(data["since"]) is None:
+        out.pop("since", None)
+    return out
 
 
 def update_tuning(project: str, change: Callable[[dict[str, Any]], Any]) -> Path:
@@ -263,10 +317,10 @@ def reset(project: str) -> Path:
 # ---- moves -------------------------------------------------------------------------------------------------------
 
 
-def raise_failing(project: str, ev: dict[tuple[str, str, str], dict[str, int]],
-                  current: Callable[[str, str], Cell]) -> list[dict[str, Any]]:
-    """Raise one step up the start of every (kind, risk) whose cell in force (`current(kind, risk)`) is failing in
-    `ev`, record it, and return the changes. A cell that is not the one in force is history: it moves nothing.
+def raises(ev: dict[tuple[str, str, str], dict[str, int]],
+           current: Callable[[str, str], Cell]) -> list[dict[str, Any]]:
+    """Return a step up for every (kind, risk) whose cell in force (`current(kind, risk)`) is failing in `ev`. A
+    cell that is not the one in force is history: it moves nothing.
     """
     cells = lattice()
     changes: list[dict[str, Any]] = []
@@ -276,9 +330,30 @@ def raise_failing(project: str, ev: dict[tuple[str, str, str], dict[str, int]],
         up = step_up(parse_cell(label), cells)
         if up is not None:
             changes.append(_change("raised", kind, risk, label, up.label, e))
+    return changes
+
+
+def raise_failing(project: str, ev: dict[tuple[str, str, str], dict[str, int]],
+                  current: Callable[[str, str], Cell],
+                  local: dict[tuple[str, str, str], dict[str, int]] | None = None) -> list[dict[str, Any]]:
+    """Apply and return the `raises` of `ev`. With `local` (this machine's part of `ev`), only those with a
+    relaunch here too: counts from elsewhere alone never move a start on their own (`router project` proposes
+    them).
+    """
+    changes = [c for c in raises(ev, current) if local is None or _local_fails(local, c)]
     if changes:
         update_tuning(project, lambda t: _write(t, changes))
     return changes
+
+
+def team_raises(ev: dict[tuple[str, str, str], dict[str, int]], current: Callable[[str, str], Cell],
+                local: dict[tuple[str, str, str], dict[str, int]]) -> list[dict[str, Any]]:
+    """Return the raises the pooled evidence supports with no relaunch on this machine: proposed, not applied."""
+    return [c for c in raises(ev, current) if not _local_fails(local, c)]
+
+
+def _local_fails(local: dict[tuple[str, str, str], dict[str, int]], change: dict[str, Any]) -> bool:
+    return local.get((change["kind"], change["risk"], change["from"]), {}).get("fails", 0) > 0
 
 
 def propose_lower(project: str, ev: dict[tuple[str, str, str], dict[str, int]], floors: dict[str, str],

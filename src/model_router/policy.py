@@ -403,6 +403,9 @@ class Policy:
             tuned = self._available(parse_cell(str(entry["cell"])), rationale)
         except ValueError:
             return start
+        if tuned.capability < start.capability:  # its model is gone and what stands in is weaker: keep the start
+            rationale.append(f"tuning for {name} ignored: {entry['cell']} would run as {tuned}, below {start}")
+            return start
         rationale.append(f"tuned for {name}: {start} -> {tuned}")
         return tuned
 

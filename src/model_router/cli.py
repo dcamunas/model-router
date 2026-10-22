@@ -522,10 +522,13 @@ def _cmd_project(args: argparse.Namespace) -> int:
         finalize_subagents(home() / SUBAGENT_LOG)
     records = load_subagents(home() / SUBAGENT_LOG)
     if args.share:
-        shared.shared_dir(project).mkdir(parents=True, exist_ok=True)
+        folder = shared.shared_dir(project)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / ".gitkeep").touch()  # git keeps no empty directory, and the directory is the opt-in
         written = shared.write_own(project, records, home() / "hook.jsonl")
-        print(f"{shared.shared_dir(project)}: shared counts on; commit this directory with the repository"
-              + (f" (wrote {written.name})" if written else " (nothing to write until a week with routed subagents closes)"))
+        print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
+              + (f" (added {len(written)} week file(s))" if written else
+                 " (a week is added a day after it closes, if the router routed subagents in it)"))
     tuning = projects.load_tuning(project)
     mine = projects.evidence(project, records, projects.relaunched_ids(home() / "hook.jsonl"), tuning.get("since"))
     others, files = shared.pooled(project, tuning.get("since"))
@@ -540,13 +543,15 @@ def _cmd_project(args: argparse.Namespace) -> int:
                 for (kind, risk, cell), e in sorted(ev.items())]
         print("\nsubagents the router routed here (relaunched = launched again higher, same kind and risk: a fail)")
         print(table(["kind", "risk", "start cell", "n", "relaunched", "n from others"], rows))
-    _show_tuning(project, tuning, ev, apply=args.apply)
+    _show_tuning(project, tuning, ev, mine, apply=args.apply)
     return 0
 
 
-def _show_tuning(project: str, tuning: dict[str, Any], ev: dict[tuple[str, str, str], dict[str, int]], *,
-                 apply: bool) -> None:
-    """Print a project's tuning in force, its last changes and the cheaper starts the evidence supports."""
+def _show_tuning(project: str, tuning: dict[str, Any], ev: dict[tuple[str, str, str], dict[str, int]],
+                 mine: dict[tuple[str, str, str], dict[str, int]], *, apply: bool) -> None:
+    """Print a project's tuning in force, its last changes, and the changes the evidence supports but that wait for
+    a hand: cheaper starts, and raises on other installations' counts alone.
+    """
     from . import projects
     from .hook import start_in_force
 
@@ -558,15 +563,18 @@ def _show_tuning(project: str, tuning: dict[str, Any], ev: dict[tuple[str, str, 
         for c in [c for c in tuning.get("changes", []) if c.get("kind")][-5:]:
             print(f"  {c['at'][:16]} {c['what']} {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, "
                   f"{c['relaunched']} of {c['n']} relaunched")
-    proposals = projects.propose_lower(project, ev, FLOOR, start_in_force(tuning))
+    current = start_in_force(tuning)
+    proposals = projects.team_raises(ev, current, mine) + projects.propose_lower(project, ev, FLOOR, current)
     if proposals:
-        print(f"\ncheaper starts the evidence supports ({projects.DOWN_N}+ launches, none relaunched); not applied:")
+        print("\nchanges the evidence supports, not applied (raises from other installations' counts alone, "
+              f"cheaper starts after {projects.DOWN_N}+ launches with none relaunched):")
         for c in proposals:
-            print(f"  {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, {c['n']} launches")
+            print(f"  {c['what']} {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, "
+                  f"{c['relaunched']} of {c['n']} relaunched")
         if apply:
             print(f"applied: {projects.apply(project, proposals)}")
         else:
-            print("`router project --apply` applies them; raising a failing start happens on its own at session start")
+            print("`router project --apply` applies them; a start that fails here too is raised on its own at session start")
 
 
 def _cmd_db(args: argparse.Namespace) -> int:
@@ -963,7 +971,7 @@ def build_parser() -> argparse.ArgumentParser:
     spj.add_argument("--apply", action="store_true", help="apply the proposed cheaper starts")
     spj.add_argument("--reset", action="store_true", help="remove this project's tuning")
     spj.add_argument("--share", action="store_true", help="share counts through the repository: creates "
-                     ".claude/model-router/ and writes this installation's file there, to commit")
+                     ".claude/model-router/, to commit; each installation adds one small file per week there")
     spj.set_defaults(func=_cmd_project)
 
     sg = sub.add_parser("config", help="show or set the profile for `router run`, the available models, the judge "
