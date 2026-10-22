@@ -19,7 +19,8 @@ that covers every model is spent:
      "windows": {"five_hour": {"utilization": 0.2, "resets_at": "..."}, ...}, "checked": "..."}
 
 A model is limited while `until` is in the future, and available again at that exact moment with no other step.
-An entry without `until` (the probe could not tell) stays limited for at most RECHECK, then is probed again.
+An entry without `until` (the probe could not tell) holds for RECHECK only. After that the model is available
+again, and the next failure probes it anew.
 """
 
 from __future__ import annotations
@@ -49,7 +50,9 @@ ACCOUNT_LIMIT = re.compile(r"usage limit|rate limit", re.I)
 
 @dataclass(frozen=True)
 class Limit:
-    """A model the account cannot use: until when (None when unknown), the window that refused it, when seen."""
+    """Describe a model the account cannot use: until when (None when unknown), the window that refused it, and
+    when that was seen.
+    """
 
     model: str
     until: datetime | None
@@ -64,15 +67,13 @@ class Limit:
 
     def when(self) -> str:
         """Return the reset in the machine's local time, as a person reads it ('Sat 24/10 15:00 CEST')."""
-        if self.until is None:
-            return "unknown reset"
-        return self.until.astimezone().strftime("%a %d/%m %H:%M %Z")
+        return clock.local(self.until) if self.until is not None else "unknown reset"
 
 
 @dataclass(frozen=True)
 class Probe:
-    """What one probe said: `allowed`, `rejected` or `unknown`, the reset and window when rejected, and every window
-    the event listed with its use (0 to 1) and reset.
+    """Hold what one probe said: `allowed`, `rejected` or `unknown`. A rejection carries its reset and window.
+    Every window the event listed comes along with its use (0 to 1) and reset.
     """
 
     status: str
@@ -103,18 +104,6 @@ def active(now: datetime | None = None) -> dict[str, Limit]:
         limit = _limit(str(name), entry)
         if limit is not None and limit.active(moment):
             out[limit.model] = limit
-    return out
-
-
-def stale(now: datetime | None = None) -> list[str]:
-    """Return the models whose limit had no known reset and is due to be probed again."""
-    moment = now or clock.now()
-    models = _read().get("models")
-    out = []
-    for name, entry in (models if isinstance(models, dict) else {}).items():
-        limit = _limit(str(name), entry)
-        if limit is not None and limit.until is None and not limit.active(moment):
-            out.append(limit.model)
     return out
 
 

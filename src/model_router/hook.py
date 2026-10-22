@@ -9,14 +9,17 @@ Events handled (one entry point, dispatch on `hook_event_name`):
   cell (with the repository's tuning) and returns `hookSpecificOutput.updatedInput` with `model`
   (and `effort` when unset). The repository's floors (`.claude/model-router.json`, see `floors.py`) can
   raise the risk from what the brief says, never lower it; the start cell is never at `max` effort.
-  A launch that repeats a finished subagent's task higher is logged as
-  its relaunch, the quality signal the learning uses.
+  A model over its usage limit (`limits.py`) is not available until its reset, and the notice says until
+  when; a launch that names such a model is denied with that time. A launch that repeats a finished
+  subagent's task higher is logged as its relaunch, the quality signal the learning uses.
 * SubagentStop: reads the finished subagent's transcript and records what it spent, next to the
   decision that routed it (`subagents.py`).
+* StopFailure: when a subagent or the turn dies on a usage limit, asks that model for its exact reset with
+  one `claude -p` probe (a refused one costs nothing) and keeps it (`limits.py`).
 * SessionStart: finishes the last session's measurements, raises the repository's start cells that
   keep failing (`projects.py`), writes and prunes this installation's shared counts when the
   repository shares them (`shared.py`), and gives Claude the context it needs to declare kind,
-  risk and access. A raise comes with a one-line notice.
+  risk and access, naming any model over its usage limit. A raise comes with a one-line notice.
 
 Cross-check rule: a review subagent whose risk calls for full verification (see VERIFY_BY_RISK)
 never runs on the model that serves the main chat. The chat's model is read from the last
@@ -24,9 +27,10 @@ assistant entry of the session transcript (`transcript_path` in the event); when
 the rule does nothing. This is the only verification the orchestrator itself gets: it has no
 hook that can change its own model.
 
-Rules: explicit beats automatic. A `model` chosen by Claude is kept. Custom agents from
+Rules: explicit beats automatic. A `model` chosen by Claude is kept, unless its usage limit is spent. Custom agents from
 `.claude/agents/*.md` are skipped (their frontmatter is their routing), and so are forks (the Agent
-tool ignores model and effort for them). The hook never blocks: on any error it exits 0 silently.
+tool ignores model and effort for them). Apart from that one denial the hook never blocks: on any error it
+exits 0 silently.
 
 Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the decisions log
 (~/.model-router/hook.jsonl), the measurements and with them all learning; MODEL_ROUTER_HOOK_QUIET=1
@@ -356,8 +360,8 @@ def _limits_context() -> str:
 
 
 def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
-    """When a turn or a subagent dies on a usage limit, find which model, ask it for its exact reset, and keep it, so
-    the next launches go elsewhere until then.
+    """Read a usage-limit failure of a turn or a subagent: find the model, ask it for its exact reset and keep it.
+    The next launches go elsewhere until then.
     """
     if "rate_limit" not in str(event.get("error") or ""):
         return None
@@ -378,8 +382,9 @@ def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
 def _limited_explicit(tool_input: dict[str, Any]) -> dict[str, Any] | None:
     """Refuse a launch that names a model whose usage limit is spent: it would fail. Say until when, and what to do."""
     wanted = str(tool_input.get("model") or "")
-    held = limits.active()
-    limit = held.get(wanted) if wanted else None
+    if wanted in MODELS:
+        wanted = MODELS[wanted].short  # a full id, `claude-fable-5-1`, names the same model as `fable`
+    limit = limits.active().get(wanted) if wanted else None
     if limit is None:
         return None
     reason = (f"{wanted} is over its usage limit until {limit.when()}. Launch again without `model` (the router "

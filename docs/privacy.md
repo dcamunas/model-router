@@ -4,7 +4,10 @@
 
 What each part of the router writes on your disk and what it sends, and to whom.
 
-- The hooks call no API: they classify by rules, locally. Every decision goes to
+- The hooks classify by rules, locally, and call no API, with one exception: after a subagent dies on a
+  usage limit, the StopFailure hook sends the word "ok" to that model through `claude -p`, on your
+  account, to read the exact reset. It goes to `~/.model-router/limits.json` with the window's use: times
+  and numbers, no text. Every decision goes to
   `~/.model-router/hook.jsonl` with the first 60 characters of the subagent's prompt and a hash of
   it; every measurement goes to `~/.model-router/subagents.jsonl` with numbers, that hash, a
   signature of sixteen numbers (no text) and the project's path, read from the transcript Claude Code

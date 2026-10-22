@@ -1,7 +1,8 @@
 """`router` on the command line: plan (no API), run (live), judge (verify an answer written elsewhere),
 bench (simulated or a file of real tasks), calibrate (the start table from benches and the ledger), stats,
 feedback, db (the SQLite index of the ledger), doctor, cells, config, install, uninstall, project (what the
-hook learned in a repository, its floors, its team setup) and agents (advice for agents fixed by hand).
+hook learned in a repository, its floors, its team setup), agents (advice for agents fixed by hand) and limits
+(the models over their usage limit and their exact reset).
 docs/cli.md documents each command.
 """
 
@@ -44,7 +45,7 @@ from .catalog import (
     PRICES_AS_OF,
     SHORT_TO_ID,
     UnknownModelError,
-    available_models,
+    configured_models,
     lattice,
     parse_cell,
     unknown_listed,
@@ -576,7 +577,8 @@ def _cmd_limits(args: argparse.Namespace) -> int:
         for name in names:
             spec = MODELS.get(SHORT_TO_ID.get(name, name))
             if spec is None or not spec.claude:
-                raise SystemExit(f"unknown Claude model: {name}")
+                known = ", ".join(s.short for s in MODELS.values() if s.claude)
+                raise SystemExit(f"unknown Claude model: {name}; try one of {known}")
             limit = limits.record(spec.short, limits.probe(spec.id, config_dir=config_dir))
             print(f"{spec.short}: " + (f"limited until {limit.when()} ({limit.window})" if limit else "available"))
     held = limits.active()
@@ -599,7 +601,7 @@ def _local(moment: object) -> str:
     from . import clock
 
     parsed = clock.parse_moment(moment) if moment else None
-    return parsed.astimezone().strftime("%a %d/%m %H:%M %Z") if parsed else "?"
+    return clock.local(parsed) if parsed else "?"
 
 
 def _cmd_agents(args: argparse.Namespace) -> int:
@@ -936,7 +938,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     hook_bin = hook_binary()
     missing = "not found (install the package: uv tool install ... or uv sync)"
     checks.append((hook_bin is not None, f"hook binary: {hook_bin or missing}"))
-    avail = available_models()
+    avail = configured_models()
     source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if read_config().get("models") else "catalogue")
     checks.append((True, f"available models: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
     unknown = unknown_listed()
@@ -1042,7 +1044,7 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
     print(table(["cell", "tier", "capability*", "ref. cost", "$/M in", "$/M out"], rows))
     print(f"\n* assumed capability (catalog.py), not measured · ref. cost = 2,000 tokens in, 1,500 out at effort high"
           f" · prices {PRICES_AS_OF}")
-    off = [spec.short for m, spec in MODELS.items() if spec.claude and m not in available_models()]
+    off = [spec.short for m, spec in MODELS.items() if spec.claude and m not in configured_models()]
     if off:
         print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router config --models`)")
     return 0
@@ -1072,7 +1074,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
             return 0
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
-        print(f"available models: {', '.join(MODELS[m].short for m in available_models())}")
+        print(f"available models: {', '.join(MODELS[m].short for m in configured_models())}")
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
         print(f"calibration: {cfg.get('calibration') or 'none (the built-in tables decide)'}")
         print(f"read-only agent for reading tasks: {'off' if cfg.get('lean') is False else 'on'}")

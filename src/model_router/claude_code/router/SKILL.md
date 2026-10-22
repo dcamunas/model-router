@@ -68,7 +68,8 @@ fails, `router doctor` says so.
 ## When to step in yourself
 
 - Do not set `model` on the Agent unless the user asks for it or the task is high risk. If you set
-  it, the hook keeps it.
+  it, the hook keeps it, unless that model is over its usage limit: then the launch is refused with
+  the time it resets, and a launch without `model` goes to an available one.
 - Agents defined in `.claude/agents/*.md` do not go through the hook: their frontmatter rules.
   `router agents` says, from what they spent and how often they were repeated, which look too high or too
   low; the change is the user's.

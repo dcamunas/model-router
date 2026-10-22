@@ -196,23 +196,26 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
     return [m for m in MODELS if m in ids]
 
 
-def available_models(*, with_limited: bool = False) -> list[str]:
-    """Return the Claude models this installation may route work to, in catalogue order. The MODEL_ROUTER_MODELS
+def configured_models() -> list[str]:
+    """Return the Claude models this installation is set to use, in catalogue order. The MODEL_ROUTER_MODELS
     variable wins, then `models` in config.json (`router config --models`); with neither, every Claude model in
-    the catalogue. Use it when a plan or an account lacks a model (no Fable, say). A name the catalogue does not
-    know, or a registered model's, is ignored: the router routes to Claude only. A model whose usage limit is spent
-    (`limits.py`) is left out until the exact moment its window resets, unless `with_limited`; when every model
-    is out, none is left out, since there is nowhere else to go.
+    the catalogue. A name the catalogue does not know, or a registered model's, is ignored: the router routes to
+    Claude only.
     """
     claude = [m for m, spec in MODELS.items() if spec.claude]
     known = [n for n in listed_models() if n in SHORT_TO_ID or n in MODELS]
     ids = [m for m in parse_models(known) if MODELS[m].claude] if known else []
-    chosen = ids or claude  # nothing listed, or nothing left: every Claude model
-    if with_limited:
-        return chosen
+    return ids or claude  # nothing listed, or nothing left: every Claude model
+
+
+def available_models() -> list[str]:
+    """Return the configured models the router may route work to now. A model whose usage limit is spent
+    (`limits.py`) is left out until the exact moment its window resets. When every one is out, none is, since
+    there is nowhere else to go.
+    """
+    configured = configured_models()
     limited = set(limits.active())
-    usable = [m for m in chosen if MODELS[m].short not in limited]
-    return usable or chosen
+    return [m for m in configured if MODELS[m].short not in limited] or configured
 
 
 def listed_models() -> list[str]:

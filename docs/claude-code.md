@@ -73,8 +73,8 @@ resets. The router finds out from the failure and then knows the exact moment:
 - **Detected.** A subagent that dies on a limit fires `StopFailure` with `error: rate_limit` (it never
   reaches `SubagentStop`), and `router run` gets the same 429 back.
 - **Exact reset.** The router then asks that model for one word through `claude -p --output-format
-  stream-json`, whose `rate_limit_event` carries the window and its `resetsAt`. A refused question costs
-  nothing. What it learns goes to `~/.model-router/limits.json`.
+  stream-json`, whose `rate_limit_event` carries the window and its `resetsAt`. A refused question
+  reports a cost of 0. What it learns goes to `~/.model-router/limits.json`.
 - **Routed around.** Until that moment the model is left out of the available ones: the hook, plans,
   judges and `router run` pick the next model, and each launch's notice says until when. At the reset it
   is back with no other step. A launch that names the limited model with `model` is refused, with the
@@ -178,8 +178,10 @@ router config --lean off     # keep every subagent on the agent Claude chose
 
 `SessionStart` tells Claude the hook exists and what to declare. The skill `router` covers what a
 hook cannot do: verify a subagent's result, escalate, and send text-only subtasks through `router
-run`, which carries no session context at all. The hooks call no API, take a few tenths of a second
-and never block: on any error they exit quietly. Agents defined in `.claude/agents/*.md` and forks are
+run`, which carries no session context at all. The hooks take a few tenths of a second and call no
+API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
+word (a `claude -p` call of up to 30 seconds) to learn its reset. They block only a launch that names a
+model over its limit; on any error they exit quietly. Agents defined in `.claude/agents/*.md` and forks are
 left alone; they are still measured. A session opened before a plugin update keeps routing with the
 environment the update installed, and never puts the older version back.
 

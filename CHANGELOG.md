@@ -4,16 +4,25 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 
 ## [0.18.0] - 2026-10-22
 
+The router knows when a model's usage limit is spent and the exact moment it resets.
+
 ### Added
 
-- Usage limits. A subagent that dies on a spent limit fires `StopFailure`, now hooked, and `router run` gets
-  the same 429: the router asks that model for one word through `claude -p --output-format stream-json`, whose
-  rate-limit event gives the exact reset (a refused question costs nothing), and keeps it in
-  `~/.model-router/limits.json`. Until that moment the model is out of the available ones, so the hook, plans,
-  judges and `router run` pick the next one, and it is back at the reset with no other step. A launch that names
-  the limited model is refused with the time. The session context, each launch's notice, the plan's reasons and
-  `router doctor` say until when; `router limits` shows every limit and the account's windows, and `--check`
-  asks now. `router install` adds the StopFailure hook.
+- A StopFailure hook. A subagent that dies on a spent limit fires it (never SubagentStop), and `router run`
+  gets the same 429 from `claude -p`. The router then asks that model for one word with `--output-format
+  stream-json`; the rate-limit event gives the window and its exact reset, and a refused question reports a
+  cost of 0. It goes to `~/.model-router/limits.json`.
+- Until that moment the model is not available: the hook, plans, judges and `router run` pick the next one,
+  and it is back at the reset with no other step. A launch that names it is refused with the time.
+- `router limits` shows every limit and the account's windows; `--check` asks now.
+
+### Changed
+
+- The session context, each launch's notice, the plan's reasons and the decision record (`limited`) say which
+  models are limited and until when; `router doctor` lists them and checks the StopFailure hook.
+- `catalog.configured_models()` is what the settings allow; `available_models()` is that minus the limited.
+
+Installed with `router install` rather than the plugin: run `router install` again for the new hook.
 
 ## [0.17.0] - 2026-10-22
 

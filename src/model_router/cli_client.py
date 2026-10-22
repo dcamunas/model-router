@@ -147,7 +147,7 @@ class CliClient:
         return self.to_completion(data, cell, output_format, seconds)
 
     def _note_limit(self, cell: Cell, text: str) -> None:
-        """Keep the usage limit a refused call hit, with its exact reset (`limits.py`), so the next plans skip that
+        """Keep the usage limit a refused call hit, with its exact reset (`limits.py`). The next plans skip that
         model until then.
         """
         name = limits.model_in_failure(text)

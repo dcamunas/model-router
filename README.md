@@ -50,7 +50,7 @@ setups are in [Install](docs/install.md).
 
 ## What you get
 
-- **[The right model and effort per subagent](docs/claude-code.md#model-and-effort)**, from its kind and risk, around spent limits.
+- **[The right model and effort per subagent](docs/claude-code.md#model-and-effort)**, from its kind and risk.
 - **[Cheaper reading subagents](docs/claude-code.md#the-read-only-agent)**: 70 % less context cost in one measured review.
 - **[What each subagent really cost](docs/claude-code.md#measurement)**: turns, tokens and peak context.
 - **[Starts that learn per repository](docs/claude-code.md#learning-per-repository)**: up on their own, down by hand.
@@ -92,6 +92,7 @@ The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.
 | Set it up for a whole team in one repository | [In a team repository](docs/install.md#in-a-team-repository) |
 | Know what the plugin does to my subagents | [Inside Claude Code](docs/claude-code.md) |
 | Turn the hooks off, or keep subagents off the read-only agent | [Environment variables](docs/claude-code.md#environment-variables) |
+| Know what happens when a model's usage limit is spent | [Usage limits](docs/claude-code.md#usage-limits) |
 | Run tasks from the command line or from Python | [Command line and library](docs/cli.md) |
 | Use it with my Claude account, without an API key | [Without an API key](docs/cli.md#without-an-api-key-with-your-claude-account) |
 | Understand how the start cell, the ladder and the judges are chosen | [How it decides](docs/how-it-decides.md) |

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from model_router import clock, limits
-from model_router.catalog import available_models
+from model_router.catalog import available_models, configured_models
 from model_router.hook import handle
 
 NOW = datetime(2026, 10, 22, 21, 0, tzinfo=UTC)
@@ -39,7 +39,7 @@ def test_the_event_gives_the_exact_reset_of_a_refused_model():
 def test_a_limit_holds_until_the_exact_reset_and_no_longer(home, monkeypatch):
     limit = limits.record("fable", limits.parse_events(REJECTED))
     assert limit is not None and limit.until == RESET and "fable" in limits.active()
-    assert "claude-fable-5-1" not in available_models() and "claude-fable-5-1" in available_models(with_limited=True)
+    assert "claude-fable-5-1" not in available_models() and "claude-fable-5-1" in configured_models()
     monkeypatch.setattr(clock, "now", lambda: RESET - timedelta(seconds=1))
     assert "fable" in limits.active()
     monkeypatch.setattr(clock, "now", lambda: RESET)
@@ -52,7 +52,7 @@ def test_an_allowed_answer_clears_a_limit_and_an_unknown_one_holds_for_a_while(h
     held = limits.record("opus", limits.Probe("unknown"))
     assert held is not None and held.until is None and "opus" in limits.active()
     monkeypatch.setattr(clock, "now", lambda: NOW + limits.RECHECK)
-    assert limits.active() == {} and limits.stale() == ["opus"]
+    assert limits.active() == {}  # unknown reset: back after RECHECK, probed again on the next failure
 
 
 def test_a_spent_account_window_holds_every_model_and_the_router_keeps_routing(home):
@@ -90,6 +90,9 @@ def test_the_hook_routes_around_a_limited_model_and_refuses_it_when_named(home):
                   "tool_input": {"subagent_type": "general-purpose", "model": "fable", "prompt": "x"}})
     assert out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "usage limit until" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    out = handle({"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s", "cwd": "/",
+                  "tool_input": {"subagent_type": "general-purpose", "model": "claude-fable-5-1", "prompt": "x"}})
+    assert out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny"  # the full id too
     context = handle({"hook_event_name": "SessionStart", "source": "startup", "cwd": "/"})
     assert context is not None and "Usage limits: fable until" in context["hookSpecificOutput"]["additionalContext"]
 
