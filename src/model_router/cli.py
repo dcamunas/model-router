@@ -6,6 +6,7 @@ cells, config, install and uninstall. The README documents each command.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -72,6 +73,7 @@ from .policy import (
 from .runner import Router, TaskResult
 from .store import Store
 from .subagents import LOG_FILE as SUBAGENT_LOG
+from .subagents import finalize as finalize_subagents
 from .subagents import load as load_subagents
 from .subagents import summary_rows
 from .task import (
@@ -492,6 +494,8 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     if hook_rows:
         print("\nClaude Code hook decisions (routed subagents)")
         print(table(["cell", "kind", "risk", "times"], hook_rows))
+    with contextlib.suppress(OSError):
+        finalize_subagents(home() / SUBAGENT_LOG)  # transcripts that have settled since their subagent ended
     measured = load_subagents(home() / SUBAGENT_LOG)
     if measured:
         rows = summary_rows(measured)

@@ -83,3 +83,22 @@ def test_record_without_a_known_model_has_no_cost():
     usage = SubagentUsage(model="some-new-model", turns=1, output_tokens=5)
     assert record({"agent_type": "x"}, usage, None)["cost_usd"] is None
     assert decide({"subagent_type": "Explore", "prompt": "x"})[0] is None  # untouched agents are still measured later
+
+
+def test_a_first_reading_is_completed_once_the_transcript_settles(tmp_path, monkeypatch):
+    from model_router.subagents import finalize
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    agent = _transcript(tmp_path / "agent.jsonl", "Review the parser", [_turn("m1")])  # the last turn is not in yet
+    handle({"hook_event_name": "SubagentStop", "session_id": "s1", "agent_id": "a1", "agent_type": "general-purpose",
+            "agent_transcript_path": str(agent)})
+    log = tmp_path / "subagents.jsonl"
+    assert load(log)[0]["turns"] == 1 and load(log)[0]["final"] is False
+    _transcript(agent, "Review the parser", [_turn("m1"), _turn("m2", output=500)])  # Claude Code writes the end
+    assert finalize(log) == 0  # still fresh: it may be written to
+    later = agent.stat().st_mtime + 60
+    assert finalize(log, now=later) == 1
+    rec = load(log)[0]
+    assert rec["final"] is True and rec["turns"] == 2 and rec["output_tokens"] == 510
+    agent.unlink()
+    assert finalize(log, now=later) == 0  # final records are left alone, and a vanished transcript is no error

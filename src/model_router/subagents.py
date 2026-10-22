@@ -10,13 +10,16 @@ list price. So the numbers that matter are turns, peak context and cache reads p
 answer's length.
 
 A transcript repeats a message's usage on every entry that carries one of its content blocks: usage is counted
-once per message id.
+once per message id. And when `SubagentStop` fires, the subagent's last message is not in the transcript yet: the
+hook writes a first reading and the transcript's path, and `finalize` reads it again once it has stopped
+changing (`router stats` and the next session's start call it).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +31,7 @@ from .classify import classify_rules
 
 LOG_FILE = "subagents.jsonl"
 PROMPT_HASH_CHARS = 16
+SETTLED_SECONDS = 30.0  # a transcript untouched for this long is complete
 
 
 def prompt_hash(prompt: str) -> str:
@@ -146,7 +150,41 @@ def record(event: dict[str, Any], usage: SubagentUsage, decision: dict[str, Any]
         **{k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")},
         "tokens": usage.tokens,
         "cost_usd": round(cost, 6) if cost is not None else None,
+        "transcript": str(event.get("agent_transcript_path") or ""),
+        "final": False,
     }
+
+
+def finalize(log: Path, *, settled: float = SETTLED_SECONDS, now: float | None = None) -> int:
+    """Read again the transcript of every record not yet final whose transcript has stopped changing (untouched
+    for `settled` seconds), update its numbers and mark it final; a transcript that is gone leaves the first
+    reading as final. Rewrite the log only when something changed; return how many records were finalised.
+    """
+    records = load(log)
+    moment = time.time() if now is None else now
+    changed = 0
+    for r in records:
+        if r.get("final", True):
+            continue
+        path = Path(str(r.get("transcript") or ""))
+        try:
+            age = moment - path.stat().st_mtime
+        except OSError:
+            r["final"] = True
+            changed += 1
+            continue
+        if age < settled:
+            continue
+        usage = read_transcript(path)
+        cost = usage.cost()
+        r.update({k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")})
+        r.update(tokens=usage.tokens, cost_usd=round(cost, 6) if cost is not None else None, final=True)
+        changed += 1
+    if changed:
+        tmp = log.with_suffix(".tmp")
+        tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+        tmp.replace(log)
+    return changed
 
 
 def find_decision(log: Path, prompt: str, session: str | None) -> dict[str, Any] | None:

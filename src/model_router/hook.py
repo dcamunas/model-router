@@ -24,6 +24,7 @@ Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -37,6 +38,7 @@ from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
 from .subagents import LOG_FILE as SUBAGENT_LOG
+from .subagents import finalize as finalize_subagents
 from .subagents import find_decision, prompt_hash, read_transcript
 from .subagents import record as subagent_record
 from .task import Task
@@ -194,6 +196,8 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
     """Return the JSON the hook prints for this event, or None for silence."""
     name = event.get("hook_event_name")
     if name == "SessionStart":
+        with contextlib.suppress(OSError):
+            finalize_subagents(home() / SUBAGENT_LOG)  # the last session's subagents, now that their transcripts settled
         return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
     if name == "SubagentStop":
         _measure(event)
