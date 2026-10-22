@@ -33,11 +33,26 @@ HIGH_RISK = r"\b(producci[oó]n|production|dinero|money|pago\w*|payment\w*|factu
 # user writes, never the material pasted below): `risk: high`, `kind=review`, `riesgo: alto`, `tipo: code`. The
 # value is a whole token (`risk: high-level` and `?risk=low` are not declarations). The first one wins.
 DECLARATION_LINES = 2
+READ_KINDS = frozenset({"search", "review", "analysis", "summarize", "extract", "classify", "chat"})
 SPANISH_RISK = {"bajo": "low", "medio": "medium", "alto": "high", "crítico": "critical", "critico": "critical"}
 _RISK_VALUES = "|".join(list(RISKS) + list(SPANISH_RISK))
 _KIND_VALUES = "|".join(k for k in KINDS if k != "unknown")
 DECLARED_KIND = re.compile(r"(?:^|[\s,;(\[])(?:kind|tipo)\s*[:=]\s*(" + _KIND_VALUES + r")(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
 DECLARED_RISK = re.compile(r"(?:^|[\s,;(\[])(?:risk|riesgo)\s*[:=]\s*(" + _RISK_VALUES + r")(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
+DECLARED_ACCESS = re.compile(r"(?:^|[\s,;(\[])(?:access|acceso)\s*[:=]\s*(read|write|lectura|escritura)(?=\s*(?:$|[,;.)\]]))",
+                             re.I | re.M)
+# Words that say a task edits, runs something or reaches a service a read-only agent cannot: any of them keeps a
+# subagent on the general agent. English and Spanish; erring towards the general agent only costs tokens.
+WRITE_SIGNALS = re.compile(
+    r"\b(edit\w*|modif\w*|change|fix\w*|implement\w*|refactor\w*|rewrite|write (?:to|it|the|a|an|tests?|code)|"
+    r"create|add (?:a|an|the|tests?)|apply|commit|push|merge|rebase|run|execute|install|delete|remove|rename|"
+    r"update (?:the|it)|migrat\w*|generate|scaffold|deploy|bash|terminal|shell|command|pytest|npm|pip|uv run|"
+    r"make |docker|git |notion|slack|gmail|calendar|drive|jira|linear|mcp|browser|chrome|navigate|click|screenshot|"
+    r"edita\w*|modifica\w*|cambia\w*|arregla\w*|corrige|implementa\w*|crea\w*|añade|agrega|escrib\w+ (?:el|la|un|una|en)|"
+    r"ejecuta\w*|lanza\w*|corre |instala\w*|borra\w*|elimina\w*|renombra\w*|actualiza\w*|aplica\w*|sube |"
+    r"publica\w*|despliega\w*|migra\w*|genera\w*)",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +63,32 @@ class Classification:
     risk: str
     reason: str
     cost_usd: float = 0.0
+
+
+def declared_access(prompt: str) -> str | None:
+    """Return the access the head of the text declares (`access: read` or `access: write`, also `acceso: lectura`
+    or `escritura`), as `read` or `write`, or None.
+    """
+    head = "\n".join([line for line in prompt.splitlines() if line.strip()][:DECLARATION_LINES])
+    m = DECLARED_ACCESS.search(head)
+    if not m:
+        return None
+    return "write" if m.group(1).lower() in ("write", "escritura") else "read"
+
+
+def read_only(kind: str, text: str) -> tuple[bool, str]:
+    """Say whether a task is safe for a read-only agent, and why: a declared access decides; otherwise only the
+    reading kinds qualify (READ_KINDS), and only when nothing in the text asks to edit, run or reach a service.
+    """
+    access = declared_access(text)
+    if access is not None:
+        return access == "read", f"declared access: {access}"
+    if kind not in READ_KINDS:
+        return False, f"{kind} may write"
+    m = WRITE_SIGNALS.search(text)
+    if m:
+        return False, f"it asks to {m.group(0).strip()!r}"
+    return True, f"{kind}, nothing to edit or run"
 
 
 def declared(prompt: str) -> tuple[str | None, str | None]:

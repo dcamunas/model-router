@@ -32,9 +32,9 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import MODELS, lattice, parse_cell, worker_cell
-from .classify import classify_rules
+from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
-from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home
+from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
 from .subagents import LOG_FILE as SUBAGENT_LOG
 from .subagents import find_decision, prompt_hash, read_transcript
@@ -42,24 +42,22 @@ from .subagents import record as subagent_record
 from .task import Task
 
 ROUTED_SUBAGENTS = frozenset({"", "general-purpose", "claude"})
+PLUGIN_NAME = "model-router"
+PLUGIN_AGENT = Path("src") / "model_router" / "claude_code" / "agents" / "reader.md"  # inside the plugin's root
+PROFILE_AGENT = "router-reader"  # the name `router install` gives the copy in the profile's agents directory
 PROMPT_HEAD_CHARS = 60
 TRANSCRIPT_TAIL_BYTES = 262_144  # enough for the last few assistant entries of a long session
 
 SESSION_CONTEXT = (
-    "Model router active (PreToolUse hook on the Agent tool): when you launch a general-purpose subagent "
-    "without `model`, the hook sets `model` and `effort` from the kind and the risk it infers from the "
-    "subagent's prompt. Declare them in the description or on the first line of the prompt, as `kind: review, "
-    "risk: high` (each value ends the line or is followed by a comma or a full stop; the risk is the damage a "
-    "wrong result does, low, medium, high or critical, which only you know); a "
-    "declared value beats the inference, and critical is never inferred. Do not set `model` yourself unless "
-    "the user asks for it or the task is high risk; "
-    "if you set it, the hook keeps it. A critical-risk review goes to a model other than the one serving "
-    "this chat (a blind cross-check): if you designed something critical here, launch a review subagent "
-    "with the brief and the design and let the hook choose. Text-only subtasks (classify, extract, "
-    "summarise, draft, review a pasted text) go through `router run \"...\"` instead of a subagent: a "
-    "hundred times less context, verified and recorded. `router judge \"<task>\" --answer FILE` verifies a "
-    "subagent's result with the plan's judges and records it. To verify and escalate by risk, use the `router` "
-    "skill."
+    "Model router active (hooks on the Agent tool): when you launch a general-purpose subagent without `model`, "
+    "the hook sets `model` and `effort` from the task's kind and risk, and sends reading work (search, review, "
+    "analysis, summaries, extraction) to a read-only agent that carries far less context per turn. Put on the "
+    "first line of the prompt `kind: review, risk: high` (the risk is the damage a wrong result does: low, medium, "
+    "high or critical, which only you know), and `access: write` when the subagent must edit files, run commands "
+    "or use MCP tools, or it may get the read-only agent. Do not set `model` yourself unless the user asks or the "
+    "task is high risk. A critical review goes to a model other than the one serving this chat. Text-only "
+    "subtasks with no tools (classify, extract, summarise, draft) are cheaper through `router run \"...\"` than "
+    "as a subagent. The `router` skill has the rest: verifying and escalating by risk."
 )
 
 
@@ -137,7 +135,30 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     }
     if cross:
         record["cross"] = cross
+    lean = lean_agent()
+    safe, why = read_only(cls.kind, f"{description}\n{prompt}")
+    if lean is not None and safe:
+        updated["subagent_type"] = lean
+        fields.append("subagent_type")
+        record["agent"] = lean
+    record["lean"] = why if lean is not None else "no lean agent installed or lean off"
     return updated, record
+
+
+def lean_agent() -> str | None:
+    """Return the name of the read-only agent this installation has, or None (switched off, or not installed): the
+    plugin's own (`model-router:reader`, when the hook runs from the plugin), else the one `router install` copied
+    into the profile (`router-reader`). MODEL_ROUTER_LEAN=0 or `router config --lean off` turn it off.
+    """
+    if os.environ.get(LEAN_ENV) == "0" or read_config().get("lean") is False:
+        return None
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if root and (Path(root) / PLUGIN_AGENT).is_file():
+        return f"{PLUGIN_NAME}:reader"
+    profile = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
+    if (profile / "agents" / f"{PROFILE_AGENT}.md").is_file():
+        return PROFILE_AGENT
+    return None
 
 
 def _log(event: dict[str, Any], record: dict[str, Any]) -> None:

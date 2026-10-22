@@ -242,7 +242,16 @@ def test_doctor_reports_missing_hooks(tmp_path, monkeypatch, capsys):
     (profile / "skills" / "router").mkdir(parents=True)
     main(["doctor"])
     out = capsys.readouterr().out
+    assert "FAIL   hook SubagentStop" in out and "FAIL   read-only agent router-reader" in out  # an older install
+    data = json.loads((profile / "settings.json").read_text())
+    data["hooks"]["SubagentStop"] = [{"hooks": [{"type": "command", "command": str(hook)}]}]
+    (profile / "settings.json").write_text(json.dumps(data))
+    (profile / "agents").mkdir()
+    (profile / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\nmodel router")
+    main(["doctor"])
+    out = capsys.readouterr().out
     assert "FAIL   hook" not in out and "ok     skill router" in out and "model opus" in out
+    assert "ok     read-only agent router-reader" in out
 
 
 def test_doctor_shows_the_effort_of_the_chat_model_whatever_its_version(tmp_path, monkeypatch, capsys):

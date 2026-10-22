@@ -114,3 +114,18 @@ def test_missing_hook_binary_is_a_clear_error(home, monkeypatch):
     monkeypatch.setattr(mod, "hook_binary", lambda: None)
     with pytest.raises(SystemExit, match="router-hook"):
         install(home / "profile" / "settings.json")
+
+
+def test_install_copies_the_read_only_agent_under_its_profile_name_and_uninstall_removes_it(tmp_path, monkeypatch):
+    from model_router.install import copy_agent, remove_agent
+
+    agents = tmp_path / "agents"
+    copy_agent(agents)
+    text = (agents / "router-reader.md").read_text()
+    assert "\nname: router-reader\n" in text and "tools: Read, Grep, Glob, WebFetch, WebSearch" in text
+    remove_agent(agents)
+    assert not (agents / "router-reader.md").exists()
+    (agents / "router-reader.md").write_text("---\nname: router-reader\n---\nsomeone else's agent")
+    copy_agent(agents)
+    remove_agent(agents)
+    assert "someone else's agent" in (agents / "router-reader.md").read_text()  # never overwritten or removed

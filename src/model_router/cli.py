@@ -56,6 +56,7 @@ from .paths import (
     config_path,
     home,
     read_config,
+    write_config,
 )
 from .policy import (
     DEFAULT_JUDGE,
@@ -549,7 +550,8 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
     checks: list[tuple[bool, str]] = []
     plugins = data.get("enabledPlugins")
     if isinstance(plugins, dict) and plugins.get(PLUGIN_ID):
-        checks.append((True, f"plugin {PLUGIN_ID} enabled in {settings}: hooks and skill come from the plugin"))
+        checks.append((True, f"plugin {PLUGIN_ID} enabled in {settings}: hooks, skill and the read-only agent "
+                             f"(model-router:reader) come from the plugin"))
         venv_hook = profile / "plugins" / "data" / PLUGIN_ID.replace("@", "-") / "venv" / "bin" / "router-hook"
         ready = venv_hook.exists()
         note = "" if ready else " (built when a session starts; needs uv)"
@@ -570,11 +572,16 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
             return False
 
         fix = " (missing: the plugin or router install)"
-        pre, start = wired("PreToolUse", "Agent"), wired("SessionStart")
+        pre, start, stop = wired("PreToolUse", "Agent"), wired("SessionStart"), wired("SubagentStop")
         checks.append((pre, f"hook PreToolUse(Agent) in {settings}" + ("" if pre else fix)))
         checks.append((start, f"hook SessionStart in {settings}" + ("" if start else fix)))
+        checks.append((stop, f"hook SubagentStop (measures subagents) in {settings}"
+                       + ("" if stop else " (missing: run `router install` again)")))
         link = profile / "skills" / "router"
         checks.append((link.is_dir(), f"skill router: {link}" + ("" if link.is_dir() else fix)))
+        agent = profile / "agents" / "router-reader.md"
+        checks.append((agent.is_file(), f"read-only agent router-reader: {agent}"
+                       + ("" if agent.is_file() else " (missing: run `router install` again)")))
     model = str(data.get("model", "default"))
     model_id = SHORT_TO_ID.get(model, model)  # settings may name the model by its short name
     model_settings = data.get("modelSettings")
@@ -734,12 +741,18 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
+    if args.lean is not None:
+        path = write_config(lean=args.lean == "on")
+        print(f"read-only agent for reading tasks: {args.lean} (in {path})")
     if args.models is None and args.profile_dir is None and args.judge is None and args.calibration is None:
+        if args.lean is not None:
+            return 0
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
         print(f"available models: {', '.join(MODELS[m].short for m in available_models())}")
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
         print(f"calibration: {cfg.get('calibration') or 'none (the built-in tables decide)'}")
+        print(f"read-only agent for reading tasks: {'off' if cfg.get('lean') is False else 'on'}")
         print(f"(in {config_path()})")
         return 0
     names = model_names(args.models) if args.models is not None else None
@@ -882,6 +895,8 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--calibration", help="the calibration that decides: an id from `router calibrate --apply`, or a "
                                           "file; `none` goes back to the built-in tables")
+    sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
+                    "to the read-only agent, which carries a fraction of the general agent's context (default on)")
     sg.set_defaults(func=_cmd_config)
 
     return p

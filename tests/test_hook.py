@@ -169,3 +169,35 @@ def test_the_hook_never_names_a_model_claude_code_cannot_run(monkeypatch, tmp_pa
     for prompt in ("Write the release notes for 2.0", "risk: critical. Analyse the outage", "classify these tickets"):
         updated, record = decide({"subagent_type": "general-purpose", "prompt": prompt})
         assert updated is not None and updated["model"] in ("haiku", "sonnet", "opus", "fable"), prompt
+
+
+def test_reading_work_goes_to_the_read_only_agent_when_one_is_installed(tmp_path, monkeypatch):
+    from model_router.hook import PLUGIN_AGENT
+    from model_router.paths import write_config
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
+    review = {"subagent_type": "general-purpose", "prompt": "kind: review, risk: medium\nReview the parser"}
+    updated, record = decided(review)
+    assert updated["subagent_type"] == "general-purpose" and "agent" not in record  # nothing installed: unchanged
+    (tmp_path / "profile" / "agents").mkdir(parents=True)
+    (tmp_path / "profile" / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\n")
+    updated, record = decided(review)
+    assert updated["subagent_type"] == "router-reader" and "subagent_type" in record["set"]  # from `router install`
+    root = tmp_path / "plugin"
+    (root / PLUGIN_AGENT).parent.mkdir(parents=True)
+    (root / PLUGIN_AGENT).write_text("---\nname: reader\n---\n")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
+    updated, _ = decided(review)
+    assert updated["subagent_type"] == "model-router:reader"  # from the plugin
+    updated, record = decided({**review, "prompt": "kind: review\nReview the parser and fix it"})
+    assert updated["subagent_type"] == "general-purpose" and "fix" in record["lean"]  # it must edit: general agent
+    updated, _ = decided({"subagent_type": "general-purpose", "prompt": "Implement the parser"})
+    assert updated["subagent_type"] == "general-purpose"
+    write_config(lean=False)
+    updated, _ = decided(review)
+    assert updated["subagent_type"] == "general-purpose"  # `router config --lean off`
+    write_config(lean=True)
+    monkeypatch.setenv("MODEL_ROUTER_LEAN", "0")
+    assert decided(review)[0]["subagent_type"] == "general-purpose"

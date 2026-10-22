@@ -78,3 +78,19 @@ def test_the_reason_names_the_rule_and_the_risk_signal_in_spanish():
     cls = classify_rules("Revisa este script SQL antes de producción")
     assert cls.reason == "rule 'revisa'; risk: high-risk keyword"
     assert classify_rules("What time is it?").reason == "short question; risk: cheap kind, short prompt"
+
+
+def test_only_reading_tasks_with_nothing_to_edit_or_run_are_read_only():
+    from model_router.classify import declared_access, read_only
+
+    assert read_only("review", "Review the parser for off-by-one errors")[0]
+    assert read_only("search", "Find where the config is loaded")[0]
+    assert read_only("summarize", "Resume este documento en cinco puntos")[0]
+    assert not read_only("code", "Implement the parser")[0]  # code may write
+    assert not read_only("review", "Review the parser and fix what you find")[0]
+    assert not read_only("analysis", "Analyse why the tests fail; run pytest first")[0]
+    assert not read_only("search", "Search my Notion workspace for the plan")[0]  # an MCP server
+    assert not read_only("summarize", "Resume el informe y actualiza la tarjeta")[0]
+    assert read_only("code", "access: read\nExplain what this function does")[0]  # a declaration decides
+    assert not read_only("review", "access: write\nReview it")[0]
+    assert declared_access("acceso: lectura. Mira esto") == "read" and declared_access("nothing here") is None

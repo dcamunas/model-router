@@ -253,6 +253,7 @@ def install(
     add_hooks(settings, hook_bin)
     if not no_skill:
         copy_skill(skills, link=link)
+        copy_agent(settings.parent / "agents")
     profile = profile_dir or (settings.parent if settings == default_settings() else None)
     if profile is not None:
         profile = profile.expanduser().resolve()
@@ -274,4 +275,29 @@ def uninstall(settings: Path, *, skills_dir: Path | None = None, no_skill: bool 
     remove_hooks(settings)
     if not no_skill:
         remove_skill(skills)
+        remove_agent(settings.parent / "agents")
     return 0
+
+
+AGENT_SRC = SKILL_SRC.parent / "agents" / "reader.md"
+AGENT_NAME = "router-reader"  # the hook looks for this name in the profile's agents directory
+
+
+def copy_agent(agents_dir: Path) -> None:
+    """Copy the read-only `reader` agent into `agents_dir` as `router-reader`, the name the hook routes to when it
+    does not run from the plugin; a file of that name that is not the router's is left alone.
+    """
+    target = agents_dir / f"{AGENT_NAME}.md"
+    if target.exists() and "model router" not in target.read_text(encoding="utf-8").lower():
+        print(f"{target} exists and is not the router's: the read-only agent was not installed")
+        return
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    text = AGENT_SRC.read_text(encoding="utf-8").replace("\nname: reader\n", f"\nname: {AGENT_NAME}\n", 1)
+    target.write_text(text, encoding="utf-8")
+
+
+def remove_agent(agents_dir: Path) -> None:
+    """Remove the router's read-only agent from `agents_dir`; one of that name that is not the router's stays."""
+    target = agents_dir / f"{AGENT_NAME}.md"
+    if target.is_file() and "model router" in target.read_text(encoding="utf-8").lower():
+        target.unlink()

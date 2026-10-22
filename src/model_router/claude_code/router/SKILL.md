@@ -13,6 +13,12 @@ count, so material pasted below never sets the risk); a declared value beats wha
 inferred, only declared. The risk is the damage a wrong result does (low: you read it and can redo
 it; medium: used without a second read; high: money, customers, production, legal, deletions,
 publishing; critical: high and hard to detect), and only you know what the result is for.
+
+Reading work (search, review, analysis, summaries, extraction, classification) goes to a read-only
+agent with Read, Grep, Glob, WebFetch and WebSearch only: no edits, no shell, no MCP, and a fraction
+of the context per turn. The hook keeps the general agent when the prompt asks to edit, run or reach a
+service, and you can say it outright: `access: write` keeps the general agent, `access: read` asks for
+the read-only one. What every subagent spent is measured when it ends: `router stats`.
 What this skill adds is the rest of the loop: verify by risk and escalate on failure.
 
 ## Plain text: `router run`, not a subagent
