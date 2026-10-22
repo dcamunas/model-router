@@ -13,7 +13,7 @@ import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: config.json, decoded
 
 from . import qa
 from ._fmt import money
@@ -30,6 +30,7 @@ from .client import ClientUnavailableError
 from .codex_models import Proposal
 from .paths import CODEX_HOME_ENV, config_path, read_config, save_config, write_config
 from .providers import MultiClient
+from .runner import TaskResult
 
 CELL_SETTINGS = ("claude", "codex", "arbiter")
 EXIT = {"solved": 0, "unsolved": 1, "error": 2}  # pass, fail, could not judge
@@ -81,7 +82,7 @@ def _cmd_judge(args: argparse.Namespace) -> int:
     return _report(result)
 
 
-def _report(result: Any) -> int:
+def _report(result: TaskResult) -> int:
     attempt = result.attempts[0]
     for v in attempt.verdicts:
         print(f"  {v.role} {v.cell.label}: {'pass' if v.passed else 'fail'}: {v.reason}")

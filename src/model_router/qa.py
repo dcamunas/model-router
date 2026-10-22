@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: decoded JSON: hook state, config and judge replies
 
 from .catalog import MODELS, Cell, Usage, available_models, external_models, nearest_available, nearest_effort, parse_cell
 from .cli_client import CliClient

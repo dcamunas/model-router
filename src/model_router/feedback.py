@@ -19,7 +19,6 @@ import json
 import os
 import random
 from pathlib import Path
-from typing import Any
 
 from .catalog import Cell, parse_cell, step_down, step_up
 
@@ -137,7 +136,7 @@ class FeedbackStore:
             b["pass_first"] = max(0, min(b["n_first"], b["pass_first"] + delta))
             d["pass_first"] += delta
 
-    def rows(self) -> list[list[Any]]:
+    def rows(self) -> list[list[object]]:
         """Return one row per (kind, cell) for `router stats`: first-attempt and total counts and pass rates."""
         out = []
         for kind, cells in sorted(self.data.items()):

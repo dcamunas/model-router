@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import (  # Any: the Anthropic SDK client and its replies, swappable for a fake; structured output of any shape
+    Any,
+    Protocol,
+)
 
 from pydantic import BaseModel
 

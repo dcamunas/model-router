@@ -18,7 +18,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: Codex's models cache, decoded JSON
 
 from .catalog import EXTERNAL_TIER, MODELS
 

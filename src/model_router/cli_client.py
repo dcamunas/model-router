@@ -28,7 +28,7 @@ import subprocess
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: the JSON that `claude -p` prints
 
 from pydantic import BaseModel, ValidationError
 

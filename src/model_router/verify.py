@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol  # Any: verdicts are written out as JSON
 
 from pydantic import BaseModel, Field
 

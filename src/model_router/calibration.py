@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: decoded JSON: calibration files and ledger records
 
 from ._fmt import money, table
 from .catalog import Cell, UnknownModelError, lattice, parse_cell, step_up

@@ -15,7 +15,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: settings.json, decoded
 
 from .catalog import MODELS, parse_models
 from .paths import CONFIG_DIR_ENV, read_config, save_config

@@ -29,7 +29,7 @@ import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any  # Any: config.json, decoded
 
 from .paths import MODELS_ENV, read_config
 

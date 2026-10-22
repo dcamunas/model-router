@@ -15,7 +15,7 @@ import threading
 from collections.abc import Iterable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: ledger records are JSON
 
 from .catalog import UnknownModelError, parse_cell
 

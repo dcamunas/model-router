@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: Codex's JSON events, and test doubles for urlopen and subprocess.run
 
 from pydantic import BaseModel, ValidationError
 

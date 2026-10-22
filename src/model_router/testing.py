@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any  # Any: a fake client records calls and returns structured output of any shape
 
 from pydantic import BaseModel
 

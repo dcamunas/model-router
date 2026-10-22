@@ -14,7 +14,7 @@ import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: config.json, decoded
 
 HOME_ENV = "MODEL_ROUTER_HOME"
 MAIN_LEDGER = "ledger.jsonl"  # the ledger of `router run` and `router judge`; benches write their own under bench/

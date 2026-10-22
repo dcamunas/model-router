@@ -1,6 +1,6 @@
 [project]
 name = "model-router"
-version = "0.15.0"
+version = "0.15.1"
 description = "Model router for Claude: model + effort per task, verification by risk, escalation and cost per solved task"
 readme = "README.md"
 license = "MIT"
@@ -56,7 +56,7 @@ line-length = 130
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "N", "ANN", "ARG", "PTH", "SIM", "RET", "C90", "D"]
+select = ["E", "F", "I", "UP", "B", "BLE", "N", "ANN", "ARG", "PTH", "SIM", "RET", "C90", "D"]
 ignore = [
     "ANN401",  # Any: allowed for external JSON and interchangeable clients, with the reason next to it
     "D102",    # public methods: a docstring only where it adds to the name (modules, classes and functions always)
