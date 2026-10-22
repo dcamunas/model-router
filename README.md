@@ -101,7 +101,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.15.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.15.1
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -113,7 +113,7 @@ the same hooks into the profile's `settings.json` and copies the skill and the r
 (as `router-reader`) into the profile.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.15.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.15.1
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -286,13 +286,14 @@ works on three things, all of them on Claude models:
 
   That is launches and fails per kind, risk and start cell. The file holds no prompts, signatures,
   paths, names, costs or times. Its name is a salted hash plus the week. Files never change, so
-  branches and merges do not fight over them, and any router deletes files older than 13 weeks.
-  Each router counts the others' files with its own log, but never its own files, which would count
-  it twice. The same rules apply: weeks before a reset do not count, and one installation weighs at
-  most 30 launches per cell, at its own fail rate. Links in that directory are never followed. The
-  team's counts alone never raise a start. A raise happens on its own only with at least one fail on your machine too; otherwise
-  `router project` proposes it. `MODEL_ROUTER_SHARE=0` keeps one installation out. Git still records
-  who committed each file, so anyone who looks can see weekly counts per person.
+  branches and merges do not fight over them, and any router deletes a file a week after it leaves the
+  13-week window. Each router counts the others' files with its own log, but never its own files,
+  which would count it twice. The same rules apply: weeks before a reset do not count, and one
+  installation weighs at most 30 launches per cell, at its own fail rate. Links in that directory are
+  never followed. The team's counts alone never raise a start. A raise happens on its own only with at
+  least one fail on your machine too; otherwise `router project` proposes it. `MODEL_ROUTER_SHARE=0`
+  keeps one installation out. Git still records who committed each file, so anyone who looks can see
+  weekly counts per person.
 
 ```bash
 router stats                 # ... then "Claude Code subagents, measured from their transcripts"

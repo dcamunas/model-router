@@ -2,40 +2,62 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.15.1] - 2026-10-22
+
+### Changed
+
+- The 0.15.0 code brought to the repository's own rules, with no change in what it decides: keyword-only
+  arguments from the third one on, named constants instead of bare numbers, full names instead of
+  abbreviations, no private helpers shared across modules, no `assert` in library code, and functions split so
+  each does one thing (`shared.prune` apart from `shared.write_own`, the parts of `router project` apart).
+  `projects.raise_failing` now requires the local evidence, so the check that keeps the team's counts from
+  raising a start on their own cannot be skipped by accident.
+- One clock for the learning code and the tribunal hook (`model_router.clock`): the tests freeze it instead of
+  reading the real time, and three copies of the same timestamp parser became one.
+- Every module that uses `Any` says why next to the import; ruff now checks blind `except Exception` (BLE).
+- `router project` prints changes as "from X to Y", and its errors say what to do next.
+- The hook's module docstring describes all three events and what SessionStart now does.
+
+### Fixed
+
+- README: a shared week file is deleted a week after it leaves the window, not as soon as it does.
+
 ## [0.15.0] - 2026-10-22
 
 ### Added
 
-- Learning per project. Each measured subagent carries its project (the git repository of the session,
-  resolved; outside one nothing is learned) and a signature of its prompt: a MinHash of sixteen numbers,
-  salted per installation, no text. When Claude launches again, in the same session and within 30 minutes,
-  a task of the same kind and risk with an alike prompt on a higher cell (a more capable model, or the same
-  model with more effort), the first launch is recorded as relaunched: the quality signal a subagent
-  otherwise lacks. Moving from the read-only agent to the general one is not a relaunch. Only launches where
-  the router chose both model and effort count (a review moved to another model than the chat's does not),
-  from the last 13 whole weeks and since the last reset or applied change. The start cell in force for a kind and risk, relaunched in 2 of 6 launches or more and at least
-  30 %, moves one step up the ladder in that project at the next session start, with a line in Claude Code
-  saying what moved and why. A cheaper start is only proposed, after 10 launches with none relaunched: the
-  cell it was raised from, or the next one down if at least 20 % cheaper, never below a risk floor nor onto
-  a failing cell. A tuned cell remembers the cell it replaced and is ignored once the table or the
-  calibration no longer gives that cell. Tunings live in `~/.model-router/projects/`, written under a lock.
-- Shared counts, opt-in per repository: with `.claude/model-router/` committed in the repo, each installation
-  adds one file per ISO week, a day after the week closes, and never changes it: launches and relaunches per
-  kind, risk and start cell (no prompts, signatures, paths, names or costs; a salted file name). Any
-  installation deletes files that left the window. Each installation counts the other installations' files
-  with its own evidence: never its own (under any id it used for that repository path; another clone or
-  worktree is a teammate), only weeks after the last reset and inside the window, at most 30 launches per
-  installation and cell at its own fail rate, malformed entries skipped. Files are read and written without
-  following links, and a shared directory that links outside the repository is not used. Counts from
-  elsewhere alone never raise a start: a raise needs a relaunch on this machine too, or is only proposed.
-  `MODEL_ROUTER_SHARE=0` keeps an installation out.
+- Learning per project. The router learns, per git repository, where each kind of task should start.
+  - The quality signal is a relaunch: Claude launches again, in the same session and within 30 minutes, a
+    task of the same kind and risk with an alike prompt on a higher cell (a more capable model, or the same
+    model with more effort). Moving from the read-only agent to the general one is not a relaunch.
+  - Prompts are compared through a signature: a MinHash of sixteen numbers, salted per installation, no text.
+    Outside a git repository nothing is learned.
+  - Only launches where the router chose both model and effort count (a review moved to another model than
+    the chat's does not), from the last 13 whole weeks and since the last reset or applied change.
+  - The start cell in force, relaunched in 2 of 6 launches or more and at least 30 %, moves one step up at the
+    next session start, with a line in Claude Code saying what moved and why.
+  - A cheaper start is only proposed, after 10 launches with none relaunched: the cell it was raised from, or
+    the next one down if at least 20 % cheaper, never below a risk floor nor onto a failing cell.
+  - Tunings live in `~/.model-router/projects/`, written under a lock. A tuned cell remembers the cell it
+    replaced and is ignored once the table or the calibration no longer gives that cell.
+- Shared counts, opt-in per repository, through `.claude/model-router/` committed in the repo.
+  - Each installation adds one file per ISO week, a day after the week closes, and never changes it:
+    launches and relaunches per kind, risk and start cell. No prompts, signatures, paths, names or costs, and
+    a salted file name.
+  - Each installation counts the other installations' files with its own evidence, never its own (under any
+    id it used for that repository path; another clone or worktree is a teammate). Only weeks after the last
+    reset and inside the window count, at most 30 launches per installation and cell, at its own fail rate.
+  - Counts from elsewhere alone never raise a start: a raise needs a relaunch on this machine too, or it is
+    only proposed.
+  - Files are read and written without following links, malformed entries are skipped, and a shared directory
+    that links outside the repository is not used. Any installation deletes files a week after they leave the
+    window. `MODEL_ROUTER_SHARE=0` keeps an installation out.
 - `router project [PATH] [--apply] [--reset] [--share]`: the subagents routed in a project (with how many
   came from other installations), how many were relaunched, the tuning in force with its last changes, and
-  the changes the evidence supports that wait for a hand (cheaper starts, raises on the team's counts
-  alone); `--share` turns shared counts on.
-- `Policy(tuning=...)`: a project's start cells, applied after the risk floors; a tuned cell below a floor, or
-  whose model is not available, is ignored. `router plan` applies the current repository's tuning, as the hook
-  does.
+  the changes that wait for a hand (cheaper starts, raises on the team's counts alone).
+- `Policy(tuning=...)`: a project's start cells, applied after the risk floors. A tuned cell below a floor is
+  ignored, and so is one whose model is not available when what stands in is weaker than the start.
+  `router plan` applies the current repository's tuning, as the hook does.
 
 ## [0.14.0] - 2026-10-22
 

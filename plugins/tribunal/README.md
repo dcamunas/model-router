@@ -29,7 +29,7 @@ flowchart LR
 claude plugin marketplace add dcamunas/model-router
 claude plugin install model-router@dcamunas      # the tribunal runs from its environment
 claude plugin install tribunal@dcamunas
-uv tool install git+https://github.com/dcamunas/model-router@v0.15.0   # the `router` and `tribunal` commands
+uv tool install git+https://github.com/dcamunas/model-router@v0.15.1   # the `router` and `tribunal` commands
 tribunal config --codex-home ~/.codex-personal   # a Codex home signed in with your ChatGPT account; lists its models
 tribunal config --codex-models terra             # declare the Codex model that judges
 ```
