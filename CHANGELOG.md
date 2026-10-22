@@ -2,6 +2,38 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.17.0] - 2026-10-22
+
+What a repository with a team needs to run the router well.
+
+### Added
+
+- Risk floors per repository, in `.claude/model-router.json`: rules of a pattern and a risk, searched in a
+  brief's description and first lines. They only raise. The hook, `router plan` and `router run` follow them;
+  `router project` lists them with how often each fired; `router doctor` flags rules it cannot use.
+- `router agents`: advice for the agents whose model and effort are fixed by hand, per agent and cell in a
+  repository, from runs and repeats (another subagent starting soon after on an alike prompt). It says
+  measuring, raise, lower or keep, prices a change of model, and never edits an agent.
+- `router project --team`: turns the plugin on for everyone in a repository through its `.claude/settings.json`
+  (marketplace and plugin, every other key kept), and prints the command each person runs once.
+  `router doctor` says when the repository has it on and the profile lacks it.
+- `router plan --workflow`: the options of a workflow `agent()` call, `{model: 'opus', effort: 'medium'}`.
+  The hook does not see workflow agents; `router plan` needs no text when the kind and the risk are given.
+- When not to launch a subagent, in the session context and the skill.
+
+### Changed
+
+- The router never chooses `max` effort on its own: the lattice stops at `xhigh`, so ladders, feedback and
+  per-repository raises never land on it, and a `max` cell from a calibration or a tuning runs at `xhigh`.
+  A cell named by hand, an agent's own effort and a bench matrix given with `--cells` still take it.
+  `router cells` and `router bench --matrix` list 16 cells, not 20.
+
+### Fixed
+
+- A session opened before a plugin update stopped routing until a new session started, and a SessionStart
+  from it (a compact, a resume) put the older version back under every newer session. The hook now runs the
+  newer environment as it is and never downgrades.
+
 ## [0.16.1] - 2026-10-22
 
 ### Removed

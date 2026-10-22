@@ -33,10 +33,33 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.16.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.17.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
+
+## In a team repository
+
+To give everyone who works in a repository the same router, turn the plugin on in its shared settings
+and commit them:
+
+```bash
+router project --team    # writes the two keys below into .claude/settings.json, keeping the rest
+```
+
+```json
+{
+  "extraKnownMarketplaces": {"dcamunas": {"source": {"source": "github", "repo": "dcamunas/claude-plugins"}}},
+  "enabledPlugins": {"model-router@dcamunas": true}
+}
+```
+
+Claude Code reads them once a teammate trusts the folder, but it does not install a plugin hosted
+elsewhere on its own: each person runs, once, in that repository,
+`claude plugin install model-router@dcamunas --scope project`, and starts a new session. They need
+`uv`. `router doctor` run in the repository says whether it is installed in that profile. Then, if you
+want them: [risk floors](claude-code.md#risk-floors-per-repository) in `.claude/model-router.json` and
+[shared counts](claude-code.md#shared-with-your-team-optional) with `router project --share`.
 
 ## With the CLI, where plugins are not an option
 
@@ -45,7 +68,7 @@ the same hooks into the profile's `settings.json` and copies the skill and the r
 (as `router-reader`) into the profile.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.16.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.17.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor

@@ -70,6 +70,8 @@ fails, `router doctor` says so.
 - Do not set `model` on the Agent unless the user asks for it or the task is high risk. If you set
   it, the hook keeps it.
 - Agents defined in `.claude/agents/*.md` do not go through the hook: their frontmatter rules.
+  `router agents` says, from what they spent and how often they were repeated, which look too high or too
+  low; the change is the user's.
 - High or critical risk (production, money, customers, deletions, legal): ask for the plan and follow
   its verification. The hook does not do this part.
 

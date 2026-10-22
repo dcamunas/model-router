@@ -24,6 +24,10 @@ router plan "classify these tickets" --claude-code
 #   model: haiku
 #   effort: low
 
+# The options of a workflow agent() call; no text needed when kind and risk are given
+router plan --kind search --risk low --workflow
+#   {model: 'haiku', effort: 'medium'}
+
 # Run it for real, with a programmatic checker
 router run "Return a JSON object with the keys name, tax_id and date from: ..." \
     --kind extract --risk high --check-json name,tax_id,date
@@ -50,6 +54,9 @@ router bench tasks.yaml --strategies "router@builtin,router"   # before and afte
 
 # How often the rule classifier gets kind and risk right on your eval (and Haiku, with --llm)
 router calibrate --classifier tasks.yaml
+
+# Advice for the agents whose model and effort are fixed by hand, in this repository
+router agents
 
 # What has happened so far and what it has learned
 router stats

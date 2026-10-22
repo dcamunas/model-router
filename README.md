@@ -45,7 +45,7 @@ The kind is one of `classify`, `extract`, `summarize`, `search`, `chat`, `write`
 ([what each means](docs/how-it-decides.md#by-risk-at-a-glance)).
 
 For the `router` command (stats, plans, text-only tasks) install the CLI too:
-`uv tool install git+https://github.com/dcamunas/model-router@v0.16.1`, then `router doctor`. Other
+`uv tool install git+https://github.com/dcamunas/model-router@v0.17.0`, then `router doctor`. Other
 setups are in [Install](docs/install.md).
 
 ## What you get
@@ -54,6 +54,8 @@ setups are in [Install](docs/install.md).
 - **[Cheaper reading subagents](docs/claude-code.md#the-read-only-agent)**: 70 % less context cost in one measured review.
 - **[What each subagent really cost](docs/claude-code.md#measurement)**: turns, tokens and peak context.
 - **[Starts that learn per repository](docs/claude-code.md#learning-per-repository)**: up on their own, down by hand.
+- **[One setup for a team repository](docs/install.md#in-a-team-repository)**: the plugin, risk floors and
+  advice for agents fixed by hand.
 - **[Team pooling, if you want it](docs/claude-code.md#shared-with-your-team-optional)**: weekly counts, no prompts.
 - **[Cheap text-only tasks](docs/cli.md)**: `router run` carries about 900 tokens of context, not Claude Code's 100K.
 - **[A cost for every solved task](docs/calibration.md)**, and a start table you can calibrate from it.
@@ -88,6 +90,7 @@ The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.
 | I want to… | Read |
 |---|---|
 | Install it without plugins, in one repository, or remove it | [Install](docs/install.md) |
+| Set it up for a whole team in one repository | [In a team repository](docs/install.md#in-a-team-repository) |
 | Know what the plugin does to my subagents | [Inside Claude Code](docs/claude-code.md) |
 | Turn the hooks off, or keep subagents off the read-only agent | [Environment variables](docs/claude-code.md#environment-variables) |
 | Run tasks from the command line or from Python | [Command line and library](docs/cli.md) |
@@ -108,8 +111,8 @@ The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.
   anything moves.
 - **Subagent costs are floors.** A transcript gives a lower bound for output tokens; context tokens
   are exact.
-- **Only some subagents are routed.** General-purpose ones launched without a model. Your own agents
-  and forks are measured, not changed.
+- **Only some subagents are routed.** General-purpose ones launched without a model. Your own agents,
+  workflow agents and forks are measured, not changed; `router agents` advises on your own.
 
 ## Development
 
