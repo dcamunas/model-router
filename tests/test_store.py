@@ -58,7 +58,7 @@ def test_verdict_rows_carry_the_provider_and_the_role_and_task_rows_the_version(
     client = FakeClient(script={"*": [Reply("the notice")]},
                         judge={"sonnet/low": [ok], "fable/low": [ko], "fable/medium": [ok]})
     store = Store(tmp_path / "router.db")
-    task = Task(prompt="write the incident report", kind="write", risk="critical")
+    task = Task(prompt="write the incident report", kind="write", risk="critical", verify="tribunal")
     Router(client, ledger=Ledger(tmp_path / "ledger.jsonl", store=store)).run(task)
     with sqlite3.connect(store.path) as conn:
         verdicts = conn.execute("SELECT cell, provider, role, passed FROM verdict ORDER BY idx").fetchall()

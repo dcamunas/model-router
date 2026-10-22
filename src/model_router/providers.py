@@ -29,7 +29,7 @@ from pydantic import BaseModel, ValidationError
 from .catalog import PROVIDER_EFFORTS, Cell, Usage
 from .cli_client import DEFAULT_SYSTEM
 from .client import NON_STREAMING_MAX_TOKENS, ClaudeClient, ClientUnavailableError, Completion
-from .paths import CODEX_HOME_ENV, config_path, read_config
+from .paths import CODEX_HOME_ENV, TRIBUNAL_ENV, config_path, read_config
 from .task import json_payload
 
 
@@ -245,7 +245,7 @@ class CodexClient:
     """
 
     def __init__(self, home: Path, *, binary: str = "codex", timeout: float = CLI_TIMEOUT_SECONDS,
-                 run: Run = subprocess.run) -> None:
+                 run: Run = subprocess.run, workdir: Path | None = None) -> None:
         self.binary = _find(binary, "install the Codex CLI")
         home = home.expanduser().resolve()  # the child runs elsewhere: a relative home would point somewhere else there
         if not home.is_dir():  # a typo must not make codex start a fresh home there
@@ -254,6 +254,7 @@ class CodexClient:
         self.home = home
         self.timeout = timeout
         self.run = run
+        self.workdir = workdir.resolve() if workdir is not None else None  # read-only inside it; an empty directory when None
 
     def complete(
         self, cell: Cell, *, prompt: str, system: str | None = None,
@@ -273,7 +274,7 @@ class CodexClient:
         with tempfile.TemporaryDirectory(prefix="router-codex-") as scratch:
             last = Path(scratch) / "last-message.md"
             args = [self.binary, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
-                    "--color", "never", "-s", "read-only", "-C", scratch, "-m", cell.spec.id,
+                    "--color", "never", "-s", "read-only", "-C", str(self.workdir or scratch), "-m", cell.spec.id,
                     "-c", f'model_reasoning_effort="{effort}"', "-o", str(last)]
             if output_format is not None:
                 schema = Path(scratch) / "schema.json"
@@ -282,10 +283,11 @@ class CodexClient:
             args.append("-")
             env = {k: v for k, v in os.environ.items() if k not in CODEX_ENV_DROPPED}
             env["CODEX_HOME"] = str(self.home)
+            env[TRIBUNAL_ENV] = "0"
             t0 = time.monotonic()
             try:
                 proc = self.run(args, input=f"{system or DEFAULT_SYSTEM}\n\n{prompt}", capture_output=True, text=True,
-                                env=env, cwd=scratch, timeout=self.timeout, check=False)
+                                env=env, cwd=str(self.workdir or scratch), timeout=self.timeout, check=False)
             except subprocess.TimeoutExpired as exc:
                 raise ClientUnavailableError(f"codex exec exceeded {self.timeout:.0f}s") from exc
             except OSError as exc:

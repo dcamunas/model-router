@@ -1,5 +1,6 @@
-"""Build the README's animated figures from one spec per frame: a critical task on trial (the tribunal
-as a courtroom, every seat labelled with its cell) and a rendering of a real `router run`. Every frame
+"""Build the animated figures from one spec per frame: a code change on trial (the tribunal plugin as a
+courtroom, every seat labelled with its cell; plugins/tribunal/README.md) and a rendering of a real
+`router run` (the router's README). Every frame
 is an HTML page on a 1920x1080 canvas with the same seats in the same places, so only what changes
 moves; headless Chrome captures it and Pillow stitches the GIFs (half size, 64 colours) and, with
 --carousel, a PDF with one page per frame of the trial.
@@ -9,9 +10,9 @@ moves; headless Chrome captures it and Pillow stitches the GIFs (half size, 64 c
 Needs Google Chrome; no other tool. The terminal frames reveal the lines of `router-run.txt`, the exact
 output of `router run --file docs/showcase/notice.md --kind write --risk critical` in a terminal of 126
 columns (COLUMNS=126, what the drawn window holds at 22 px), never text typed in. The trial is an
-example case on that same task: the cells are what `router plan` gives for it (worker opus/medium,
-judges sonnet/low and fable/low, arbiter fable/medium; after a fail, worker fable/low with judges
-sonnet/low and opus/xhigh); the split and the retry are made up to show the arbiter and the ladder.
+example case on a real review: `average()` dividing by zero, with the seats the tribunal gives an Opus chat
+and a Codex home that lists Terra (judge A fable/medium, judge B terra/high, arbiter sonnet/high). In the
+real run both judges failed it; the split is made up to show the arbiter.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ TRIAL_FRAME_MS, TRIAL_LAST_MS = 2400, 3600  # two-line captions take longer to r
 
 LIGHT, LIGHT2, DARK = "#f6f5f1", "#eceae4", "#1d2733"
 TEXT, SECONDARY, ACCENT, ACCENT2, LINE = "#1f2328", "#5b6670", "#2b64a8", "#a35a1f", "#7d858e"
-MODEL_COLOUR = {"opus": DARK, "fable": ACCENT, "sonnet": "#5a7fa8", "haiku": "#8a9bb0"}
+MODEL_COLOUR = {"opus": DARK, "fable": ACCENT, "sonnet": "#5a7fa8", "haiku": "#8a9bb0", "terra": "#2f7a57"}
 TITLE_FONT = "Georgia, 'Times New Roman', serif"
 BODY_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif"
 MONO_FONT = "Menlo, 'SF Mono', Consolas, monospace"
@@ -93,39 +94,39 @@ EDGES = {
     "arbiter-ledger": [(1420, 528), (1420, 590)],
     "you-ledger": [(1075, 672), (1210, 672)],
 }
-DEFAULT_CELLS = {"worker": "opus/medium", "a": "sonnet/low", "b": "fable/low", "arbiter": "fable/medium",
+DEFAULT_CELLS = {"worker": "opus/medium", "a": "fable/medium", "b": "terra/high", "arbiter": "sonnet/high",
                  "you": "router feedback --ko"}
 
 # Every word on the canvas, so a translation for a carousel elsewhere is one dict, not a copy of the code.
 EN = {
-    "title": "A critical task on trial",
-    "subtitle": "model-router · an example case · every seat is a cell, model/effort, chosen per task",
-    "legend": [("sonnet", MODEL_COLOUR["sonnet"]), ("opus", DARK), ("fable", ACCENT), ("you", ACCENT2)],
-    "roles": {"worker": "worker", "a": "judge A", "b": "judge B", "arbiter": "arbiter", "you": "you"},
+    "title": "A change on trial",
+    "subtitle": "tribunal · an example case · Claude and Codex judge, blind to each other",
+    "legend": [("opus", DARK), ("fable", ACCENT), ("sonnet", MODEL_COLOUR["sonnet"]), ("codex", MODEL_COLOUR["terra"]),
+               ("you", ACCENT2)],
+    "roles": {"worker": "author", "a": "judge A", "b": "judge B", "arbiter": "arbiter", "you": "you"},
     "blind": "blind",
-    "labels": {"task": "the task · write · critical", "answer": "the answer", "ledger": "ledger · scoreboard"},
-    "answer2": "the answer, take 2",
-    "task_lines": ["customer notice", "about an outage"],
+    "labels": {"task": "the request · code", "answer": "the change", "ledger": "ledger · scoreboard"},
+    "answer2": "the change, round 2",
+    "task_lines": ["add average()", "0.0 when empty"],
     "pass": "PASS", "fail": "FAIL",
-    "reason_pass": ["facts covered,", "nothing added"],
-    "reason_fail": ["one sentence", "not in", "the facts"],
+    "reason_pass": ["does what", "was asked"],
+    "reason_fail": ["average([])", "divides", "by zero"],
     "arb_lines": ["judge A: pass", "judge B: fail"],
     "arb_sides": "sides with B",
-    "ledger_lines": ["1 opus/medium A pass B fail arbiter fail", "2 fable/low A pass B pass solved"],
-    "footer": "github.com/dcamunas/model-router",
+    "ledger_lines": ["1 fable A pass terra B fail arbiter fail", "2 fable A pass terra B pass passed"],
+    "footer": "github.com/dcamunas/model-router · plugins/tribunal",
     "captions": [
-        "A task comes in: a customer notice about an outage. The router reads it as kind write, risk critical, "
-        "and starts on the cheapest cell that should do: opus/medium.",
-        "The worker writes the answer. At low or medium risk that would be the end. Critical prose has no "
-        "programmatic check, so the answer goes to trial.",
-        "Two judges read the task and the answer, each in a fresh context: judge A on a third model at low effort, "
-        "judge B on another model. Neither knows the other exists.",
-        "They split. Judge A passes it. Judge B fails it: “We apologise for the disruption” is not in the facts.",
-        "On a split, the arbiter reads the task, the answer and both reasoned verdicts, with no names on them. "
+        "A request in Claude Code: add average() to stats.py, returning 0.0 for an empty list. Opus, the model "
+        "serving the chat, writes it.",
+        "The turn ends with a change in the repository. Before it closes, the tribunal takes the diff and the "
+        "request.",
+        "Two judges read them inside the repository, read-only, each in its own session: judge A on Claude, not "
+        "the model that wrote it; judge B on Codex. Neither knows the other exists.",
+        "They split. Judge A passes it. Judge B fails it: average([]) divides by zero.",
+        "On a split, the arbiter reads the request, the change and both reasoned verdicts, with no names on them. "
         "One extra call, only on a split.",
-        "Verdict: fail, siding with judge B. The task climbs the ladder. Next cell: fable/low.",
-        "Second attempt on fable/low. The seats follow the worker: judge A sonnet/low, judge B opus/xhigh. "
-        "Both pass. Solved.",
+        "Verdict: fail, siding with judge B. The findings go back to Claude, which fixes them in the same turn.",
+        "Second round: the same judges read the fixed change. Both pass. The turn ends.",
         "Every verdict and its cost go to the ledger. The scoreboard says which judge was right. router feedback "
         "--ko is your appeal, and it counts against the judges you overrule.",
     ],
@@ -150,7 +151,7 @@ class TrialFrame:
 
 _SPLIT = {"doc_a": "pass", "doc_b": "fail"}
 _SPLIT_CONTENT = {"doc_a": "reason_pass", "doc_b": "reason_fail", "doc_arb": "arb_lines"}
-_TAKE2_CELLS = {"worker": "fable/low", "a": "sonnet/low", "b": "opus/xhigh"}
+_TAKE2_CELLS: dict[str, str] = {}  # the same seats: the author fixes, the same judges read it again
 _TAKE2 = {"doc_a": "pass", "doc_b": "pass"}
 _TAKE2_CONTENT = {"doc_a": "reason_pass", "doc_b": "reason_pass"}
 

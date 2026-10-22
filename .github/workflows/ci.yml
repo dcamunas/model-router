@@ -29,3 +29,4 @@ jobs:
           npm install -g @anthropic-ai/claude-code
           claude plugin validate . --strict
           claude plugin validate .claude-plugin/plugin.json --strict
+          claude plugin validate plugins/tribunal --strict

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,6 +34,7 @@ class FakeClient:
         self.script = {k: list(v) for k, v in (script or {}).items()}
         self.judge = {k: list(v) for k, v in (judge or {}).items()}
         self.calls: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
 
     def complete(
         self,
@@ -43,13 +45,14 @@ class FakeClient:
         max_tokens: int = NON_STREAMING_MAX_TOKENS,
         output_format: type[BaseModel] | None = None,
     ) -> Completion:
-        self.calls.append({"cell": cell.label, "prompt": prompt, "system": system, "max_tokens": max_tokens,
-                           "output_format": output_format.__name__ if output_format else None})
-        table = self.judge if output_format is not None else self.script
-        queue = table.get(cell.label) or table.get("*")
-        if not queue:
-            raise KeyError(f"no scripted reply for {cell.label} ({'judge' if output_format else 'worker'})")
-        reply = queue.pop(0) if len(queue) > 1 else queue[0]
+        with self._lock:  # a tribunal may ask its judges from two threads
+            self.calls.append({"cell": cell.label, "prompt": prompt, "system": system, "max_tokens": max_tokens,
+                               "output_format": output_format.__name__ if output_format else None})
+            table = self.judge if output_format is not None else self.script
+            queue = table.get(cell.label) or table.get("*")
+            if not queue:
+                raise KeyError(f"no scripted reply for {cell.label} ({'judge' if output_format else 'worker'})")
+            reply = queue.pop(0) if len(queue) > 1 else queue[0]
         return Completion(
             text=reply.text, usage=reply.usage, stop_reason=reply.stop_reason, model=reply.model or cell.model,
             parsed=reply.parsed, refused=reply.refused, refusal_category=reply.refusal_category,

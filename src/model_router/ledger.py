@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from .runner import TaskResult
     from .store import Store
 
+TRIBUNAL_CALIBRATION = "tribunal"  # the calibration id of a tribunal plugin record (`qa.run_qa`, `qa.judge_answer`)
+
 
 _LOCK = threading.Lock()
 
@@ -122,6 +124,9 @@ class Summary:
     by_cell: dict[str, dict[str, float]] = field(default_factory=dict)
     by_kind: dict[str, dict[str, float]] = field(default_factory=dict)
     by_judge: dict[str, dict[str, int]] = field(default_factory=dict)  # the scoreboard, see `scoreboard`
+    tribunal_reviews: int = 0  # the tribunal plugin's records: kept out of the totals above, counted here
+    tribunal_passed: int = 0
+    tribunal_cost: float = 0.0
 
     @property
     def total_cost(self) -> float:
@@ -142,6 +147,9 @@ class Summary:
             f"work cost {money(self.work_cost)} · verification {money(self.verify_cost)} · total {money(self.total_cost)}",
             f"cost per solved task: {money(self.cost_per_solved) if self.cost_per_solved is not None else 'n/a'}",
         ]
+        if self.tribunal_reviews:
+            lines.append(f"tribunal (plugin): {self.tribunal_reviews} reviews · {self.tribunal_passed} passed · "
+                         f"verification {money(self.tribunal_cost)}")
         if self.by_cell:
             rows = []
             for label, s in sorted(self.by_cell.items(), key=lambda kv: -kv[1]["attempts"]):
@@ -180,6 +188,11 @@ def summarize(task_records: list[dict[str, Any]]) -> Summary:
     cells: dict[str, dict[str, float]] = defaultdict(lambda: {"attempts": 0, "judged": 0, "passes": 0, "cost": 0.0})
     kinds: dict[str, dict[str, float]] = defaultdict(lambda: {"tasks": 0, "solved": 0, "cost": 0.0})
     for t in task_records:
+        if t.get("calibration_id") == TRIBUNAL_CALIBRATION:  # the tribunal plugin's: its judges count, not as a task here
+            s.tribunal_reviews += 1
+            s.tribunal_passed += t["status"] == "solved"
+            s.tribunal_cost += t.get("verify_cost_usd", 0.0)
+            continue
         s.tasks += 1
         solved = t["status"] == "solved"
         s.solved += solved
@@ -193,6 +206,8 @@ def summarize(task_records: list[dict[str, Any]]) -> Summary:
             if i and a.get("verdict") is False and t["attempts"][i - 1].get("verdict") is False \
                     and a.get("reason") == t["attempts"][i - 1].get("reason"):
                 s.same_reason_retries += 1
+            if a.get("stop_reason") == "external":  # an answer made elsewhere: no attempt of that cell under the router
+                continue
             c = cells[a["cell"]]
             c["attempts"] += 1
             c["cost"] += a["cost_usd"] + a.get("verify_cost_usd", 0.0)

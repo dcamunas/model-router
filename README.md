@@ -38,11 +38,12 @@ flowchart LR
   N -- ladder or budget exhausted --> U[unsolved]
 ```
 
-![router run on a critical writing task: the answer, one attempt on opus/medium judged by a tribunal of two, status solved](docs/showcase/router-run.gif)
+![router run on a critical writing task: the answer, one attempt on opus/medium checked by one judge on another model, status solved](docs/showcase/router-run.gif)
 
-That is the whole router. The tribunal (two judges blind to each other and an arbiter when they
-split) is one verification mode on top of it: it runs only at critical risk, on tasks no checker
-can decide, and it has its own section further down.
+That is the whole router. Two judges at once, blind to each other, with an arbiter when they
+disagree, is a separate plugin in the same repository: the [tribunal](plugins/tribunal/README.md).
+It reviews the code each turn changes, and critical texts when you ask. You install it apart, and
+the router works the same without it.
 
 ## Where the idea comes from
 
@@ -52,7 +53,7 @@ here, and each one has its reason in the table.
 | Reel | Here | Why |
 |---|---|---|
 | A ladder of models: Sonnet ×1, then Opus ×2, then Fable ×5 | A lattice of (model, effort) cells sorted by cost, with an estimated capability per cell | Anthropic's cost guidance says Fable at `low` often costs less per solved task than Opus at `high`. A ladder of models never tries that cell; the lattice does. |
-| Verify "by risk" | An order of trust: a programmatic checker first (free, and final when it fails), then a judge on another model than the worker; at critical risk, when no checker can decide, a tribunal of two blind judges and an arbiter, with a scoreboard of who was right | A code checker beats any judge. A judge on another model is a blind cross-check, and the tribunal is what is left of an LLM council once you drop the parts that do not pay. |
+| Verify "by risk" | An order of trust: a programmatic checker first (free, and final when it fails), then one judge on another model than the worker, with a scoreboard of who was right | A code checker beats any judge, and a judge on another model is a blind cross-check. Two judges and an arbiter are a separate plugin, the tribunal. |
 | "Feedback" | First-attempt pass rate per (kind, cell), kept apart from escalated attempts; it moves the start cell once there are 10 verdicts or more; a human can override it with `router feedback` | Escalated attempts only see the tasks the cheap cell already failed. Mixing them inflates the failure rate of the expensive cell. |
 | "Simulated workload · real prices" | The same, but the simulation states its assumptions, includes the hard tail and the judge's false passes, and adds the honest cell the reel leaves out: Fable at low | A router that is never compared with "the best cheap model" proves nothing. |
 
@@ -86,7 +87,8 @@ claude plugin marketplace add dcamunas/model-router
 claude plugin install model-router@dcamunas
 ```
 
-The repository is both the marketplace (`dcamunas`) and the plugin (`model-router`). The first
+The repository is both the marketplace (`dcamunas`) and the plugin (`model-router`); the marketplace
+also carries [`tribunal`](plugins/tribunal/README.md), the code-review plugin, which you install the same way when you want it. The first
 session takes a few seconds longer: the hook builds its own Python environment with `uv` in the
 plugin's data directory (`plugins/data/model-router-dcamunas/` inside the profile) and reuses it
 afterwards; with every new plugin version it rebuilds it on its own. `uv` has to be on the machine
@@ -97,7 +99,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.12.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.13.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -108,7 +110,7 @@ Profiles where a policy blocks marketplaces, or one specific repository: `router
 the same hooks and the same skill into the profile's `settings.json`.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.12.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.13.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -297,8 +299,8 @@ With models from other providers, register them and wrap the client: `load_exter
    "production" is not a critical task for it; the high-risk keywords (money, customers,
    production, deletions, legal, health, credentials) still raise an undeclared risk to `high`.
 2. Start cell. The `START` table in `policy.py` (kind × risk), or the table of the active calibration
-   (`router calibrate --apply`; `router plan` names it, see "Assumptions"). With 10 or more verified verdicts (checker,
-   judge, panel or tribunal) for that kind, the feedback store moves it up when its first-attempt pass rate falls below the break-even
+   (`router calibrate --apply`; `router plan` names it, see "Assumptions"). With 10 or more verified verdicts (a checker
+   or a judge) for that kind, the feedback store moves it up when its first-attempt pass rate falls below the break-even
    `c1 / c2` (the cost of an attempt on that cell, verification included, over the cost of the next
    step): below that, starting cheap costs more. The risk floors (`high` ≥ sonnet/low, `critical`
    ≥ opus/medium) cannot be lowered.
@@ -310,9 +312,8 @@ With models from other providers, register them and wrap the client: `load_exter
    `light` is the nearest other model at low effort (the tier above first), in a fresh context: a worker
    judging itself passed a quarter of the answers an independent judge failed. `full` is one fixed judge, `opus/xhigh` unless
    `router config --judge` or `MODEL_ROUTER_JUDGE` say otherwise, on another model than the worker
-   (see below). At `critical`, an `analysis`, `write` or `review` task with no checker gets a
-   `tribunal` of both instead of the full judge alone; `--verify full` forces one judge, `--verify
-   panel` or `--verify tribunal` force two on any task.
+   (see "Who judges"). Two judges at once are the tribunal plugin's job: the router's plan never asks
+   for them, and a task file that says `verify: tribunal` is refused.
 5. Stopping. A passing verdict, the ladder exhausted, the budget by risk (0.10 / 0.50 / 2 / 10 USD),
    two refusals in the same task, the API down, or a judge that cannot be reached (the answer is
    kept and the status is `error`). An answer cut by `max_tokens` is retried once on
@@ -327,33 +328,7 @@ With models from other providers, register them and wrap the client: `load_exter
 7. Escalation. After a verified fail, the next attempt's prompt carries the reason, so the next cell
    does not repeat the mistake; `router stats` counts the retries that repeat it anyway.
 
-## Extra: the tribunal, for critical risk only
-
-Everything above runs without this section. At critical risk, when a writing, analysis or review
-task has no checker, the router swaps the single judge for two, blind to each other, and an arbiter
-that settles a split. One case, start to finish: a split, the arbiter, a retry on the next cell,
-the ledger.
-
-![A critical task on trial: the task reaches a worker on opus/medium, two judges read the answer blind to each other and split, the arbiter sides with the fail, a second attempt on fable/low passes, and the ledger keeps every verdict with its cost](docs/showcase/trial.gif)
-
-```mermaid
-flowchart LR
-  W[worker's answer] --> A[judge A: a third model at low effort, fresh context]
-  W --> B[judge B: the fixed judge, another model]
-  A & B --> D{agree?}
-  D -- yes --> V[verdict]
-  D -- split --> R[arbiter: task, answer, both reasons]
-  R --> V
-  V --> S[(ledger and scoreboard)]
-```
-
-Karpathy's `llm-council` sends one question to several models, has each one rank the others'
-answers and lets a chairman write the final one. With four members that is nine calls per
-question, and the value comes from mixing providers. Here the work is done by one Claude cell
-picked by cost and risk, the judges may come from another provider (see "Judges from other
-providers"), and the number that matters is the cost per solved task, so the router keeps the parts
-that pay: a second, independent opinion, and a third one only when the first two split. No shared
-answers, no ranking, no chairman.
+## Who judges
 
 Who judges is a fixed choice, not a climb up the lattice. `full` uses one judge cell, `opus/xhigh`
 unless `router config --judge` or `MODEL_ROUTER_JUDGE` say otherwise, in a fresh context. When the
@@ -362,46 +337,22 @@ for an Opus worker), or to the model below when there is nothing above, so the c
 cross-check between models. No judge thinks above `xhigh`, and `router config --judge opus/high`
 is the cheaper setting when verification is most of the bill: a judge at `high` writes about 60 %
 less thinking than one at `xhigh`. Verifying is easier than producing, so the judge does not have
-to outrank the worker; it has to be independent and good enough. `light` is the nearest other model
-at low effort, the tier above before the one below; in a tribunal it also avoids the full judge's
-model, so that no two of worker, judge A and judge B share a model when the available models allow
-it. Until 0.11.0 `light` was the worker's own cell in a fresh context. On a private eval of 28 real
-tasks, Haiku and Sonnet passed themselves on 89 % and 93 % of first attempts; an Opus judge passed
-64 % and 68 % of the same answers, for word limits broken, formats ignored and facts invented. A
-model does not see its own blind spots in a fresh context either.
+to outrank the worker; it has to be independent and good enough.
 
-The `tribunal` mode asks those two judges, always, each blind to the other. If they agree, that is
-the verdict. If they split, an arbiter cell reads the task, the answer and both reasoned verdicts
-(as judge A and judge B, no names) and decides for itself; one extra call, only on a split, instead
-of a new attempt and a new pair of judges. The arbiter is the next model up from the full judge and
-the worker at low effort (Fable at low for an Opus judge), or the judge's model one effort up when
-nothing is above; `router config --arbiter` or `MODEL_ROUTER_ARBITER` fix it. When no cell other than the
-judges is available, a split fails. The policy uses the tribunal on its own at critical risk for
-analysis, writing and review tasks without a checker; `Policy(panel_kinds=...)` changes that list,
-`Policy(critical_mode="panel")` picks the cheaper variant, and a task can force `verify="tribunal"`
-or `verify="panel"` anywhere.
-
-The `panel` mode is the same pair with the second judge skipped when the first fails and no
-arbiter: a split is a fail and the task goes up the ladder. One judge call cheaper on a fail, no
-scoreboard worth the name.
+`light` is the nearest other model at low effort, the tier above before the one below. Until 0.11.0
+it was the worker's own cell in a fresh context. On a private eval of 28 real tasks, Haiku and Sonnet
+passed themselves on 89 % and 93 % of first attempts; an Opus judge passed 64 % and 68 % of the same
+answers, for word limits broken, formats ignored and facts invented. A model does not see its own
+blind spots in a fresh context either.
 
 Every judge's own verdict goes to the ledger, so `router stats` keeps a scoreboard per judge cell:
-verdicts and pass rate, how often it agreed with the other judge, how often the arbiter backed it
-on a split, and how many of its verdicts you contradicted with `router feedback`. Those are the
-numbers to pick a judge with, instead of the error rates the simulation assumes.
-
-`router bench --simulate` compares `router` (tribunal) with `router (panel)` and `router (one
-judge)`. The simulation assumes the judges of one answer share their random draw half the time
-(`JUDGE_CORRELATION`): models of one family err together, which is the honest reason two Claude
-judges buy less than two providers would. A judge from another provider should lower that
-correlation; the scoreboard in `router stats` is where to see whether it does. Measure on your own
-tasks before trusting either number.
+verdicts, pass rate, and how many of its verdicts you contradicted with `router feedback`. Those are
+the numbers to pick a judge with, instead of the error rates the simulation assumes.
 
 ## Other providers: judges, and workers when you list them
 
-A model from another provider judges and arbitrates, which is where a tribunal earns its keep: two
-companies err in different places. It also does the work once you list it among the models that
-may. Five doors: `openai`, `deepseek` and `xai` by API key; `codex` (ChatGPT through the Codex CLI)
+A model from another provider can be the judge, and a second company errs in different places
+than the first. It also does the work once you list it among the models that may. Five doors: `openai`, `deepseek` and `xai` by API key; `codex` (ChatGPT through the Codex CLI)
 and `gemini` (Google through its CLI) by subscription, as `claude -p` does for Anthropic.
 
 ```bash
@@ -409,7 +360,7 @@ router config --codex-home ~/.codex-personal             # a Codex home signed i
 router config --codex-models                             # what that account can run, with OpenAI's list price and a default tier
 router config --codex-models sol,luna                    # declare those two; the rest stay out
 router config --external gpt=openai/gpt-5.5@5/30        # by hand: NAME=DOOR/MODEL_ID@$ per M in/$ per M out[/TIER]
-router config --judge sol/high --arbiter deepseek/high   # after declaring deepseek the same way
+router config --judge sol/high                          # the full judge, now from another company
 router config --models haiku,sonnet,opus,fable,luna      # now luna may take tasks too; without this it only judges
 router doctor                                            # per model: key set, home signed in; --live makes one call each
 ```
@@ -427,10 +378,7 @@ efforts its door accepts (one cell for Gemini, four for Codex) and the tier you 
 to 3 Fable; Opus, 2, when omitted): an assumption that says where the ladder escalates to it, until
 `router calibrate` measures what it passes; a start table that names it while it is not listed hands the task to
 the Claude of its tier and says so. The Claude Code hook keeps choosing among Claude models only: the
-Agent tool runs nothing else. The arbiter of a split prefers a company that is neither the worker's nor
-the full judge's, then one that is not the worker's: an arbiter with the worker's blind spots passes
-what the worker got wrong. Through a
-CLI, a verdict is asked for with the CLI's own schema option (Codex) or in the prompt (Gemini), is
+Agent tool runs nothing else. Through a CLI, a verdict is asked for with the CLI's own schema option (Codex) or in the prompt (Gemini), is
 validated here, gets one more try when it does not come back as JSON, and otherwise counts as a judge
 error: the router never invents a verdict. Each CLI call runs in an empty directory with read-only
 tools and nothing persisted. Codex runs only on the home you configured (it must exist and be signed
@@ -461,8 +409,7 @@ structured output goes through `parse`; above 16K tokens the call streams.
   mean cost of an attempt and the expected cost per solved task, and proposes a table; a change
   needs evidence (a cheaper cell that was measured and passes, or the current cell measured and
   beaten), six first attempts at least, and the risk floors hold. Only independent verdicts count: a
-  checker, or a judge on a model other than the worker's that backed the final verdict (the arbiter's
-  ruling included); a verdict the worker's own model alone gave is reported and left out, because a
+  checker, or a judge on a model other than the worker's that backed the final verdict; a verdict the worker's own model alone gave is reported and left out, because a
   cheap cell passes itself. `--apply` makes it the table that
   decides: `router plan` names it, `router doctor` names it, and every record carries its id. A
   calibration moves where a task starts, not the ladder: escalation still climbs by the capability
@@ -482,7 +429,7 @@ structured output goes through `parse`; above 16K tokens the call streams.
 An evaluation set of your own: 20 to 30 real tasks, frozen, with a checker or a reference answer,
 run through `router bench tasks.yaml --matrix --repeat 3` and then `router calibrate`. Until then, the only reliable number
 this gives you is the real cost per solved task in the ledger. `evals/v1.yaml` is a starter set of
-fifteen made-up tasks (ten with a checker, two critical ones without so the tribunal runs): copy it and
+fifteen made-up tasks (ten with a checker, two critical ones without, so a judge decides): copy it and
 replace the tasks with yours.
 
 ## Development

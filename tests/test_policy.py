@@ -144,22 +144,18 @@ def test_panel_with_one_model_uses_two_cells_and_degrades_to_one_at_the_top(monk
     assert choose_panel(parse_cell("opus/max"), cells) == [parse_cell("opus/xhigh")]
 
 
-def test_tribunal_is_automatic_at_critical_risk_for_judgement_kinds_without_checker():
+def test_the_router_never_picks_two_judges_itself_even_at_critical_risk():
     policy = Policy()
-    assert policy.plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "tribunal"
-    assert policy.plan(Task(prompt="x", kind="write", risk="critical")).verify == "tribunal"
-    assert policy.plan(Task(prompt="x", kind="code", risk="critical")).verify == "full"
+    for kind in ("analysis", "write", "review", "code"):
+        assert policy.plan(Task(prompt="x", kind=kind, risk="critical")).verify == "full"  # two judges: the tribunal plugin
+    assert policy.judges_for(parse_cell("opus/medium"), "tribunal")  # it still seats a tribunal when asked
     assert policy.plan(Task(prompt="x", kind="analysis", risk="high")).verify == "light"
     with_checker = Task(prompt="x", kind="analysis", risk="critical", checker=contains_checker("42"))
     assert policy.plan(with_checker).verify == "full"
     assert policy.plan(Task(prompt="x", kind="analysis", risk="critical", verify="full")).verify == "full"
     assert policy.plan(Task(prompt="x", kind="code", risk="low", verify="panel")).verify == "panel"
-    assert Policy(panel_kinds=frozenset()).plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "full"
-    assert Policy(critical_mode="panel").plan(Task(prompt="x", kind="analysis", risk="critical")).verify == "panel"
     plan = policy.plan(Task(prompt="x", kind="review", risk="critical"))
-    assert any(r.startswith("tribunal:") and "arbiter" in r for r in plan.rationale)
-    with pytest.raises(ValueError):
-        Policy(critical_mode="council")
+    assert not any("tribunal" in r for r in plan.rationale)
 
 
 def test_arbiter_is_the_next_model_up_from_the_judge_else_one_effort_up(monkeypatch):

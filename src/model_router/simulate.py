@@ -153,8 +153,8 @@ class SimClient:
 
 
 def default_strategies() -> dict[str, PolicyProtocol]:
-    """Return the strategies the simulation compares: single cells, a two-step rerun and the router with
-    one judge everywhere, with a panel at critical risk, with the tribunal (the default) and with feedback.
+    """Return the strategies the simulation compares: single cells, a two-step rerun, and the router with and
+    without the feedback store.
     """
     return {
         "fable/xhigh": LadderPolicy([parse_cell("fable/xhigh")]),
@@ -162,8 +162,6 @@ def default_strategies() -> dict[str, PolicyProtocol]:
         "sonnet/high": LadderPolicy([parse_cell("sonnet/high")]),
         "fable/low": LadderPolicy([parse_cell("fable/low")]),
         "sonnet>opus": LadderPolicy([parse_cell("sonnet/medium"), parse_cell("opus/high")], verify="light"),
-        "router (one judge)": Policy(panel_kinds=frozenset(), calibration=None),
-        "router (panel)": Policy(critical_mode="panel", calibration=None),
         "router": Policy(calibration=None),
         "router+feedback": Policy(feedback=FeedbackStore(min_n=10), calibration=None),
     }

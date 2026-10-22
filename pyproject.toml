@@ -1,6 +1,6 @@
 [project]
 name = "model-router"
-version = "0.12.0"
+version = "0.13.0"
 description = "Model router for Claude: model + effort per task, verification by risk, escalation and cost per solved task"
 readme = "README.md"
 license = "MIT"
@@ -34,6 +34,8 @@ Changelog = "https://github.com/dcamunas/model-router/blob/main/CHANGELOG.md"
 [project.scripts]
 router = "model_router.cli:main"
 router-hook = "model_router.hook:main"
+router-tribunal-hook = "model_router.tribunal_hook:main"
+tribunal = "model_router.tribunal_cli:entry"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

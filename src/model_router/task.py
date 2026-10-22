@@ -20,7 +20,8 @@ KINDS: tuple[str, ...] = (
     "classify", "extract", "summarize", "search", "chat", "write", "code", "review", "analysis", "agentic", "unknown",
 )
 RISKS: tuple[str, ...] = ("low", "medium", "high", "critical")
-VERIFY_MODES: tuple[str, ...] = ("none", "light", "full", "panel", "tribunal")
+VERIFY_MODES: tuple[str, ...] = ("none", "light", "full", "panel", "tribunal")  # what the verifier can do
+ROUTER_VERIFY_MODES: tuple[str, ...] = ("none", "light", "full")  # what the router offers; two judges are the tribunal's
 VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge", "panel", "tribunal"})  # verdict sources that are evidence
 
 DEFAULT_MAX_TOKENS = 16_000  # equals client.NON_STREAMING_MAX_TOKENS, so the api backend never streams by default

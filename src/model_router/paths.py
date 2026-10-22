@@ -18,6 +18,7 @@ MAIN_LEDGER = "ledger.jsonl"  # the ledger of `router run` and `router judge`; b
 MODELS_ENV = "MODEL_ROUTER_MODELS"  # models this installation may route to, e.g. "haiku,sonnet,opus"
 CONFIG_DIR_ENV = "MODEL_ROUTER_CLAUDE_CONFIG_DIR"  # Claude profile for the cli backend
 JUDGE_ENV = "MODEL_ROUTER_JUDGE"  # the cell that judges in `full` mode, e.g. "opus/xhigh"
+TRIBUNAL_ENV = "MODEL_ROUTER_TRIBUNAL"  # 0 turns the tribunal plugin's hooks off; every CLI call the router starts sets it
 ARBITER_ENV = "MODEL_ROUTER_ARBITER"  # the cell that settles a tribunal's split; unset = the rule in policy.py
 CALIBRATION_ENV = "MODEL_ROUTER_CALIBRATION"  # the calibration that decides: an id or a file; "none" = the code tables
 CODEX_HOME_ENV = "MODEL_ROUTER_CODEX_HOME"  # the Codex home (ChatGPT account) for `codex` cells; never the ambient ~/.codex

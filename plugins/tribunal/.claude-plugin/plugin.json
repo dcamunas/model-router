@@ -1,0 +1,15 @@
+{
+  "name": "tribunal",
+  "displayName": "Tribunal",
+  "version": "0.13.0",
+  "description": "Final QA of the code each turn changes: a Claude judge and a Codex judge, blind to each other and read-only in the repository, an arbiter on a split; a fail goes back to Claude with the findings. Needs the model-router plugin.",
+  "author": {
+    "name": "David Camuñas",
+    "url": "https://github.com/dcamunas"
+  },
+  "homepage": "https://github.com/dcamunas/model-router",
+  "repository": "https://github.com/dcamunas/model-router",
+  "license": "MIT",
+  "keywords": ["claude", "claude-code", "codex", "code-review", "qa", "tribunal"],
+  "skills": "./skills"
+}

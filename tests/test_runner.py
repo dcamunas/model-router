@@ -76,7 +76,8 @@ def test_tribunal_asks_both_judges_and_the_arbiter_settles_a_split(tmp_path: Pat
         judge={"sonnet/low": [ok("fine")], "fable/low": [ko("thin")], "fable/medium": [ok("judge A was right")]},
     )
     ledger = Ledger(tmp_path / "ledger.jsonl")
-    result = Router(client, ledger=ledger).run(Task(prompt="write the incident report", kind="write", risk="critical"))
+    result = Router(client, ledger=ledger).run(Task(prompt="write the incident report", kind="write", risk="critical",
+                                                    verify="tribunal"))
     assert result.verify == "tribunal" and result.solved and len(result.attempts) == 1
     attempt = result.attempts[0]
     assert attempt.verdict is True and attempt.verdict_source == "tribunal" and attempt.arbiter == parse_cell("fable/medium")
@@ -97,12 +98,12 @@ def test_tribunal_asks_both_judges_and_the_arbiter_settles_a_split(tmp_path: Pat
 
 def test_tribunal_agreement_needs_no_arbiter_and_a_split_without_one_fails(monkeypatch):
     client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
-    result = Router(client).run(Task(prompt="x", kind="write", risk="critical"))
+    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", verify="tribunal"))
     attempt = result.attempts[0]
     assert result.solved and attempt.arbiter is None and "tribunal agreed" in attempt.reason
     assert len([c for c in client.calls if c["output_format"] == "Verdict"]) == 2
     client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ko()]})
-    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1))
+    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1, verify="tribunal"))
     assert result.status == "unsolved" and "tribunal agreed" in result.attempts[0].reason
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
     client = FakeClient(script={"*": [Reply("x")]}, judge={"opus/high": [ok()], "opus/xhigh": [ko("no")]})
@@ -121,7 +122,7 @@ def test_scoreboard_counts_agreement_arbiter_backing_and_human_contradictions(tm
     )
     router = Router(client, ledger=ledger)
     for i in range(3):
-        router.run(Task(prompt="x", kind="write", risk="critical", id=f"w{i}"))
+        router.run(Task(prompt="x", kind="write", risk="critical", id=f"w{i}", verify="tribunal"))
     ledger.override("w2", passed=False, note="it was bad")
     board = summarize(ledger.tasks()).by_judge
     assert board["sonnet/low"] == {"verdicts": 3, "passes": 3, "agreed": 2, "split": 1, "backed": 1, "overruled": 0,
@@ -157,7 +158,8 @@ def test_judge_records_an_external_answer_without_worker_cost(tmp_path: Path):
     store = FeedbackStore(tmp_path / "fb.json")
     client = FakeClient(judge={"*": [ok("solid")]})
     router = Router(client, ledger=ledger, feedback=store)
-    result = router.judge(Task(prompt="write the notice", kind="write", risk="critical", id="ext1"), "the notice")
+    result = router.judge(Task(prompt="write the notice", kind="write", risk="critical", id="ext1"), "the notice",
+                          mode="tribunal")
     assert result.solved and result.verify == "tribunal" and result.answer == "the notice"
     attempt = result.attempts[0]
     assert attempt.stop_reason == "external" and attempt.cost_usd == 0 and attempt.usage.total == 0
@@ -354,6 +356,6 @@ def test_result_records_fingerprint_version_and_calibration():
 def test_tribunal_verdicts_feed_the_feedback_store(tmp_path: Path):
     client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
     feedback = FeedbackStore(tmp_path / "feedback.json")
-    result = Router(client, feedback=feedback).run(Task(prompt="x", kind="write", risk="critical"))
+    result = Router(client, feedback=feedback).run(Task(prompt="x", kind="write", risk="critical", verify="tribunal"))
     assert result.attempts[0].verdict_source == "tribunal"
     assert feedback.data["write"]["opus/medium"] == {"n": 1, "pass": 1, "n_first": 1, "pass_first": 1}

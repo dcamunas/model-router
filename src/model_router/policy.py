@@ -1,11 +1,13 @@
 """Routing policy: which cell starts a task, how it escalates, how it is verified and what it may
 spend. Everything is a table you can read and edit; the feedback store nudges the start cell once
-it has seen enough verdicts for a kind. Verification has four modes: none; `light`, the nearest other
-model at low effort in a fresh context; `full`, a fixed judge cell (opus/xhigh unless configured) on
-another model than the worker; `panel`, those two together, both must agree; `tribunal`, those two blind to each
-other plus an arbiter that settles a split (the default at critical risk, with no checker, for kinds
-where only judgement can decide). Verifying is easier than producing, so the judge does not have to
+it has seen enough verdicts for a kind. The router verifies in three modes: none; `light`, the nearest
+other model at low effort in a fresh context; `full`, a fixed judge cell (opus/xhigh unless configured)
+on another model than the worker. Verifying is easier than producing, so the judge does not have to
 outrank the worker: it has to be independent and good enough, and it never thinks above `xhigh`.
+
+Two judges at once (`panel`, both must agree; `tribunal`, blind to each other with an arbiter on a split)
+belong to the tribunal plugin, not to the router's own plan: the policy never picks them, but it still
+seats them (`choose_panel`, `choose_arbiter`) when the tribunal asks.
 """
 
 from __future__ import annotations
@@ -40,10 +42,6 @@ START: dict[str, dict[str, str]] = {
 # A task never starts below this capability, whatever the feedback store suggests.
 FLOOR: dict[str, str] = {"high": "sonnet/low", "critical": "opus/medium"}
 VERIFY_BY_RISK: dict[str, str] = {"low": "none", "medium": "none", "high": "light", "critical": "full"}
-# Kinds where no checker can decide: when the risk calls for a full judge and the task has no checker,
-# the policy asks two judges (CRITICAL_MODE: a tribunal, or a panel) instead of one.
-PANEL_KINDS: frozenset[str] = frozenset({"analysis", "write", "review"})
-CRITICAL_MODE = "tribunal"
 BUDGET_USD_BY_RISK: dict[str, float] = {"low": 0.10, "medium": 0.50, "high": 2.00, "critical": 10.00}
 MAX_ATTEMPTS_BY_RISK: dict[str, int] = {"low": 2, "medium": 3, "high": 4, "critical": 5}
 BUDGET_ATTEMPTS = 3.0  # the budget is at least this many first attempts, so big prompts are not starved
@@ -180,6 +178,22 @@ def choose_panel(worker: Cell, cells: list[Cell], *, judge: Cell | None = None) 
     return sorted({_light_judge(worker, cells, avoid=full), full}, key=_judge_cost)
 
 
+class _Arbiter:
+    """An arbiter resolved on first use: the given cell, else the configured one (`default_arbiter`)."""
+
+    def __init__(self, given: Cell | None, models: Iterable[str]) -> None:
+        self.given, self.models = given, list(models)
+        self._cell: Cell | None = None
+        self._done = False
+
+    def cell(self) -> Cell | None:
+        if not self._done:
+            given = self.given
+            self._cell = _cap_effort(nearest_available(given, self.models)) if given else default_arbiter(self.models)
+            self._done = True
+        return self._cell
+
+
 def default_arbiter(models: Iterable[str] | None = None) -> Cell | None:
     """Return the configured arbiter cell (MODEL_ROUTER_ARBITER, else `arbiter` in config.json), capped at
     JUDGE_MAX_EFFORT and moved to the nearest available model, or None when nothing is configured and the
@@ -251,9 +265,9 @@ def _resolve_calibration(value: Calibration | str | None) -> tuple[Calibration |
 
 class Policy:
     """The default policy: the START table (or the active calibration's, see `calibration.py`), the risk
-    floors, feedback nudges, cost-aware escalation, a fixed judge (`judge`, else the configured one) for
-    full verification and, at critical risk for `panel_kinds` without a checker, `critical_mode` (a
-    tribunal, or a panel) with `arbiter` (else the configured one, else the rule in `choose_arbiter`).
+    floors, feedback nudges, cost-aware escalation and a fixed judge (`judge`, else the configured one) for
+    full verification. `arbiter` (else the configured one, else the rule in `choose_arbiter`) only seats a
+    tribunal the tribunal plugin asks for.
     """
 
     calibration_id = "builtin"  # which tables decide; an instance with a calibration carries its id instead
@@ -265,14 +279,10 @@ class Policy:
         start_table: dict[str, dict[str, str]] | None = None,
         feedback: FeedbackStore | None = None,
         min_gain: float = 0.08,
-        panel_kinds: frozenset[str] = PANEL_KINDS,
-        critical_mode: str = CRITICAL_MODE,
         judge: Cell | None = None,
         arbiter: Cell | None = None,
         calibration: Calibration | str | None = ACTIVE,
     ) -> None:
-        if critical_mode not in ("panel", "tribunal"):
-            raise ValueError(f"critical_mode must be 'panel' or 'tribunal', not {critical_mode!r}")
         self.cells = cells or lattice()
         self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
         self.calibration, self.calibration_missing = _resolve_calibration(calibration)
@@ -281,10 +291,15 @@ class Policy:
         self.start_table = start_table or (self.calibration.start if self.calibration else START)
         self.feedback = feedback
         self.min_gain = min_gain
-        self.panel_kinds = panel_kinds
-        self.critical_mode = critical_mode
         self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
-        self.arbiter = _cap_effort(nearest_available(arbiter, self.models)) if arbiter else default_arbiter(self.models)
+        self._arbiter = _Arbiter(arbiter, self.models)
+
+    @property
+    def arbiter(self) -> Cell | None:
+        """The arbiter of a tribunal split, resolved when first asked: the router's own plans never need one, so a
+        stale `arbiter` setting cannot stop it.
+        """
+        return self._arbiter.cell()
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
         """Replace a cell whose model may not work here (a Claude model this installation lacks, a declared model
@@ -308,10 +323,6 @@ class Policy:
             rationale.append(f"calibration {self.calibration_missing} cannot be loaded: the built-in tables decide")
         start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
-        if task.verify is None and verify == "full" and kind in self.panel_kinds and task.checker is None:
-            verify = self.critical_mode
-            rationale.append(f"{verify}: {risk} {kind} with no checker, two judges blind to each other"
-                             + (", an arbiter settles a split" if verify == "tribunal" else ", both must agree"))
         est_input = task.estimated_input_tokens
         out_tokens = task.planned_output_tokens
         if self.feedback is not None:
@@ -394,8 +405,13 @@ class LadderPolicy:
         self._all = lattice()
         models = {c.model for c in self._all}
         self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
-        self.arbiter = _cap_effort(nearest_available(arbiter, models)) if arbiter else default_arbiter(models)
-        self._auto = Policy(judge=self.judge, arbiter=self.arbiter, calibration=None) if verify == "auto" else None
+        self._arbiter = _Arbiter(arbiter, models)
+        self._auto = Policy(judge=self.judge, arbiter=arbiter, calibration=None) if verify == "auto" else None
+
+    @property
+    def arbiter(self) -> Cell | None:
+        """The arbiter of a tribunal split, resolved when first asked (see `Policy.arbiter`)."""
+        return self._arbiter.cell()
 
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)

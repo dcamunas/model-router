@@ -39,6 +39,34 @@ def test_manifests_name_the_same_plugin_and_version_as_pyproject():
     assert os.access(SCRIPT, os.X_OK)
 
 
+def test_the_tribunal_plugin_ships_with_the_same_version_and_finds_the_router_environment(tmp_path):
+    root = ROOT / "plugins" / "tribunal"
+    plugin = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+    assert plugin["name"] == "tribunal" and plugin["version"] == VERSION
+    assert ("tribunal", "./plugins/tribunal") in [(e["name"], e["source"]) for e in market["plugins"]]
+    assert (root / plugin["skills"] / "tribunal" / "SKILL.md").is_file()
+    hooks = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
+    assert set(hooks) == {"UserPromptSubmit", "Stop", "SessionEnd"} and hooks["Stop"][0]["hooks"][0]["timeout"] >= 600
+    script = root / "hooks" / "tribunal-hook.sh"
+    assert os.access(script, os.X_OK)
+    data = tmp_path / "data"
+    sibling = data / "model-router-dcamunas" / "venv" / "bin"
+    sibling.mkdir(parents=True)
+    fake = sibling / "router-tribunal-hook"
+    fake.write_text("#!/bin/sh\ncat >/dev/null\necho ran\n")
+    fake.chmod(0o755)
+    env = {"PATH": "/usr/bin:/bin", "CLAUDE_PLUGIN_DATA": str(data / "tribunal-dcamunas"), "HOME": str(tmp_path)}
+    proc = subprocess.run([str(script)], input="{}", capture_output=True, text=True, env=env, check=False)
+    assert proc.returncode == 0 and proc.stdout.strip() == "ran"  # the router plugin's environment, next door
+    proc = subprocess.run([str(script)], input="{}", capture_output=True, text=True,
+                          env={**env, "MODEL_ROUTER_TRIBUNAL": "0"}, check=False)
+    assert proc.returncode == 0 and proc.stdout == ""
+    fake.unlink()
+    proc = subprocess.run([str(script)], input="{}", capture_output=True, text=True, env=env, check=False)
+    assert proc.returncode == 0 and "model-router plugin's environment" in proc.stderr  # missing: quiet, never blocks
+
+
 def run_hook(data: Path, event: dict, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     base = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""),
             "CLAUDE_PLUGIN_ROOT": str(ROOT), "CLAUDE_PLUGIN_DATA": str(data), "MODEL_ROUTER_HOME": str(data / "home")}

@@ -20,8 +20,9 @@ What this skill adds is the rest of the loop: verify by risk and escalate on fai
 A Claude Code subagent drags the whole session prompt along (tools, MCP, skills: about 100K tokens).
 For a subtask that needs no tools (classify, extract, summarise, draft, review a text you already
 have) use the router directly: about 900 tokens of context, model and effort by kind and risk, an
-optional checker, a judge by risk (at critical risk for analysis, writing and review, a tribunal: two
-judges blind to each other and an arbiter if they split), and an entry in the ledger.
+optional checker, one judge by risk on another model than the worker, and an entry in the ledger.
+For a second opinion from another company, two judges and an arbiter, use the tribunal plugin
+(`tribunal judge` for a text, `tribunal qa` for code) when it is installed.
 
 ```bash
 router run "<task>" --kind <kind> --risk <risk>              # the answer goes to stdout
@@ -51,7 +52,7 @@ fails, `router doctor` says so.
 
    Kinds: classify, extract, summarize, search, chat, write, code, review, analysis, agentic.
    Risks: low, medium, high, critical. It prints the start cell, the ladder, the verification mode,
-   the verifier (two cells for a panel or a tribunal) and the arbiter of a tribunal.
+   and the verifier.
 
 2. Launch the subagent with the `model` and `effort` of the start cell and the full brief.
 
@@ -62,8 +63,7 @@ fails, `router doctor` says so.
    router judge "<the same subtask>" --kind <kind> --risk <risk> --cell <start cell> --answer result.md
    ```
 
-   It runs the plan's judges (light, full, panel or tribunal, including a judge from another
-   provider), records every verdict in the ledger for the scoreboard, prints the reasons and exits
+   It runs the plan's judge (light or full, possibly a model from another provider), records every verdict in the ledger for the scoreboard, prints the reasons and exits
    1 on a fail. About 900 tokens of context per judge instead of a subagent.
 
    Launch judge subagents instead only when the verdict needs tools (run the tests, read the repo):
@@ -71,10 +71,6 @@ fails, `router doctor` says so.
    - `light`: check the result against the brief yourself, or with a checker (tests, valid JSON).
    - `full`: launch **another** subagent on the verifier's cell, fresh context, with the brief and
      the result, and ask it for `passed / reason / issues`. Never the subagent that did the work.
-   - `panel` and `tribunal`: one subagent per judge cell the plan prints, each in a fresh context and
-     blind to the other. A panel passes only when both pass. A tribunal that splits sends the brief,
-     the result and both verdicts (as judge A and judge B, no model names) to a third subagent on
-     the arbiter cell; its verdict is final. Say in the final message who split and who was backed.
    - A judge from another provider is not a Claude Code model: it only sits through `router judge`.
 
 4. On failure, relaunch on the next cell of the ladder with the reason for the failure in the brief.

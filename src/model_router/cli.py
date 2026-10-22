@@ -54,7 +54,6 @@ from .codex_models import Proposal
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
 from .paths import (
-    ARBITER_ENV,
     CALIBRATION_ENV,
     CODEX_HOME_ENV,
     CONFIG_DIR_ENV,
@@ -75,28 +74,36 @@ from .policy import (
     LadderPolicy,
     Policy,
     PolicyProtocol,
-    default_arbiter,
     default_judge,
 )
 from .runner import Router, TaskResult
 from .store import Store
-from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFIED_SOURCES, VERIFY_MODES, Task, json_checker, regex_checker
+from .task import (
+    DEFAULT_MAX_TOKENS,
+    KINDS,
+    RISKS,
+    ROUTER_VERIFY_MODES,
+    VERIFIED_SOURCES,
+    Task,
+    json_checker,
+    regex_checker,
+)
 from .version import router_version
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
-ARBITER_SHARE = 0.3  # the share of tribunals assumed to split, for the estimate
 REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
 MIN_REASON_CHARS = 16
 PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
 
 
-def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True) -> None:
+def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True, with_verify: bool = True) -> None:
     if with_prompt:
         p.add_argument("prompt", nargs="?", help="the task; or use --file")
         p.add_argument("--file", "-f", help="file with the task")
     p.add_argument("--kind", "-k", choices=KINDS, help="task kind (inferred by rules when missing)")
     p.add_argument("--risk", "-r", choices=RISKS, help="how bad a wrong answer is (inferred when missing)")
-    p.add_argument("--verify", choices=VERIFY_MODES, help="force the verification mode")
+    if with_verify:
+        p.add_argument("--verify", choices=ROUTER_VERIFY_MODES, help="force the verification mode")
     p.add_argument("--budget", type=float, help="spending cap in USD for the task")
     p.add_argument("--max-attempts", type=int, help="maximum attempts")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
@@ -133,7 +140,7 @@ def _task_from(
         checker = json_checker(tuple(k.strip() for k in args.check_json.split(",") if k.strip()))
     system = Path(args.system).read_text(encoding="utf-8") if args.system else None
     task = Task(prompt=prompt, kind=kind, risk=risk, system=system, checker=checker, max_tokens=args.max_tokens,
-                budget_usd=args.budget, max_attempts=args.max_attempts, verify=args.verify)
+                budget_usd=args.budget, max_attempts=args.max_attempts, verify=getattr(args, "verify", None))
     return task, cls
 
 
@@ -154,9 +161,6 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     judges = policy.judges_for(plan.start, plan.verify)
     if judges:
         print(f"verifier ({plan.verify}): {' then '.join(map(str, judges))}")
-    if plan.verify == "tribunal" and len(judges) > 1:
-        arbiter = policy.arbiter_for(plan.start)
-        print(f"arbiter on a split: {arbiter or 'none available (a split fails)'}")
     first = plan.start.expected_cost(task.estimated_input_tokens, task.planned_output_tokens)
     print(f"estimated cost of the first attempt: {money(first)}"
           f"  (prices {PRICES_AS_OF})")
@@ -310,7 +314,16 @@ def _spec_task(spec: dict[str, Any]) -> Task:
     return Task(prompt=prompt, kind=spec.get("kind", cls.kind), risk=spec.get("risk", cls.risk),
                 id=str(spec.get("id") or Task(prompt="x").id), system=spec.get("system"), checker=checker,
                 max_tokens=int(spec.get("max_tokens", DEFAULT_MAX_TOKENS)), budget_usd=spec.get("budget"),
-                max_attempts=spec.get("max_attempts"), verify=spec.get("verify"))
+                max_attempts=spec.get("max_attempts"), verify=_router_verify(spec))
+
+
+def _router_verify(spec: dict[str, Any]) -> str | None:
+    """Return a task file's `verify`, refusing a mode the router does not offer (two judges are the tribunal's)."""
+    verify = spec.get("verify")
+    if verify is not None and verify not in ROUTER_VERIFY_MODES:
+        raise SystemExit(f"task {spec.get('id', '?')}: verify {verify!r} is not a router mode "
+                         f"({', '.join(ROUTER_VERIFY_MODES)}); two judges are the tribunal plugin's (`tribunal judge`)")
+    return verify
 
 
 def _parse_strategy(text: str, verify: str | None = None) -> tuple[str, PolicyProtocol]:
@@ -340,9 +353,6 @@ def _bench_estimate(tasks: list[Task], strategies: list[tuple[str, PolicyProtoco
             estimate += first * (1.0 if len(plan.ladder) == 1 else ESCALATION_COST_FACTOR)
             judges = policy.judges_for(plan.start, plan.verify)
             estimate += sum(j.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH) for j in judges)
-            arbiter = policy.arbiter_for(plan.start) if plan.verify == "tribunal" else None
-            if arbiter is not None:
-                estimate += ARBITER_SHARE * arbiter.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
     return estimate
 
 
@@ -624,13 +634,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
         checks.append((True, f"judge for full verification: {judge} (via {source})"))
     except ValueError as exc:  # UnknownModelError is one too
         checks.append((False, f"judge for full verification: {exc} (check {JUDGE_ENV} or `router config --judge`)"))
-    try:
-        arbiter = default_arbiter()
-        source = ARBITER_ENV if os.environ.get(ARBITER_ENV) else "config.json"
-        checks.append((True, f"arbiter for a tribunal split: {arbiter} (via {source})" if arbiter else
-                       "arbiter for a tribunal split: by rule (the next model up from the judge, at low effort)"))
-    except ValueError as exc:
-        checks.append((False, f"arbiter for a tribunal split: {exc} (check {ARBITER_ENV} or `router config --arbiter`)"))
     checks.append(_calibration_check())
     checks += [_external_check(spec) for spec in external_models()]
     if profile is not None and profile.is_dir():
@@ -732,7 +735,8 @@ def _cmd_feedback(args: argparse.Namespace) -> int:
     if prior is None:
         prior = _verified_verdict(record)
     ledger.override(args.task_id, passed, note=args.note or "")
-    if record.get("final_cell") and prior is not None and prior != passed:
+    external = (record.get("attempts") or [{}])[-1].get("stop_reason") == "external"  # never routed: nothing to correct
+    if record.get("final_cell") and prior is not None and prior != passed and not external:
         feedback = FeedbackStore(home() / "feedback.json")
         feedback.apply_override(record["kind"], record["final_cell"], passed, first=_was_first_verdict(record))
         feedback.save()
@@ -795,7 +799,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def _forget_external(name: str) -> None:
-    """Drop a removed declared model from `models`, `judge` and `arbiter` in config.json, saying so: a reference
+    """Drop a removed declared model from `models`, `judge`, `arbiter` and the tribunal's settings, saying so: a reference
     left behind would stop every command with an unknown model.
     """
     cfg = read_config()
@@ -806,6 +810,11 @@ def _forget_external(name: str) -> None:
     for key in ("judge", "arbiter"):
         if str(cfg.get(key) or "").partition("/")[0] == name:
             changes[key] = None
+    raw = cfg.get("qa")
+    tribunal: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    kept = {k: v for k, v in tribunal.items() if str(v).partition("/")[0] != name}
+    if kept != tribunal:
+        changes["qa"] = kept  # the tribunal's judge or arbiter
     if not changes:
         return
     for key, value in changes.items():
@@ -820,7 +829,7 @@ def _forget_external(name: str) -> None:
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
-    if (args.models is None and args.profile_dir is None and args.judge is None and args.arbiter is None
+    if (args.models is None and args.profile_dir is None and args.judge is None
             and args.calibration is None and args.codex_home is None and not args.external
             and args.codex_models is None):
         cfg = read_config()
@@ -828,7 +837,6 @@ def _cmd_config(args: argparse.Namespace) -> int:
         anthropic = [m.short for m in MODELS.values() if m.provider == "anthropic"]
         print(f"available models: {', '.join(cfg.get('models') or anthropic)}")
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
-        print(f"arbiter for a tribunal split: {cfg.get('arbiter') or 'by rule (the next model up from the judge)'}")
         print(f"calibration: {cfg.get('calibration') or 'none (the built-in tables decide)'}")
         shown = ", ".join(f"{s.short}={s.provider}/{s.id}@{s.input:g}/{s.output:g}/{s.tier}"
                           for s in external_models()) or "none"
@@ -846,15 +854,12 @@ def _cmd_config(args: argparse.Namespace) -> int:
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
     judge = parse_cell(args.judge).label if args.judge is not None else None
-    arbiter = None
-    if args.arbiter is not None:
-        arbiter = "" if args.arbiter.strip().lower() == "rule" else parse_cell(args.arbiter).label
     calibration = None
     if args.calibration is not None:
         calibration = "" if args.calibration.strip().lower() in NO_CALIBRATION else args.calibration.strip()
         if calibration:
             load_calibration(calibration)  # OSError or ValueError when it cannot be used; main() makes them one line
-    remember(profile, names, reset_models=args.models is not None and names is None, judge=judge, arbiter=arbiter,
+    remember(profile, names, reset_models=args.models is not None and names is None, judge=judge,
              calibration=calibration)
     return 0
 
@@ -990,7 +995,7 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--yes", "-y", action="store_true", help="do not ask before spending")
     sb.add_argument("--jobs", "-j", type=int, default=3, help="tasks in parallel (default 3)")
     sb.add_argument("--repeat", type=int, default=1, help="run every task this many times (models are not deterministic)")
-    sb.add_argument("--verify", choices=("auto", *VERIFY_MODES),
+    sb.add_argument("--verify", choices=("auto", *ROUTER_VERIFY_MODES),
                     help="verification for fixed-cell strategies: a mode, or auto = what the router picks by risk "
                          "(default: light for a ladder, none for one cell)")
     sb.add_argument("--dry-run", action="store_true", help="validate the file and print the estimate; call nothing")
@@ -1069,7 +1074,6 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--codex-home", type=Path, help="Codex home signed in with the ChatGPT account `codex` cells may use, "
                                                     "e.g. ~/.codex-personal (never the ambient ~/.codex)")
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
-    sg.add_argument("--arbiter", help="cell that settles a tribunal split, e.g. fable/low; `rule` goes back to the default")
     sg.add_argument("--calibration", help="the calibration that decides: an id from `router calibrate --apply`, or a "
                                           "file; `none` goes back to the built-in tables")
     sg.add_argument("--external", action="append", metavar="NAME=PROVIDER/MODEL_ID@IN/OUT[/TIER]",
@@ -1081,6 +1085,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="list the models the Codex home can run, with OpenAI's list prices and a default tier; "
                          "with names, declare those")
     sg.set_defaults(func=_cmd_config)
+
     return p
 
 

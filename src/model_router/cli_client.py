@@ -34,7 +34,7 @@ from pydantic import BaseModel, ValidationError
 
 from .catalog import Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
-from .paths import CONFIG_DIR_ENV, config_path, read_config
+from .paths import CONFIG_DIR_ENV, TRIBUNAL_ENV, config_path, read_config
 
 DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
 NO_MCP = '{"mcpServers":{}}'
@@ -91,6 +91,8 @@ class CliClient:
         config_dir: Path | None = None,
         timeout: float = 900.0,
         extra_args: Sequence[str] = (),
+        tools: str = "",
+        cwd: Path | None = None,
     ) -> None:
         path = shutil.which(binary)
         if path is None:
@@ -99,6 +101,9 @@ class CliClient:
         self.config_dir = config_dir or resolve_config_dir()
         self.timeout = timeout
         self.extra_args = list(extra_args)
+        self.tools = tools  # built-in tools the call may use, e.g. "Read,Grep,Glob"; none by default. Nothing is
+        # pre-approved: read-only tools work inside `cwd` and are denied outside it, as in any headless session
+        self.cwd = cwd  # where the call runs, so those tools see a repository; the caller's directory when None
 
     def complete(
         self,
@@ -111,18 +116,19 @@ class CliClient:
     ) -> Completion:
         args = [
             self.binary, "-p", "--model", cell.model, "--effort", cell.effort, "--output-format", "json",
-            "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
+            "--tools", self.tools, "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
             "--system-prompt", system or DEFAULT_SYSTEM, *self.extra_args,
         ]
         if output_format is not None:
             args += ["--json-schema", json.dumps(output_format.model_json_schema())]
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CONFIG_DIR"] = str(self.config_dir)
+        env[TRIBUNAL_ENV] = "0"  # a worker's or a judge's session is never itself sent to the tribunal plugin
         env.setdefault("ENABLE_CLAUDEAI_MCP_SERVERS", "false")
         t0 = time.monotonic()
         try:
             proc = subprocess.run(args, input=prompt, capture_output=True, text=True, env=env, timeout=self.timeout,
-                                  check=False)
+                                  check=False, cwd=self.cwd)
         except subprocess.TimeoutExpired as exc:
             raise ClientUnavailableError(f"claude -p exceeded {self.timeout:.0f}s") from exc
         seconds = time.monotonic() - t0

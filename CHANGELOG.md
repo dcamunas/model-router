@@ -2,6 +2,56 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.13.0] - 2026-10-22
+
+The tribunal leaves the router and becomes a plugin of its own. The router picks a model and an effort,
+checks with a checker or one judge on another model, escalates and calibrates. Two judges blind to each
+other, a Claude model and a Codex model, with an arbiter on a split, are the `tribunal` plugin's: for the
+code each turn changes, and for critical texts when you ask. Same repository, same engine, installed apart.
+
+### Added
+
+- The `tribunal` plugin, second entry in the `dcamunas` marketplace (`plugins/tribunal`, with its own
+  README). Its `Stop` hook judges the code a turn changed against the request: a Claude judge that is never
+  the chat's model, which wrote the change, and a Codex judge, in parallel, blind, read-only inside the
+  repository; an arbiter on a split. A turn gets `rounds` reviews (2, at most 5) and a fail goes back to
+  Claude with the findings until the last one; a pass is one line; a judge that cannot be reached never
+  blocks, and the other judge's verdict is still shown. The change is what the
+  working tree became since the request: a snapshot through a temporary index (HEAD's tree, every tracked
+  file rehashed, untracked files up to 1 MB), so a commit during the turn still counts and neither the
+  index nor the files are touched. The settings are fixed when the request arrives. A turn that only
+  touched documentation is not judged; when another session's transcript shows an editing tool used during
+  the turn, a fail is reported and not sent back. `SessionEnd` closes a session's turn. A diff over 50,000
+  characters reaches the judges as the list of changed files plus its first part. The plugin installs no Python:
+  it runs from the model-router plugin's environment.
+- The `tribunal` command: `tribunal qa` (a code change, uncommitted or since `--base`), `tribunal judge`
+  (a text written elsewhere; `--cell` keeps the author's model off the bench) and `tribunal config`
+  (`--mode`, `--claude`, `--codex`, `--arbiter`, `--rounds`; `default` resets; judges on one model are
+  refused before anything is written). Exit 0 on a pass, 1 on a fail, 2 when it could not judge. A repository's `.claude/tribunal.json` and a `qa:` line at the top of a
+  request override the machine. `qa: parallel` is accepted and runs as a final review until it is built.
+- `CliClient(tools=, cwd=)` and `CodexClient(workdir=)`: a judge that reads a repository, read-only; the
+  Claude one loads only the user's settings and cannot read outside the repository. `Verifier` takes its
+  judge and arbiter prompts and can ask a tribunal's judges at the same time; it needs only a policy that
+  names judges and an arbiter (`JudgePolicy`).
+
+### Removed
+
+- From the router: `panel` and `tribunal` as verification modes the policy picks (`Policy(panel_kinds=,
+  critical_mode=)` are gone) or the CLI offers (`--verify` takes none, light or full), and `router config
+  --arbiter`. At critical risk the router now checks with the full judge alone, and a task file that asks
+  for `panel` or `tribunal` is refused. The engine still seats two judges and an arbiter when the tribunal
+  asks, so a library caller can pass `verify="tribunal"`; the policy resolves its arbiter only then, so a
+  stale `arbiter` setting cannot stop the router.
+- The simulation's `router (one judge)` and `router (panel)` strategies.
+
+### Changed
+
+- Every `claude -p` and `codex exec` the router starts carries `MODEL_ROUTER_TRIBUNAL=0`, so a worker's or
+  a judge's own session is never sent to the tribunal plugin.
+- `router stats` leaves the tribunal's records out of its tasks and cells (their judges still count on the
+  scoreboard, and one line gives the tribunal's reviews and spend), and `router feedback` on one of them no
+  longer moves the routing feedback.
+
 ## [0.12.0] - 2026-10-22
 
 ### Added

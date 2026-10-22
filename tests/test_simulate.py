@@ -22,17 +22,13 @@ def test_frontier_solves_at_least_as_much_as_sonnet_and_costs_more():
     assert by["router"].verify_cost > 0
 
 
-def test_panel_router_is_compared_with_the_single_judge_router():
-    tasks, reports = run_simulation(100, seed=1)  # five critical analysis/write/review tasks in this draw
+def test_the_simulated_router_verifies_with_one_judge_at_most():
+    tasks, reports = run_simulation(100, seed=1)
     by = {r.name: r for r in reports}
-    assert by["router (one judge)"].verify_cost > 0 and by["router"].verify_cost > 0
-    tribunals = [a for t in by["router"].ledger.tasks() for a in t["attempts"] if a["verdict_source"] == "tribunal"]
-    assert tribunals and all(len(a["judges"]) in (1, 2) for a in tribunals)
-    panels = [a for t in by["router (panel)"].ledger.tasks() for a in t["attempts"] if a["verdict_source"] == "panel"]
-    assert panels
-    assert not any(a["verdict_source"] in ("panel", "tribunal")
-                   for t in by["router (one judge)"].ledger.tasks() for a in t["attempts"])
-    assert "share a draw" in format_report(tasks, reports, 1)
+    assert "router (panel)" not in by and by["router"].verify_cost > 0
+    sources = {a["verdict_source"] for t in by["router"].ledger.tasks() for a in t["attempts"]}
+    assert not sources & {"panel", "tribunal"}
+    assert "router" in format_report(tasks, reports, 1)
 
 
 def test_pass_probability_moves_with_capability_and_difficulty():

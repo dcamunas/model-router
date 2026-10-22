@@ -10,14 +10,14 @@ arbiter backs and whom a human corrects.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
 from .catalog import Cell, Usage, cost_usd
-from .client import ClaudeClient
-from .policy import PolicyProtocol
+from .client import ClaudeClient, ClientUnavailableError
 from .task import Task
 
 
@@ -109,16 +109,28 @@ class VerifyResult:
     arbiter: Cell | None = None
 
 
+class JudgePolicy(Protocol):
+    """What the Verifier needs from a policy: the judges of a worker's answer and the arbiter of a split."""
+
+    def judges_for(self, worker: Cell, mode: str) -> list[Cell]: ...
+
+    def arbiter_for(self, worker: Cell) -> Cell | None: ...
+
+
 class Verifier:
     """Verifies answers by mode: the task's checker first, then the judge cells the policy chooses; a judge
     verdict under `min_confidence` fails, a panel fails as soon as one of its judges fails, and a tribunal
     sends a split to the policy's arbiter.
     """
 
-    def __init__(self, client: ClaudeClient, policy: PolicyProtocol, *, min_confidence: float = 0.5) -> None:
+    def __init__(self, client: ClaudeClient, policy: JudgePolicy, *, min_confidence: float = 0.5,
+                 judge_system: str = JUDGE_SYSTEM, arbiter_system: str = ARBITER_SYSTEM, parallel: bool = False) -> None:
         self.client = client
         self.policy = policy
         self.min_confidence = min_confidence
+        self.judge_system = judge_system
+        self.arbiter_system = arbiter_system
+        self.parallel = parallel  # a tribunal asks its judges at the same time (each is a slow CLI process)
 
     def verify(self, task: Task, answer: str, mode: str, worker: Cell) -> VerifyResult:
         """Verify `answer` to `task` in `mode` (none, light, full, panel, tribunal); `worker` is the cell that
@@ -142,10 +154,11 @@ class Verifier:
             return self._panel(task, answer, judges)
         return self._tribunal(task, answer, judges, self.policy.arbiter_for(worker))
 
-    def _ask(self, task: Task, answer: str, cell: Cell, *, prompt: str | None = None, system: str = JUDGE_SYSTEM,
+    def _ask(self, task: Task, answer: str, cell: Cell, *, prompt: str | None = None, system: str | None = None,
              role: str = "judge") -> VerifyResult:
         completion = self.client.complete(
-            cell, prompt=prompt or judge_prompt(task, answer), system=system, max_tokens=JUDGE_MAX_TOKENS,
+            cell, prompt=prompt or judge_prompt(task, answer), system=system or self.judge_system,
+            max_tokens=JUDGE_MAX_TOKENS,
             output_format=Verdict,
         )
         cost = cost_usd(cell.model, completion.usage)
@@ -161,11 +174,24 @@ class Verifier:
         own = JudgeVerdict(cell, passed, reason, role, confidence)
         return VerifyResult(passed, "judge", reason, cell, completion.usage, cost, confidence, judges=[cell], verdicts=[own])
 
+    def _ask_or_error(self, task: Task, answer: str, cell: Cell) -> VerifyResult:
+        """Ask one judge of a parallel tribunal; a judge that cannot be reached becomes a judge error, so the other
+        judge's verdict and cost are kept instead of thrown away with the exception.
+        """
+        try:
+            return self._ask(task, answer, cell)
+        except ClientUnavailableError as exc:
+            return VerifyResult(False, "judge-error", f"{cell} could not be reached: {exc}", cell, judges=[cell])
+
     def _tribunal(self, task: Task, answer: str, judges: list[Cell], arbiter: Cell | None) -> VerifyResult:
         """Ask every judge, blind to each other; agreement decides, a split goes to the arbiter (and fails when
         there is none).
         """
-        asked = [self._ask(task, answer, cell) for cell in judges]
+        if self.parallel:
+            with ThreadPoolExecutor(max_workers=len(judges)) as pool:
+                asked = list(pool.map(lambda cell: self._ask_or_error(task, answer, cell), judges))
+        else:
+            asked = [self._ask(task, answer, cell) for cell in judges]
         usage = Usage()
         for r in asked:
             usage = usage + r.usage
@@ -191,8 +217,8 @@ class Verifier:
             reason = f"{split}; no arbiter available: " + " | ".join(r.reason for r in asked if not r.passed)
             return VerifyResult(False, "tribunal", reason, asked[-1].cell, usage, cost, min(confidences, default=None),
                                 cells, verdicts)
-        ruling = self._ask(task, answer, arbiter, prompt=arbiter_prompt(task, answer, verdicts), system=ARBITER_SYSTEM,
-                           role="arbiter")
+        ruling = self._ask(task, answer, arbiter, prompt=arbiter_prompt(task, answer, verdicts),
+                           system=self.arbiter_system, role="arbiter")
         usage, cost = usage + ruling.usage, cost + ruling.cost_usd
         verdicts += ruling.verdicts
         if ruling.source == "judge-error":

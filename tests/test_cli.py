@@ -22,12 +22,12 @@ def test_plan_command_needs_no_api(capsys):
     assert "start:" in out and "ladder:" in out and "verifier" in out
 
 
-def test_plan_prints_both_judges_of_a_panel(capsys):
+def test_plan_at_critical_risk_prints_one_judge_on_another_model(capsys):
     argv = ["plan", "Assess whether we should migrate the billing database", "--kind", "analysis", "--risk", "critical"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "verification tribunal" in out and "verifier (tribunal): opus/xhigh then fable/low" in out
-    assert "arbiter on a split: fable/medium" in out
+    assert "verification full" in out and "verifier (full): opus/xhigh" in out
+    assert "tribunal" not in out and "arbiter" not in out  # two judges are the tribunal plugin's
 
 
 def test_plan_claude_code_prints_frontmatter_values(capsys):
@@ -149,20 +149,23 @@ def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monk
         assert "DEEPSEEK_API_KEY set" in capsys.readouterr().out
         main(["plan", "Assess the migration", "--kind", "analysis", "--risk", "critical"])
         out = capsys.readouterr().out
-        # deepseek's door has one effort, medium: the judge runs there, and "one effort up" is the judge itself
-        assert "verifier (tribunal): deepseek/medium then opus/low" in out and "arbiter on a split: fable/medium" in out
+        # deepseek's door has one effort, medium: the judge runs there
+        assert "verifier (full): deepseek/medium" in out
         with pytest.raises(SystemExit, match="invalid value"):
             main(["config", "--external", "gpt=openai/x"])
         assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1"]) == 0
         assert json.loads((home / "config.json").read_text())["external"]["deepseek"]["tier"] == 1
         main(["config"])
         assert "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1" in capsys.readouterr().out
-        assert main(["config", "--models", "sonnet,opus,deepseek", "--arbiter", "deepseek/high"]) == 0
+        assert main(["config", "--models", "sonnet,opus,deepseek"]) == 0
+        from model_router.tribunal_cli import main as tribunal
+
+        assert tribunal(["config", "--arbiter", "deepseek/high"]) == 0
         capsys.readouterr()
         assert main(["config", "--external", "deepseek="]) == 0
-        assert "deepseek was also removed from: models, judge, arbiter" in capsys.readouterr().out
+        assert "deepseek was also removed from: models, judge, qa" in capsys.readouterr().out
         cfg = json.loads((home / "config.json").read_text())
-        assert cfg["models"] == ["sonnet", "opus"] and "judge" not in cfg and "arbiter" not in cfg
+        assert cfg["models"] == ["sonnet", "opus"] and "judge" not in cfg and "arbiter" not in cfg.get("qa", {})
         assert main(["plan", "classify this"]) == 0  # nothing dangling: every command still runs
         assert json.loads((home / "config.json").read_text())["external"] == {}
     finally:
@@ -194,7 +197,7 @@ def test_judge_command_verifies_a_file_and_exits_1_on_a_fail(home, monkeypatch, 
     monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(judge={"*": [Reply(parsed=_verdict(True))]}))
     assert main(["judge", "write the notice", "--kind", "write", "--risk", "critical", "--answer", str(answer)]) == 0
     out = capsys.readouterr().out
-    assert "verdict pass" in out and "external" in out and "tribunal" in out
+    assert "verdict pass" in out and "external" in out and "pass (judge, fable/low)" in out  # one judge, never two
     monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(judge={"*": [Reply(parsed=_verdict(False))]}))
     assert main(["judge", "write the notice", "--kind", "write", "--risk", "high", "--answer", str(answer), "--json"]) == 1
     data = json.loads(capsys.readouterr().out)
@@ -363,10 +366,6 @@ def test_config_shows_and_sets_the_profile_and_the_models_without_touching_hooks
     assert "models" not in json.loads((home / "config.json").read_text())
     assert main(["config", "--judge", "opus/max"]) == 0
     assert json.loads((home / "config.json").read_text())["judge"] == "opus/max"
-    assert main(["config", "--arbiter", "fable/low"]) == 0
-    assert json.loads((home / "config.json").read_text())["arbiter"] == "fable/low"
-    assert main(["config", "--arbiter", "rule"]) == 0
-    assert "arbiter" not in json.loads((home / "config.json").read_text())
     main(["doctor"])  # exits 1 here because the profile directory does not exist; the judge line is what matters
     assert "judge for full verification: opus/xhigh (via config.json)" in capsys.readouterr().out  # capped at xhigh
     with pytest.raises(SystemExit, match="unknown model 'opsu'"):
@@ -413,7 +412,7 @@ def test_bench_dry_run_validates_the_file_and_calls_nothing(home, monkeypatch, c
     assert main(argv) == 0
     out = capsys.readouterr().out
     assert "2 tasks (1 with a checker) x 2 strategies x 3 repeat(s) · eval " in out and "dry run" in out
-    assert "haiku/low: verification none, tribunal" in out
+    assert "haiku/low: verification full, none" in out
     assert not (home / "bench").exists()
 
 
@@ -452,7 +451,7 @@ def test_bench_verify_sets_the_mode_of_fixed_cells(home, monkeypatch, capsys):
     for path in sorted((home / "bench").glob("*.jsonl")):  # one file, or two when the second runs a second later
         records = [json.loads(line) for line in path.read_text().splitlines()]
         sources += [r["attempts"][0]["verdict_source"] for r in records if r["type"] == "task"]
-    assert sorted(sources) == ["none", "tribunal"]
+    assert sorted(sources) == ["judge", "none"]
 
 
 def test_stats_reads_the_index_and_matches_the_ledger(home, monkeypatch, capsys):
@@ -549,7 +548,7 @@ def test_bench_matrix_lists_every_cell_and_max_usd_guards_the_spend(home, monkey
     spec.write_text(json.dumps({"tasks": [{"id": "w", "kind": "write", "risk": "critical", "prompt": "write it"}]}))
     assert main(["bench", str(spec), "--matrix", "--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert "x 20 strategies" in out and "fable/max: verification tribunal" in out
+    assert "x 20 strategies" in out and "fable/max: verification full" in out
     assert main(["bench", str(spec), "--matrix", "--cells", "haiku/low,opus/low", "--verify", "none", "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "x 2 strategies" in out and "haiku/low: verification none" in out and "opus/low: verification none" in out
@@ -679,3 +678,10 @@ def test_every_subcommand_prints_its_help(capsys):
             main([cmd, "--help"])
         assert exc.value.code == 0, cmd
         assert "usage: router " + cmd in capsys.readouterr().out
+
+
+def test_a_task_file_cannot_ask_the_router_for_two_judges(home, capsys):
+    spec = home / "t.yaml"
+    spec.write_text("tasks:\n  - id: w\n    kind: write\n    risk: critical\n    prompt: write it\n    verify: tribunal\n")
+    with pytest.raises(SystemExit, match="not a router mode"):
+        main(["bench", str(spec), "--dry-run"])
