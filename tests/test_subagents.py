@@ -102,3 +102,35 @@ def test_a_first_reading_is_completed_once_the_transcript_settles(tmp_path, monk
     assert rec["final"] is True and rec["turns"] == 2 and rec["output_tokens"] == 510
     agent.unlink()
     assert finalize(log, now=later) == 0  # final records are left alone, and a vanished transcript is no error
+
+
+def test_finalize_keeps_records_appended_meanwhile_survives_bad_ones_and_counts_a_subagent_once(tmp_path):
+    from model_router.subagents import append, finalize, summary_rows
+
+    log = tmp_path / "subagents.jsonl"
+    agent = _transcript(tmp_path / "agent.jsonl", "Review", [_turn("m1"), _turn("m2")])
+    base = {"agent_type": "general-purpose", "model": "opus", "effort": "low", "session": "s", "final": False}
+    append(log, {**base, "agent_id": "bad", "transcript": ""})  # Path("") is a directory: never read, made final
+    append(log, {**base, "agent_id": "dir", "transcript": str(tmp_path)})
+    append(log, {**base, "agent_id": "a1", "transcript": str(agent), "turns": 1, "cost_usd": 0.1})
+    assert finalize(log, now=agent.stat().st_mtime + 60) == 3
+    recs = load(log)
+    assert all(r["final"] for r in recs) and recs[2]["turns"] == 2 and recs[2]["context_cost_usd"] is not None
+    append(log, {**base, "agent_id": "a1", "final": True, "turns": 5, "cost_usd": 1.0})  # resumed: a later record
+    rows = summary_rows(load(log))
+    assert rows[0][2] == 3  # three subagents, a1 once (its last record)
+
+
+def test_an_old_config_naming_another_provider_never_stops_the_router(tmp_path, monkeypatch, capsys):
+    from model_router.catalog import available_models
+    from model_router.cli import main
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    (tmp_path / "config.json").write_text(json.dumps({"judge": "gpt/high", "models": ["luna"], "external": {
+        "luna": {"provider": "codex", "id": "gpt-6-luna", "input": 0.1, "output": 0.5},
+        "gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}))
+    assert len(available_models()) == 4  # only declared names listed: every Claude model instead of none
+    assert main(["plan", "review the payment code", "--risk", "high"]) == 0
+    out = capsys.readouterr().out
+    assert "judge setting cannot be used" in out and "opus/xhigh instead" in out

@@ -107,6 +107,11 @@ def _cap_effort(cell: Cell) -> Cell:
     return _at(cell.model, capped)
 
 
+def default_judge_cell(models: Iterable[str] | None = None) -> Cell:
+    """Return DEFAULT_JUDGE on the nearest model this installation has, whatever the settings say."""
+    return _cap_effort(nearest_available(parse_cell(DEFAULT_JUDGE), models))
+
+
 def default_judge(models: Iterable[str] | None = None) -> Cell:
     """Return the configured judge cell: MODEL_ROUTER_JUDGE, else `judge` in config.json, else DEFAULT_JUDGE;
     its effort is capped at JUDGE_MAX_EFFORT and its model replaced by the nearest one in `models` (the
@@ -291,7 +296,13 @@ class Policy:
         self.start_table = start_table or (self.calibration.start if self.calibration else START)
         self.feedback = feedback
         self.min_gain = min_gain
-        self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
+        self.notes: list[str] = []
+        try:
+            self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
+        except ValueError as exc:  # a judge setting from an older version (another provider's model), or a typo
+            self.judge = default_judge_cell(self.models)
+            self.notes.append(f"judge setting cannot be used ({exc}): {self.judge} instead; `router config --judge` "
+                              f"sets another, `router doctor` shows it")
         self._arbiter = _Arbiter(arbiter, self.models)
 
     @property
@@ -323,6 +334,7 @@ class Policy:
             rationale.append(f"calibration {self.calibration_missing} cannot be loaded: the built-in tables decide")
         start = self._available(start, rationale)
         verify = task.verify or VERIFY_BY_RISK[risk]
+        rationale += self.notes
         est_input = task.estimated_input_tokens
         out_tokens = task.planned_output_tokens
         if self.feedback is not None:
@@ -404,7 +416,10 @@ class LadderPolicy:
         self.budget_usd = budget_usd
         self._all = lattice()
         models = {c.model for c in self._all}
-        self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
+        try:
+            self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
+        except ValueError:  # an unusable judge setting: the default, as `Policy` does
+            self.judge = default_judge_cell(models)
         self._arbiter = _Arbiter(arbiter, models)
         self._auto = Policy(judge=self.judge, arbiter=arbiter, calibration=None) if verify == "auto" else None
 

@@ -13,15 +13,20 @@ the effort and the agent each one needs, and a measurement of what each one real
   servers), shipped by the plugin and copied into the profile as `router-reader` by `router install`. The hook
   sends a general-purpose subagent there when its kind is a reading one (search, review, analysis, summarize,
   extract, classify, chat) and nothing in its prompt asks to edit, run or reach a service; `access: read` on
-  the first line asks for it, `access: write` keeps the general agent. Measured on the same review of one file,
-  same model and effort: 0.0054 USD on the general agent, 0.0023 USD on the reader, with a quarter of the
-  context written to the cache. `router config --lean off` and `MODEL_ROUTER_LEAN=0` switch it off; `router
+  the first line asks for it, `access: write` keeps the general agent, and questions and classification go only
+  when declared. The list of words that keep the general agent (edit, save, run, post, query...) is broad, in
+  English and Spanish, matched without accents. Measured on the same review of one file, same model and
+  effort: 0.0029 USD of context on the general agent, 0.0009 USD on the reader, with a quarter of the context
+  written to the cache. When the reader gets work it cannot do it asks to be relaunched with `access: write`. `router config --lean off` and `MODEL_ROUTER_LEAN=0` switch it off; `router
   doctor` says whether it is there.
 - Subagent measurement: on `SubagentStop` the hook reads the subagent's transcript and records its model,
   turns, tokens (cache reads and writes, once per message id), list-price cost, peak context, tool calls and
   duration, next to the routing decision (joined by a hash of the prompt). The transcript is read again once
-  it has settled, because the last message is not in it when the event fires. `router stats` shows it per
-  agent and model; `router install` and the plugin register the event.
+  it has settled, because the last message is not in it when the event fires. Context tokens are exact;
+  output tokens are a lower bound (each entry keeps the usage of the stream's start), so the cost is a floor
+  and `context_cost_usd` is the exact part. Appends and the settling rewrite share a lock; a resumed subagent
+  counts once. `router stats` shows it per agent and model; `router install` and the plugin register the
+  event, and `router doctor` warns when both are installed.
 
 ### Removed
 
@@ -32,8 +37,9 @@ the effort and the agent each one needs, and a measurement of what each one real
 ### Changed
 
 - Codex is the tribunal's alone: `tribunal config --codex-home`, `--codex-models` and `--declare` set it up.
-  It now always runs with its shell tool off, in an empty directory: with a shell its read-only sandbox read a
-  decoy file outside the repository, and what it reads goes to OpenAI. The tribunal sends both judges the diff
+  It now always runs in an empty directory with its file, image, web, browser and desktop tools off: with a
+  shell its read-only sandbox read a decoy file outside the repository, `view_image` read an image outside it,
+  and what they read goes to OpenAI. The judges are told to judge only the material when they cannot open files. The tribunal sends both judges the diff
   and the changed files as they are now; the Claude judge can still read the repository, and nothing outside it.
 
 ## [0.13.0] - 2026-10-22

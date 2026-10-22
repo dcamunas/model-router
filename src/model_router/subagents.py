@@ -5,9 +5,12 @@ the largest context it carried, its tool calls and its duration, next to the rou
 it. `router stats` reads the records back.
 
 The bill of a subagent is mostly its context read again on every turn (cache reads): a review on Opus with 36
-turns and 59 tool calls read 3.6M cached tokens and wrote 0.14M, against 314 tokens of output, for 1.43 USD at
-list price. So the numbers that matter are turns, peak context and cache reads per kind of task, not the
-answer's length.
+turns and 59 tool calls read 3.6M cached tokens and wrote 0.14M, 1.43 USD at list price for its context alone.
+So the numbers that matter are turns, peak context and cache reads per kind of task.
+
+Output tokens are a lower bound: every transcript entry keeps the usage snapshot taken when the message began
+to stream, so the output it reports is a few tokens per message. Input, cache reads and cache writes are exact.
+The recorded cost is therefore a floor (`cost_usd`), and `context_cost_usd` is the exact part, the context.
 
 A transcript repeats a message's usage on every entry that carries one of its content blocks: usage is counted
 once per message id. And when `SubagentStop` fires, the subagent's last message is not in the transcript yet: the
@@ -17,9 +20,13 @@ changing (`router stats` and the next session's start call it).
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
+import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -150,9 +157,32 @@ def record(event: dict[str, Any], usage: SubagentUsage, decision: dict[str, Any]
         **{k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")},
         "tokens": usage.tokens,
         "cost_usd": round(cost, 6) if cost is not None else None,
+        "context_cost_usd": _context_cost(usage),
         "transcript": str(event.get("agent_transcript_path") or ""),
         "final": False,
     }
+
+
+def _context_cost(usage: SubagentUsage) -> float | None:
+    """Return the exact part of the cost: input, cache reads and cache writes, without the output (a lower bound)."""
+    if usage.model not in MODELS:
+        return None
+    return round(cost_usd(usage.model, Usage(usage.input_tokens, 0, usage.cache_read_tokens, usage.cache_write_tokens)), 6)
+
+
+@contextlib.contextmanager
+def locked(log: Path) -> Iterator[None]:
+    """Hold an exclusive lock on `log`'s lock file: the hook's appends and `finalize`'s rewrite never interleave."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def append(log: Path, line: dict[str, Any]) -> None:
+    """Append one record to `log` under the lock."""
+    with locked(log), log.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def finalize(log: Path, *, settled: float = SETTLED_SECONDS, now: float | None = None) -> int:
@@ -160,31 +190,41 @@ def finalize(log: Path, *, settled: float = SETTLED_SECONDS, now: float | None =
     for `settled` seconds), update its numbers and mark it final; a transcript that is gone leaves the first
     reading as final. Rewrite the log only when something changed; return how many records were finalised.
     """
-    records = load(log)
-    moment = time.time() if now is None else now
-    changed = 0
-    for r in records:
-        if r.get("final", True):
-            continue
-        path = Path(str(r.get("transcript") or ""))
-        try:
-            age = moment - path.stat().st_mtime
-        except OSError:
-            r["final"] = True
-            changed += 1
-            continue
-        if age < settled:
-            continue
-        usage = read_transcript(path)
-        cost = usage.cost()
-        r.update({k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")})
-        r.update(tokens=usage.tokens, cost_usd=round(cost, 6) if cost is not None else None, final=True)
-        changed += 1
-    if changed:
-        tmp = log.with_suffix(".tmp")
-        tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
-        tmp.replace(log)
+    if not log.exists():
+        return 0
+    with locked(log):
+        records = load(log)
+        moment = time.time() if now is None else now
+        changed = sum(_settle(r, moment, settled) for r in records)
+        if changed:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=log.parent, prefix=log.name, suffix=".tmp",
+                                             delete=False) as tmp:
+                tmp.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records))
+            Path(tmp.name).replace(log)
     return changed
+
+
+def _settle(r: dict[str, Any], moment: float, settled: float) -> bool:
+    """Read one record's transcript again when it has settled; True when the record changed. A transcript that is
+    gone, is not a file or cannot be read leaves the first reading as final.
+    """
+    if r.get("final", True):
+        return False
+    path = Path(str(r.get("transcript") or ""))
+    try:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        if moment - path.stat().st_mtime < settled:
+            return False
+        usage = read_transcript(path)
+    except OSError:
+        r["final"] = True
+        return True
+    cost = usage.cost()
+    r.update({k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")})
+    r.update(tokens=usage.tokens, cost_usd=round(cost, 6) if cost is not None else None,
+             context_cost_usd=_context_cost(usage), final=True)
+    return True
 
 
 def find_decision(log: Path, prompt: str, session: str | None) -> dict[str, Any] | None:
@@ -241,10 +281,12 @@ def _when(text: Any) -> datetime | None:
 
 def summary_rows(records: list[dict[str, Any]]) -> list[list[object]]:
     """Group subagent records by agent type and the model and effort that served them; one row each, most spent
-    first: how many, mean turns, mean peak context, mean cache reads, mean and total cost (list price, formatted).
+    first: how many, mean turns, mean peak context, mean cache reads, and the mean and total cost at list price
+    (formatted; a floor, since output tokens are a lower bound).
     """
+    latest = {(r.get("session"), r.get("agent_id")) if r.get("agent_id") else (None, i): r for i, r in enumerate(records)}
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for r in records:
+    for r in latest.values():  # a resumed subagent, or one measured by two installs, counts once: its last record
         key = (str(r.get("agent_type") or "?"), f"{r.get('model') or '?'}/{r.get('effort') or '?'}")
         groups.setdefault(key, []).append(r)
     rows = []

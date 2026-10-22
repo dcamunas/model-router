@@ -294,6 +294,7 @@ def copy_agent(agents_dir: Path) -> None:
     agents_dir.mkdir(parents=True, exist_ok=True)
     text = AGENT_SRC.read_text(encoding="utf-8").replace("\nname: reader\n", f"\nname: {AGENT_NAME}\n", 1)
     target.write_text(text, encoding="utf-8")
+    print(f"read-only agent {AGENT_NAME}: {target} (sessions started from now on load it)")
 
 
 def remove_agent(agents_dir: Path) -> None:

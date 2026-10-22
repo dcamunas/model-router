@@ -499,9 +499,9 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     measured = load_subagents(home() / SUBAGENT_LOG)
     if measured:
         rows = summary_rows(measured)
-        print("\nClaude Code subagents, measured from their transcripts (list price; cache reads are the context "
-              "read again every turn)")
-        print(table(["agent", "model/effort", "n", "turns", "peak ctx", "cache read", "cost", "total"], rows))
+        print("\nClaude Code subagents, measured from their transcripts (list price, at least: output tokens are a "
+              "lower bound; cache reads are the context read again every turn)")
+        print(table(["agent", "model/effort", "n", "turns", "peak ctx", "cache read", "cost ≥", "total ≥"], rows))
     return 0
 
 
@@ -560,6 +560,9 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
         ready = venv_hook.exists()
         note = "" if ready else " (built when a session starts; needs uv)"
         checks.append((ready, f"plugin environment: {venv_hook}{note}"))
+        if "router-hook" in json.dumps(data.get("hooks") or {}):
+            checks.append((False, f"router hooks are also in {settings} (from `router install`): every subagent is "
+                                  "routed and measured twice; `router uninstall` removes them"))
     else:
         hooks = data.get("hooks")
         hooks = hooks if isinstance(hooks, dict) else {}
@@ -872,7 +875,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sd = sub.add_parser("doctor", help="check claude, profile, hooks, skill and state; --live makes one call")
     sd.add_argument("--live", action="store_true",
-                    help="also make one real cheap call on Claude and on each model declared through a CLI")
+                    help="also make one real cheap call on Claude")
     sd.set_defaults(func=_cmd_doctor)
 
     sc = sub.add_parser("cells", help="the lattice of cells with their cost and assumed capability")
@@ -883,8 +886,7 @@ def build_parser() -> argparse.ArgumentParser:
     si.add_argument("--link", action="store_true", help="symlink the skill instead of copying it (development)")
     si.add_argument("--profile-dir", type=Path,
                     help="Claude profile `router run` will use (default: the settings file's, when it is a profile)")
-    si.add_argument("--models", help="models that may do the work, e.g. haiku,sonnet,opus, plus any declared external "
-                                     "name; all = every Anthropic model")
+    si.add_argument("--models", help="Claude models that may do the work, e.g. haiku,sonnet,opus; all = every Claude model")
     si.set_defaults(func=_cmd_install)
 
     su = sub.add_parser("uninstall", help="remove the hooks and the skill from the profile")
@@ -894,8 +896,7 @@ def build_parser() -> argparse.ArgumentParser:
     sg = sub.add_parser("config", help="show or set the profile for `router run`, the available models, the judge "
                                        "and the calibration (hooks untouched)")
     sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
-    sg.add_argument("--models", help="models that may do the work, e.g. haiku,sonnet,opus, plus any declared external "
-                                     "name; all = every Anthropic model")
+    sg.add_argument("--models", help="Claude models that may do the work, e.g. haiku,sonnet,opus; all = every Claude model")
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--calibration", help="the calibration that decides: an id from `router calibrate --apply`, or a "
                                           "file; `none` goes back to the built-in tables")

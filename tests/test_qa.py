@@ -357,7 +357,7 @@ def test_a_big_diff_keeps_its_file_list_and_its_closing_tag():
     diff = "diff --git a/lock.json b/lock.json\n" + "+x\n" * 40_000 + "diff --git a/app.py b/app.py\n+bug\n"
     shown = qa.fit_diff(diff, limit=10_000)
     assert len(shown) < 11_000 and shown.startswith("Changed files (2):") and "a/app.py b/app.py" in shown
-    assert shown.endswith("open the changed files in the repository to read the rest ...]")
+    assert shown.endswith("a judge that can read the repository may open the rest ...]")
 
 
 def test_seating_never_repeats_a_model_and_one_judge_when_nothing_else_is_left(repo, monkeypatch):

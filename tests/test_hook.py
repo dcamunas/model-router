@@ -201,3 +201,32 @@ def test_reading_work_goes_to_the_read_only_agent_when_one_is_installed(tmp_path
     write_config(lean=True)
     monkeypatch.setenv("MODEL_ROUTER_LEAN", "0")
     assert decided(review)[0]["subagent_type"] == "general-purpose"
+
+
+def test_declarations_are_read_from_the_prompt_head_even_with_a_description(tmp_path, monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
+    (tmp_path / "profile" / "agents").mkdir(parents=True)
+    (tmp_path / "profile" / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\n")
+    updated, record = decided({"subagent_type": "general-purpose", "description": "Typos in docs",
+                               "prompt": "kind: review, risk: medium\naccess: write\nReview the docs and their typos."})
+    assert updated["subagent_type"] == "general-purpose" and record["lean"] == "declared access: write"
+    updated, record = decided({"subagent_type": "general-purpose", "description": "Docs",
+                               "prompt": "kind: review, risk: low, access: read\nReview the change to the docs."})
+    assert updated["subagent_type"] == "router-reader" and record["risk"] == "low"
+
+
+def test_a_read_only_agent_installed_in_the_project_is_found_from_the_event_s_cwd(tmp_path, monkeypatch):
+    from model_router.hook import decide
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
+    repo = tmp_path / "repo"
+    (repo / ".claude" / "agents").mkdir(parents=True)
+    (repo / ".claude" / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\n")
+    review = {"subagent_type": "general-purpose", "prompt": "kind: review, access: read\nReview the parser"}
+    away, here = decide(review)[0], decide(review, cwd=str(repo))[0]
+    assert away is not None and away["subagent_type"] == "general-purpose"
+    assert here is not None and here["subagent_type"] == "router-reader"

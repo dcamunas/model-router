@@ -1,10 +1,11 @@
 """The tribunal's door to Codex: ChatGPT through `codex exec`, by subscription, on a Codex home given explicitly.
 The router itself works with Claude models only; this door exists for the tribunal plugin's second judge.
 
-Every call runs in an empty directory, read-only, with nothing persisted and Codex's shell tool turned off:
-with a shell, the read-only sandbox still reads any file the user can read, and what it reads goes to OpenAI.
-Without it Codex has no way to open a file, so it sees only what the prompt carries. A structured verdict is
-asked for with `--output-schema`, validated here, and tried once more when it does not come back as JSON.
+Every call runs in an empty directory, read-only, with nothing persisted and Codex's file, image, web and
+browser tools turned off (CODEX_DISABLED): with a shell the read-only sandbox still reads any file the user can
+read, `view_image` reads any image, and what they read goes to OpenAI. The judge sees what the prompt carries.
+A structured verdict is asked for with `--output-schema`, validated here, and tried once more when it does not
+come back as JSON.
 `MultiClient` sends Anthropic cells to the usual backend and Codex cells to this door.
 """
 
@@ -32,7 +33,7 @@ from .task import json_payload
 
 @dataclass(frozen=True)
 class Provider:
-    """How to talk to one door: its transport (`api`, `codex` or `gemini`), where and with which key for the API,
+    """How to talk to one door: its transport (`codex` today), where and with which key for the API,
     and the request fields that differ between providers.
     """
 
@@ -57,6 +58,12 @@ ERROR_DETAIL_CHARS = 300
 SCHEMA_NOTE = "\n\nAnswer with one JSON object and nothing else; it must validate against this JSON schema:\n"
 Opener = Callable[..., Any]  # urllib.request.urlopen or a test double with the same shape
 Run = Callable[..., Any]  # subprocess.run or a test double that returns a CompletedProcess
+# Codex tools the judge must not have: a shell reads any file the user can read, `view_image` sends any image
+# to the model, and the rest reach the web, a browser, the desktop or other code. The prompt is all it judges.
+CODEX_DISABLED = ("shell_tool", "unified_exec", "view_image", "web_search_request", "web_search_cached",
+                  "standalone_web_search", "browser_use", "browser_use_external", "in_app_browser", "computer_use",
+                  "apps", "image_generation", "js_repl", "code_mode_host", "goals", "plugins", "plugin_hooks",
+                  "tool_search", "search_tool")
 # Kept from `codex exec`: the home decides the account, and an API key or base URL in the environment would move the
 # call to API billing, maybe on another account.
 CODEX_ENV_DROPPED = ("CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL")
@@ -118,7 +125,7 @@ def _structured(text: str, output_format: type[BaseModel] | None) -> BaseModel |
 
 def resolve_codex_home() -> tuple[Path, str]:
     """Return the Codex home (the ChatGPT account) `codex` cells run on and where it came from: the
-    MODEL_ROUTER_CODEX_HOME variable, then `codex_home` in config.json (`router config --codex-home`). Nothing
+    MODEL_ROUTER_CODEX_HOME variable, then `codex_home` in config.json (`tribunal config --codex-home`). Nothing
     else: the ambient ~/.codex may be another account, and the router must never land on it by accident.
 
     Raises:
@@ -131,7 +138,7 @@ def resolve_codex_home() -> tuple[Path, str]:
     if value:
         return Path(str(value)).expanduser(), str(config_path())
     raise ClientUnavailableError(
-        f"Codex home not set: run `router config --codex-home ~/.codex-personal` (a home signed in with the ChatGPT "
+        f"Codex home not set: run `tribunal config --codex-home ~/.codex-personal` (a home signed in with the ChatGPT "
         f"account the router may use) or export {CODEX_HOME_ENV}"
     )
 
@@ -193,7 +200,7 @@ class CodexClient:
         with tempfile.TemporaryDirectory(prefix="router-codex-") as scratch:
             last = Path(scratch) / "last-message.md"
             args = [self.binary, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
-                    "--color", "never", "-s", "read-only", "--disable", "shell_tool", "-C", scratch, "-m", cell.spec.id,
+                    "--color", "never", "-s", "read-only", *_disabled(), "-C", scratch, "-m", cell.spec.id,
                     "-c", f'model_reasoning_effort="{effort}"', "-o", str(last)]
             if output_format is not None:
                 schema = Path(scratch) / "schema.json"
@@ -223,6 +230,10 @@ class CodexClient:
                 detail = errors[0][:ERROR_DETAIL_CHARS] if errors else "no final message and no error event"
                 raise ClientUnavailableError(f"codex exec gave no answer: {detail}")
         return text, _codex_usage(events), seconds
+
+
+def _disabled() -> list[str]:
+    return [arg for feature in CODEX_DISABLED for arg in ("--disable", feature)]
 
 
 def _codex_errors(events: list[dict[str, Any]]) -> list[str]:

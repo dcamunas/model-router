@@ -38,6 +38,7 @@ from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
 from .subagents import LOG_FILE as SUBAGENT_LOG
+from .subagents import append as append_subagent
 from .subagents import finalize as finalize_subagents
 from .subagents import find_decision, prompt_hash, read_transcript
 from .subagents import record as subagent_record
@@ -52,11 +53,12 @@ TRANSCRIPT_TAIL_BYTES = 262_144  # enough for the last few assistant entries of 
 
 SESSION_CONTEXT = (
     "Model router active (hooks on the Agent tool): when you launch a general-purpose subagent without `model`, "
-    "the hook sets `model` and `effort` from the task's kind and risk, and sends reading work (search, review, "
-    "analysis, summaries, extraction) to a read-only agent that carries far less context per turn. Put on the "
-    "first line of the prompt `kind: review, risk: high` (the risk is the damage a wrong result does: low, medium, "
-    "high or critical, which only you know), and `access: write` when the subagent must edit files, run commands "
-    "or use MCP tools, or it may get the read-only agent. Do not set `model` yourself unless the user asks or the "
+    "the hook sets `model` and `effort` from the task's kind and risk, and can send it to a read-only agent that "
+    "carries far less context per turn. Put on the first line of the prompt `kind: review, risk: high, access: "
+    "read`: the risk is the damage a wrong result does (low, medium, high or critical, which only you know); "
+    "`access: read` when the subagent only reads, `access: write` when it must edit, save, run commands or use "
+    "MCP tools. Without `access` the hook guesses and keeps the general agent when in doubt. If the read-only "
+    "agent says it cannot do a task, relaunch it with `access: write`. Do not set `model` yourself unless the user asks or the "
     "task is high risk. A critical review goes to a model other than the one serving this chat. Text-only "
     "subtasks with no tools (classify, extract, summarise, draft) are cheaper through `router run \"...\"` than "
     "as a subagent. The `router` skill has the rest: verifying and escalating by risk."
@@ -95,7 +97,8 @@ def main_model(transcript_path: str | None) -> str | None:
     return None
 
 
-def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+def decide(tool_input: dict[str, Any], chat_model: str | None = None,
+           cwd: str | None = None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Compute what the hook would change for one Agent call: (updated input or None, decision record).
     `chat_model` is the short name of the model serving the main chat, for the cross-check rule.
     """
@@ -108,7 +111,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     if not prompt.strip():
         return None, {"skipped": "empty prompt"}
     description = str(tool_input.get("description") or "")
-    cls = classify_rules(f"{description}\n{prompt}")
+    cls = classify_rules(f"{prompt}\n{description}")
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
     feedback = FeedbackStore(home() / "feedback.json")
     try:
@@ -137,8 +140,8 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     }
     if cross:
         record["cross"] = cross
-    lean = lean_agent()
-    safe, why = read_only(cls.kind, f"{description}\n{prompt}")
+    lean = lean_agent(cwd)
+    safe, why = read_only(cls.kind, f"{prompt}\n{description}")
     if lean is not None and safe:
         updated["subagent_type"] = lean
         fields.append("subagent_type")
@@ -147,10 +150,11 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     return updated, record
 
 
-def lean_agent() -> str | None:
+def lean_agent(cwd: str | None = None) -> str | None:
     """Return the name of the read-only agent this installation has, or None (switched off, or not installed): the
     plugin's own (`model-router:reader`, when the hook runs from the plugin), else the one `router install` copied
-    into the profile (`router-reader`). MODEL_ROUTER_LEAN=0 or `router config --lean off` turn it off.
+    into the project (`<cwd>/.claude/agents`) or the profile (`router-reader`). MODEL_ROUTER_LEAN=0 or `router
+    config --lean off` turn it off.
     """
     if os.environ.get(LEAN_ENV) == "0" or read_config().get("lean") is False:
         return None
@@ -158,7 +162,8 @@ def lean_agent() -> str | None:
     if root and (Path(root) / PLUGIN_AGENT).is_file():
         return f"{PLUGIN_NAME}:reader"
     profile = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
-    if (profile / "agents" / f"{PROFILE_AGENT}.md").is_file():
+    places = [Path(cwd) / ".claude" / "agents"] if cwd else []
+    if any((place / f"{PROFILE_AGENT}.md").is_file() for place in [*places, profile / "agents"]):
         return PROFILE_AGENT
     return None
 
@@ -183,11 +188,7 @@ def _measure(event: dict[str, Any]) -> None:
     try:
         usage = read_transcript(Path(str(event["agent_transcript_path"])))
         decision = find_decision(home() / "hook.jsonl", usage.prompt, event.get("session_id"))
-        line = subagent_record(event, usage, decision)
-        path = home() / SUBAGENT_LOG
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+        append_subagent(home() / SUBAGENT_LOG, subagent_record(event, usage, decision))
     except OSError as exc:
         sys.stderr.write(f"router-hook: subagent not measured: {exc}\n")
 
@@ -204,7 +205,8 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if name != "PreToolUse" or event.get("tool_name") != "Agent":
         return None
-    updated, record = decide(event.get("tool_input") or {}, main_model(event.get("transcript_path")))
+    updated, record = decide(event.get("tool_input") or {}, main_model(event.get("transcript_path")),
+                             str(event.get("cwd") or "") or None)
     if updated is None:
         return None
     try:

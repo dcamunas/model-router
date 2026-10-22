@@ -3,7 +3,7 @@
 Codex keeps the list of models the signed-in account may use in `models_cache.json` inside its home: one
 entry per model with its id (`slug`) and whether the picker shows it (`visibility`). That file is Codex's
 own cache, not a documented interface, so it is read on a best-effort basis: when it is missing or its
-shape changes, nothing is proposed and declaring by hand (`router config --external`) still works.
+shape changes, nothing is proposed and declaring by hand (`tribunal config --declare`) still works.
 
 What the account does not say is the price, the tier, or the quota. The price comes from OPENAI_PRICES,
 OpenAI's list prices on the date in OPENAI_PRICES_DATE, which the ledger needs so strategies stay comparable

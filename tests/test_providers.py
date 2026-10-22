@@ -64,7 +64,8 @@ def test_codex_runs_exec_on_the_given_home_with_the_schema_and_reads_usage_and_t
     args = call["args"]
     assert args[1:5] == ["exec", "--json", "--ephemeral", "--ignore-user-config"] and "--skip-git-repo-check" in args
     assert args[args.index("-m") + 1] == "gpt-5.5" and args[args.index("-s") + 1] == "read-only"
-    assert args[args.index("--disable") + 1] == "shell_tool"  # no shell: the read-only sandbox would read any file
+    disabled = {args[i + 1] for i, a in enumerate(args) if a == "--disable"}
+    assert {"shell_tool", "unified_exec", "view_image", "web_search_request", "browser_use", "computer_use"} <= disabled
     assert Path(args[args.index("-C") + 1]).name.startswith("tmp") or "router-codex" in args[args.index("-C") + 1]
     assert 'model_reasoning_effort="xhigh"' in args and args[-1] == "-" and "--output-schema" in args
     assert call["schema"]["additionalProperties"] is False  # strict, as the Codex backend demands

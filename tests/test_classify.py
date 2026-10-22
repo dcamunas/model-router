@@ -86,6 +86,17 @@ def test_only_reading_tasks_with_nothing_to_edit_or_run_are_read_only():
     assert read_only("review", "Review the parser for off-by-one errors")[0]
     assert read_only("search", "Find where the config is loaded")[0]
     assert read_only("summarize", "Resume este documento en cinco puntos")[0]
+    for text in ("Search for every call to old_api() and replace it with new_api()",
+                 "Summarize the notes and save the summary to notes/summary.md",
+                 "Extract the invoice fields into out.csv and write it", "Review src/foo.py and patch whatever you find",
+                 "Review the open PR and post your comments on GitHub with gh", "Triage the issues and close the duplicates",
+                 "Investigate the leak: reproduce it with a benchmark and profile it", "Audit it: query the database with psql",
+                 "Explore the repo and copy the config to config.bak", "Revisa el módulo y guarda los hallazgos en review.md",
+                 "Resume el informe y reescribe la introducción", "Busca los usos de foo() y sustitúyelos por bar()",
+                 "kind: review\nReview it.\nThen write your findings into REVIEW.md"):
+        assert not read_only("review", text)[0], text  # anything that edits, saves, runs or posts: general agent
+    assert not read_only("chat", "What does this function return?")[0]  # chat and classify go only when declared
+    assert read_only("chat", "access: read\nWhat does this function return?")[0]
     assert not read_only("code", "Implement the parser")[0]  # code may write
     assert not read_only("review", "Review the parser and fix what you find")[0]
     assert not read_only("analysis", "Analyse why the tests fail; run pytest first")[0]

@@ -240,22 +240,27 @@ or the other.
 
 A subagent's bill is mostly its context, read again on every turn: the tools, the MCP servers, the
 skills and the conversation so far. A review subagent on Opus measured in this repository took 36
-turns and read 3.6M cached tokens to write 314 tokens of answer, 1.43 USD at list price. So the
-plugin works on three things, all of them on Claude models:
+turns and read 3.6M cached tokens: 1.43 USD at list price for its context alone. So the plugin
+works on three things, all of them on Claude models:
 
 - **Model and effort.** `PreToolUse` on the Agent tool sets `model` and `effort` for every
   general-purpose subagent launched without a model, from the kind and the risk declared on the first
   line of the prompt (`kind: review, risk: high`), else inferred from the text, and from the active
   calibration. A critical review never runs on the model serving the chat.
-- **The agent.** Reading work (search, review, analysis, summaries, extraction, classification) goes
-  to `model-router:reader`, a read-only agent with Read, Grep, Glob, WebFetch and WebSearch: no
-  edits, no shell, no MCP servers. The same review of one file, on the same model and effort, cost
-  0.0054 USD on the general agent and 0.0023 USD on the read-only one, with a quarter of the context
-  written to the cache. The hook keeps the general agent when the prompt asks to edit, run or reach a
-  service; `access: write` on the first line keeps it outright, `access: read` asks for the reader.
+- **The agent.** Reading work goes to `model-router:reader`, a read-only agent with Read, Grep, Glob,
+  WebFetch and WebSearch: no edits, no shell, no MCP servers. The same review of one file, on the same
+  model and effort, cost 0.0029 USD of context on the general agent and 0.0009 USD on the read-only
+  one, 70 % less, with a quarter of the context written to the cache. `access: read` on the first line
+  of the prompt sends a subagent there, `access: write` keeps the general agent. Without a declaration
+  the hook sends only search, review, analysis, summaries and extraction whose prompt asks for nothing
+  that edits, saves, runs or reaches a service, in English or Spanish; the list is broad on purpose,
+  so some reading work stays on the general agent, which costs tokens and never a failed task. When
+  the reader is handed work it cannot do, it says so and asks to be relaunched with `access: write`.
 - **Measurement.** `SubagentStop` reads each finished subagent's transcript and records its model,
-  turns, tokens (cache reads and writes included), list-price cost, peak context, tool calls and
-  duration, next to the routing decision. `router stats` shows it per agent and model.
+  turns, tokens (cache reads and writes included), peak context, tool calls and duration, next to the
+  routing decision. `router stats` shows it per agent and model. Context tokens are exact; output
+  tokens are a lower bound (a transcript keeps the usage taken when each message began), so the cost
+  shown is a floor, and almost all of it is context anyway.
 
 ```bash
 router stats                 # ... then "Claude Code subagents, measured from their transcripts"

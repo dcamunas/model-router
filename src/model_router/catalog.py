@@ -74,7 +74,7 @@ class ModelSpec:
 
     @property
     def family(self) -> str:
-        """Return the company behind the door: `codex` and `openai` are both OpenAI, `gemini` is Google."""
+        """Return the company behind the door: `codex` is OpenAI."""
         return PROVIDER_FAMILY.get(self.provider, self.provider)
 
 
@@ -91,7 +91,7 @@ SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
 
 
 def parse_external(text: str) -> tuple[str, ModelSpec | None]:
-    """Parse one `router config --external` value, `NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT[/TIER]` (prices in
+    """Parse one `tribunal config --declare` value, `NAME=codex/MODEL_ID@INPUT/OUTPUT[/TIER]` (prices in
     USD per million tokens; TIER 0 Haiku to 3 Fable, EXTERNAL_TIER when omitted), into the short name and its
     spec; `NAME=` alone means remove, and returns None.
 
@@ -121,7 +121,7 @@ def parse_external(text: str) -> tuple[str, ModelSpec | None]:
 
 
 def load_external(config: dict[str, Any]) -> list[str]:
-    """Register the external models declared in `config["external"]` (as `router config --external` writes
+    """Register the Codex models declared in `config["external"]` (as `tribunal config --declare` writes
     them) in the catalogue, replacing any registered before, and return their short names. Entries that
     do not parse are skipped, a second declaration of a model id among them.
     """
@@ -147,7 +147,7 @@ def load_external(config: dict[str, Any]) -> list[str]:
 
 
 def external_models() -> list[ModelSpec]:
-    """Return the declared models of other providers: they judge, and work when `available_models` lists them."""
+    """Return the declared Codex models: the tribunal's judges. The router never routes to them."""
     return [spec for spec in MODELS.values() if spec.provider != "anthropic"]
 
 
@@ -246,8 +246,9 @@ def available_models() -> list[str]:
         return [m for m, spec in MODELS.items() if spec.provider == "anthropic"]
     names = [n.strip() for n in configured.split(",")] if isinstance(configured, str) else [str(n) for n in configured]
     declared = set(cfg.get("external") or {})  # the tribunal's Codex models, listed by an older version: not the router's
-    ids = parse_models([n for n in names if n and n not in declared])
-    return [m for m in ids if MODELS[m].provider == "anthropic"]
+    kept = [n for n in names if n and n not in declared]
+    ids = [m for m in parse_models(kept) if MODELS[m].provider == "anthropic"] if kept else []
+    return ids or [m for m, spec in MODELS.items() if spec.provider == "anthropic"]  # nothing left: every Claude model
 
 
 @dataclass(frozen=True)

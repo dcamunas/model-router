@@ -1,7 +1,7 @@
 """The `tribunal` command: two judges blind to each other, a Claude model and a Codex model, and an arbiter on a
 split. `tribunal qa` reviews the code changed in a git repository, as the plugin's hook does at the end of a turn;
 `tribunal judge` reviews a text written elsewhere; `tribunal config` sets who judges. It shares the router's
-engine (the verifier, the ledger, the doors to other providers) but none of the router's own decisions.
+engine (the verifier, the ledger, the door to Codex) but none of the router's own decisions.
 """
 
 from __future__ import annotations
@@ -229,7 +229,7 @@ def _declare_external(text: str) -> None:
         external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output,
                           "tier": spec.tier}
     path = write_config(external=external)
-    print(f"models from other providers: {', '.join(external) or 'none'} (in {path})")
+    print(f"Codex models declared: {', '.join(external) or 'none'} (in {path})")
     load_external(read_config())
 
 
