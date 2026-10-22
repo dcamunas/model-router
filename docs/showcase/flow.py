@@ -17,11 +17,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-CANVAS_W, CANVAS_H = 1400, 460
+CANVAS_W, CANVAS_H = 1480, 480
 SCALE = 2  # captured at twice the canvas, so the figure is sharp at any width GitHub shows it
 NODE = 170  # side of a symbol's square
 NODE_TOP = 120
-CENTRES = (150, 520, 890, 1260)  # x of the four symbols
+CENTRES = (200, 560, 920, 1280)  # x of the four symbols
+CAPTION_W = 350  # a caption's width: the gap between two centres, less a margin
 ARROW_LENGTH, ARROW_HALF_WIDTH = 16, 9
 TITLE_FONT = "Georgia, 'Times New Roman', serif"
 BODY_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif"
@@ -47,9 +48,9 @@ DARK = Theme("dark", "#0d1117", "#161b22", "#30363d", "#e6edf3", "#9198a1", "#6e
 
 STEPS = (
     ("Task", "kind and risk, declared<br>or read from the text"),
-    ("Start cheap", "the cheapest model and effort<br>the risk allows"),
+    ("Start cheap", "the cheapest model<br>and effort the risk allows"),
     ("Check", "a test, if there is one;<br>from high risk, a judge<br>on another model"),
-    ("Log", "every attempt, and what<br>the solved task cost"),
+    ("Log", "every attempt, and<br>what the solved task cost"),
 )
 
 
@@ -134,16 +135,16 @@ def page(t: Theme) -> str:
       <div class="node" style="left:{left}px;top:{NODE_TOP}px">
         <svg width="92" height="92" viewBox="0 0 92 92">{icon(t)}</svg>
       </div>
-      <div class="title" style="left:{centre - 160}px;top:{NODE_TOP + NODE + 16}px">{title}</div>
-      <div class="line" style="left:{centre - 160}px;top:{NODE_TOP + NODE + 60}px">{line}</div>""")
+      <div class="title" style="left:{centre - CAPTION_W / 2}px;top:{NODE_TOP + NODE + 16}px">{title}</div>
+      <div class="line" style="left:{centre - CAPTION_W / 2}px;top:{NODE_TOP + NODE + 64}px">{line}</div>""")
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
       html, body {{ margin:0; background:{t.page}; }}
       .canvas {{ position:relative; width:{CANVAS_W}px; height:{CANVAS_H}px; background:{t.page}; }}
       .node {{ position:absolute; width:{NODE}px; height:{NODE}px; box-sizing:border-box; border-radius:28px;
                background:{t.node}; border:2px solid {t.border}; display:flex; align-items:center;
                justify-content:center; }}
-      .title {{ position:absolute; width:320px; text-align:center; font:700 32px {TITLE_FONT}; color:{t.text}; }}
-      .line {{ position:absolute; width:320px; text-align:center; font:400 22px/1.35 {BODY_FONT};
+      .title {{ position:absolute; width:{CAPTION_W}px; text-align:center; font:700 36px {TITLE_FONT}; color:{t.text}; }}
+      .line {{ position:absolute; width:{CAPTION_W}px; text-align:center; font:400 26px/1.3 {BODY_FONT};
                color:{t.secondary}; }}
       svg.wires {{ position:absolute; left:0; top:0; }}
     </style></head><body><div class="canvas">

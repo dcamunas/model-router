@@ -1,6 +1,6 @@
 # model-router
 
-[![ci](https://github.com/dcamunas/model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/dcamunas/model-router/actions/workflows/ci.yml)
+[![ci](https://github.com/dcamunas/model-router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dcamunas/model-router/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/dcamunas/model-router)](https://github.com/dcamunas/model-router/releases)
 [![python](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
 [![licence](https://img.shields.io/github/license/dcamunas/model-router)](LICENSE)
