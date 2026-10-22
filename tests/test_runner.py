@@ -275,9 +275,10 @@ def test_ask_takes_another_prompt_system_and_role_for_a_seat_of_someone_else_s()
     client = FakeClient(judge={"*": [ok("the second judge was right")]})
     verifier = Verifier(client, Router(client).policy)
     task = Task(prompt="write the notice", kind="write", risk="critical")
-    result = verifier.ask(task, "the notice", parse_cell("sonnet/high"), prompt="<verdicts>both</verdicts>",
-                          system="You are the arbiter.", role="arbiter")
-    assert result.passed and result.source == "judge" and result.verdicts[0].role == "arbiter"
-    assert client.calls[0]["prompt"] == "<verdicts>both</verdicts>" and client.calls[0]["system"] == "You are the arbiter."
+    result = verifier.ask(task, "the notice", parse_cell("sonnet/high"), prompt="<opinions>both</opinions>",
+                          system="You read two opinions and decide.", role="second-reader")
+    assert result.passed and result.source == "judge" and result.verdicts[0].role == "second-reader"
+    assert client.calls[0]["prompt"] == "<opinions>both</opinions>"
+    assert client.calls[0]["system"] == "You read two opinions and decide."
     plain = verifier.ask(task, "the notice", parse_cell("sonnet/high"))
     assert "<task>" in client.calls[1]["prompt"] and plain.verdicts[0].role == "judge"
