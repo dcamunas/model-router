@@ -357,10 +357,6 @@ class Policy:
         risk = task.risk
         start = parse_cell(self.start_table[kind][risk])
         rationale = [f"table {kind} x {risk} -> {start}" + (f" (calibration {self.calibration_id})" if self.calibration else "")]
-        tuned = (self.tuning.get("start") or {}).get(kind, {}).get(risk)
-        if tuned:
-            rationale.append(f"tuned for {self.tuning.get('name', 'this project')}: {start} -> {tuned}")
-            start = parse_cell(str(tuned))
         if self.calibration_missing:
             rationale.append(f"calibration {self.calibration_missing} cannot be loaded: the built-in tables decide")
         start = self._available(start, rationale)
@@ -381,6 +377,7 @@ class Policy:
             if start.capability < floor_cell.capability:
                 rationale.append(f"risk floor {risk}: {start} -> {floor_cell}")
                 start = floor_cell
+        start = self._tuned(kind, risk, start, rationale)
         max_attempts = task.max_attempts if task.max_attempts is not None else MAX_ATTEMPTS_BY_RISK[risk]
         cells = ladder(start, self.cells, max_attempts, min_gain=self.min_gain)
         first_attempt = start.expected_cost(est_input, out_tokens)
@@ -389,6 +386,25 @@ class Policy:
         rationale.append(f"ladder: {' -> '.join(map(str, cells))}")
         rationale.append(f"verification {verify} (risk {risk}); budget ${budget:.2f}; max {max_attempts} attempts")
         return Plan(cells, verify, budget, max_attempts, rationale)
+
+    def _tuned(self, kind: str, risk: str, start: Cell, rationale: list[str]) -> Cell:
+        """Apply the project's tuning (`projects.py`) to the start the table and the floors gave: its cell stands in
+        for `start` only while `start` is still the cell it replaced; a tuning whose base no longer comes out (the
+        table, the calibration or the models changed) is ignored and said so.
+        """
+        entry = (self.tuning.get("start") or {}).get(kind, {}).get(risk)
+        if not isinstance(entry, dict) or not entry.get("cell"):
+            return start
+        name = self.tuning.get("name", "this project")
+        if entry.get("base") and entry["base"] != start.label:
+            rationale.append(f"tuning for {name} ignored: it replaced {entry['base']}, the start is now {start}")
+            return start
+        try:
+            tuned = self._available(parse_cell(str(entry["cell"])), rationale)
+        except ValueError:
+            return start
+        rationale.append(f"tuned for {name}: {start} -> {tuned}")
+        return tuned
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
         """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`; for `panel` it is the

@@ -20,13 +20,10 @@ changing (`router stats` and the next session's start call it).
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
 import hashlib
 import json
 import tempfile
 import time
-from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +32,7 @@ from typing import Any
 from ._fmt import money
 from .catalog import MODELS, Usage, cost_usd
 from .classify import classify_rules
+from .paths import locked
 from .projects import project_of, signature
 
 LOG_FILE = "subagents.jsonl"
@@ -152,6 +150,7 @@ def record(event: dict[str, Any], usage: SubagentUsage, decision: dict[str, Any]
         "model": spec.short if spec else usage.model,
         "effort": effort.get("level") if isinstance(effort, dict) else effort,
         "routed": decision.get("cell") if decision else None,
+        "router_chose": bool(decision and decision.get("router_chose")),
         "kind": (decision or {}).get("kind") or (cls.kind if cls else None),
         "risk": (decision or {}).get("risk") or (cls.risk if cls else None),
         "prompt_hash": prompt_hash(usage.prompt) if usage.prompt else None,
@@ -171,15 +170,6 @@ def _context_cost(usage: SubagentUsage) -> float | None:
     if usage.model not in MODELS:
         return None
     return round(cost_usd(usage.model, Usage(usage.input_tokens, 0, usage.cache_read_tokens, usage.cache_write_tokens)), 6)
-
-
-@contextlib.contextmanager
-def locked(log: Path) -> Iterator[None]:
-    """Hold an exclusive lock on `log`'s lock file: the hook's appends and `finalize`'s rewrite never interleave."""
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.with_suffix(".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        yield
 
 
 def append(log: Path, line: dict[str, Any]) -> None:

@@ -28,11 +28,12 @@ import contextlib
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .catalog import MODELS, SHORT_TO_ID, lattice, parse_cell, worker_cell
+from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
@@ -141,6 +142,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None,
         "kind": cls.kind, "risk": cls.risk, "cell": cell.label, "set": fields, "why": cls.reason,
         "subagent": subagent or "general-purpose", "prompt_head": prompt.strip()[:PROMPT_HEAD_CHARS],
         "prompt_hash": prompt_hash(prompt), "project": project,
+        "router_chose": "effort" in fields,  # model and effort both the router's: evidence about its tables
     }
     if cross:
         record["cross"] = cross
@@ -200,61 +202,86 @@ def _measure(event: dict[str, Any]) -> None:
 def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], updated: dict[str, Any] | None,
                  record: dict[str, Any]) -> str | None:
     """Return the agent id of the finished subagent this launch repeats higher (see `projects.find_relaunch`), or
-    None. The new launch's cell is the hook's choice, else the model and effort Claude set itself.
+    None. The new launch's cell is the model and effort it will really run on: the hook's, or Claude's own.
     """
     prompt = str(tool_input.get("prompt") or "")
     if not prompt.strip() or os.environ.get(HOOK_LOG_ENV, "1") == "0":
         return None
     final = updated or tool_input
-    cell = None
-    with contextlib.suppress(ValueError):
-        if record.get("cell"):
-            cell = parse_cell(str(record["cell"]))
-        elif final.get("model"):
-            model = str(final["model"])
-            spec = MODELS.get(SHORT_TO_ID.get(model, model))  # an alias Claude Code knows and the catalogue does not: no cell
-            if spec is not None:
-                cell = parse_cell(f"{spec.short}/{final.get('effort') or spec.default_effort}")
-    agent = str(final.get("subagent_type") or "general-purpose")
-    found = find_relaunch(load_recent(home() / SUBAGENT_LOG), event.get("session_id"), signature(prompt), cell, agent)
+    spec = MODELS.get(SHORT_TO_ID.get(str(final.get("model") or ""), str(final.get("model") or "")))
+    if spec is None:  # no model given, or an alias the catalogue does not know: no cell to compare
+        return None
+    try:
+        cell = parse_cell(f"{spec.short}/{final.get('effort') or spec.default_effort}")
+    except ValueError:
+        return None
+    kind, risk = record.get("kind"), record.get("risk")
+    if not kind or not risk:  # a launch the hook left alone: its kind and risk as the hook would read them
+        cls = classify_rules(f"{prompt}\n{tool_input.get('description') or ''}")
+        kind, risk = cls.kind, cls.risk
+    found = find_relaunch(load_recent(home() / SUBAGENT_LOG), event.get("session_id"), signature(prompt), cell,
+                          kind, risk)
     return str(found["agent_id"]) if found and found.get("agent_id") else None
 
 
 def _tune(event: dict[str, Any]) -> list[str]:
-    """Raise the start cells that keep failing in the session's project (`projects.raise_failing`) and return one
-    line per change; nothing is ever lowered here.
+    """Raise the start cells in force that keep failing in the session's project (`projects.raise_failing`), on
+    the evidence since the project's last reset or applied change, and return one line per change; nothing is
+    ever lowered here.
     """
     project = project_of(str(event.get("cwd") or "") or None)
     if not project or os.environ.get(HOOK_LOG_ENV, "1") == "0":
         return []
     try:
-        records = load_subagents(home() / SUBAGENT_LOG)
-        changes = raise_failing(project, evidence(project, records, relaunched_ids(home() / "hook.jsonl")))
-    except (OSError, ValueError):
+        tuning = load_tuning(project)
+        ev = evidence(project, load_subagents(home() / SUBAGENT_LOG), relaunched_ids(home() / "hook.jsonl"),
+                      tuning.get("since"))
+        changes = raise_failing(project, ev, start_in_force(tuning))
+    except Exception as exc:  # noqa: BLE001 - tuning is a side task: it must never cost the session its context
+        sys.stderr.write(f"router-hook: tuning skipped: {type(exc).__name__}: {exc}\n")
         return []
     return [f"{c['kind']} ({c['risk']}) in {Path(project).name} now starts on {c['to']}, not {c['from']}: "
             f"{c['relaunched']} of {c['n']} relaunched higher" for c in changes]
+
+
+def start_in_force(tuning: dict[str, Any]) -> Callable[[str, str], Cell]:
+    """Return a function giving the start cell the hook would use for a kind and risk with `tuning` applied."""
+    policy = Policy(cells=lattice(), feedback=FeedbackStore(home() / "feedback.json"), tuning=tuning)
+    return lambda kind, risk: policy.plan(Task(prompt="x", kind=kind, risk=risk)).start
 
 
 def handle(event: dict[str, Any]) -> dict[str, Any] | None:
     """Return the JSON the hook prints for this event, or None for silence."""
     name = event.get("hook_event_name")
     if name == "SessionStart":
-        with contextlib.suppress(OSError):
-            finalize_subagents(home() / SUBAGENT_LOG)  # the last session's subagents, now that their transcripts settled
-        out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
-        raised = _tune(event)
-        if raised and os.environ.get(HOOK_QUIET_ENV) != "1":
-            out["systemMessage"] = "router: " + "; ".join(raised) + " (`router project` shows why; `--reset` undoes it)"
-        return out
+        return _session_start(event)
     if name == "SubagentStop":
         _measure(event)
         return None
     if name != "PreToolUse" or event.get("tool_name") != "Agent":
         return None
+    return _pre_agent(event)
+
+
+def _session_start(event: dict[str, Any]) -> dict[str, Any]:
+    """Finish the last measurements, raise the project's failing starts, and give Claude the session context."""
+    with contextlib.suppress(OSError):
+        finalize_subagents(home() / SUBAGENT_LOG)  # the last session's subagents, now that their transcripts settled
+    out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
+    raised = _tune(event)
+    if raised and os.environ.get(HOOK_QUIET_ENV) != "1":
+        out["systemMessage"] = "router: " + "; ".join(raised) + " (`router project` shows why; `--reset` undoes it)"
+    return out
+
+
+def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Route one Agent launch, note whether it relaunches an earlier subagent higher, and log the decision."""
     tool_input = event.get("tool_input") or {}
     updated, record = decide(tool_input, main_model(event.get("transcript_path")), str(event.get("cwd") or "") or None)
-    relaunch = _relaunch_of(event, tool_input, updated, record)
+    try:
+        relaunch = _relaunch_of(event, tool_input, updated, record)
+    except OSError:  # learning is a side task: it never costs the routing
+        relaunch = None
     if relaunch is not None:
         record["relaunch_of"] = relaunch
         if updated is None:  # an explicit model, say: not routed, but the relaunch is the first one's verdict

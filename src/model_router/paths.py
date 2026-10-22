@@ -8,8 +8,11 @@ variable the router reads is named here, all under the MODEL_ROUTER_ prefix.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -61,3 +64,12 @@ def save_config(data: dict[str, Any]) -> Path:
 def write_config(**values: Any) -> Path:
     """Merge `values` into config.json and return its path."""
     return save_config({**read_config(), **values})
+
+
+@contextlib.contextmanager
+def locked(log: Path) -> Iterator[None]:
+    """Hold an exclusive lock on `log`'s lock file: the hook's appends and `finalize`'s rewrite never interleave."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield

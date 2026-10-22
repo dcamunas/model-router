@@ -145,7 +145,10 @@ def _task_from(
 def _cmd_plan(args: argparse.Namespace) -> int:
     prompt = _prompt_from(args)
     task, cls = _task_from(args, prompt)
-    policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
+    from .projects import load_tuning, project_of
+
+    tuning = load_tuning(project_of(str(Path.cwd())))  # what the hook would start a subagent on, here
+    policy = Policy(feedback=FeedbackStore(home() / "feedback.json"), tuning=tuning)
     plan = policy.plan(task)
     if args.claude_code:
         cc = plan.start.claude_code()
@@ -507,35 +510,36 @@ def _cmd_stats(args: argparse.Namespace) -> int:
 
 def _cmd_project(args: argparse.Namespace) -> int:
     from . import projects
+    from .hook import start_in_force
 
-    project = projects.project_of(str((args.path or Path.cwd()).expanduser().resolve()))
+    project = projects.project_of(str((args.path or Path.cwd()).expanduser()))
     if project is None:
-        raise SystemExit("no project")
-    path = projects.tuning_path(project)
+        raise SystemExit(f"not inside a git repository: {args.path or Path.cwd()} (the router learns per repository)")
     if args.reset:
-        path.unlink(missing_ok=True)
-        print(f"tuning of {project} removed: the table and the calibration decide again")
+        projects.reset(project)
+        print(f"tuning of {project} removed; evidence counts from now on, so nothing comes back on its own")
         return 0
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)
-    ev = projects.evidence(project, load_subagents(home() / SUBAGENT_LOG), projects.relaunched_ids(home() / "hook.jsonl"))
-    print(f"project {project}")
-    if not ev:
-        print("no routed subagent measured here yet")
-    else:
-        rows = [[kind, cell, e["n"], e["fails"], ", ".join(sorted(e["risks"]))] for (kind, cell), e in sorted(ev.items())]
-        print("\nsubagents the hook routed here (relaunched = launched again higher soon after: taken as a fail)")
-        print(table(["kind", "start cell", "n", "relaunched", "risks"], rows))
     tuning = projects.load_tuning(project)
-    start = tuning.get("start") or {}
-    tuned = [[kind, risk, cell] for kind, row in sorted(start.items()) for risk, cell in sorted(row.items())]
+    ev = projects.evidence(project, load_subagents(home() / SUBAGENT_LOG), projects.relaunched_ids(home() / "hook.jsonl"),
+                           tuning.get("since"))
+    print(f"project {project}" + (f" (evidence since {tuning['since'][:16]})" if tuning.get("since") else ""))
+    if not ev:
+        print("no subagent routed here yet with model and effort both chosen by the router")
+    else:
+        rows = [[kind, risk, cell, e["n"], e["fails"]] for (kind, risk, cell), e in sorted(ev.items())]
+        print("\nsubagents the router routed here (relaunched = launched again higher, same kind and risk: a fail)")
+        print(table(["kind", "risk", "start cell", "n", "relaunched"], rows))
+    tuned = [[kind, risk, e["cell"], e["base"]] for kind, row in sorted(tuning.get("start", {}).items())
+             for risk, e in sorted(row.items())]
     if tuned:
-        print(f"\ntuning in force ({path})")
-        print(table(["kind", "risk", "starts on"], tuned))
-        for c in (tuning.get("changes") or [])[-5:]:
+        print(f"\ntuning in force ({projects.tuning_path(project)})")
+        print(table(["kind", "risk", "starts on", "instead of"], tuned))
+        for c in [c for c in tuning.get("changes", []) if c.get("kind")][-5:]:
             print(f"  {c['at'][:16]} {c['what']} {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, "
                   f"{c['relaunched']} of {c['n']} relaunched")
-    proposals = projects.propose_lower(ev, FLOOR)
+    proposals = projects.propose_lower(project, ev, FLOOR, start_in_force(tuning))
     if proposals:
         print(f"\ncheaper starts the evidence supports ({projects.DOWN_N}+ launches, none relaunched); not applied:")
         for c in proposals:
