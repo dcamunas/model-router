@@ -251,10 +251,13 @@ def _tune(event: dict[str, Any]) -> list[str]:
         mine = evidence(project, records, relaunched_ids(home() / "hook.jsonl"), tuning.get("since"))
         changes = raise_failing(project, combine(mine, pooled(project, tuning.get("since"))[0]),
                                 start_in_force(tuning), local=mine)
-        write_own(project, records, home() / "hook.jsonl")  # only in a repository that shares, closed weeks only
     except Exception as exc:  # noqa: BLE001 - tuning is a side task: it must never cost the session its context
         sys.stderr.write(f"router-hook: tuning skipped: {type(exc).__name__}: {exc}\n")
         return []
+    try:
+        write_own(project, records, home() / "hook.jsonl")  # only in a repository that shares, settled weeks only
+    except Exception as exc:  # noqa: BLE001 - sharing is a side task too, and must not hide the raises above
+        sys.stderr.write(f"router-hook: shared counts not written: {type(exc).__name__}: {exc}\n")
     return [f"{c['kind']} ({c['risk']}) in {Path(project).name} now starts on {c['to']}, not {c['from']}: "
             f"{c['relaunched']} of {c['n']} relaunched higher" for c in changes]
 

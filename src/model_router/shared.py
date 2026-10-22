@@ -23,6 +23,7 @@ that is a link elsewhere is not used.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -45,7 +46,8 @@ FORMAT = 1
 FILE_CAP = 30  # launches one installation weighs per kind, risk and cell
 MAX_FILE_BYTES = 16 * 1024
 MAX_COUNT = 10_000
-SETTLE = timedelta(days=1)  # a week is written this long after it closes
+SETTLE = timedelta(days=1)
+DELETE_MARGIN = timedelta(weeks=1)  # a week is written this long after it closes
 FILE_NAME = re.compile(r"^([0-9a-f]{12})-(\d{4})W(\d{2})\.json$")
 Evidence = dict[tuple[str, str, str], dict[str, int]]
 
@@ -117,8 +119,13 @@ def write_own(project: str, records: list[dict[str, Any]], decision_log: Path,
     for path in folder.glob("*.json"):
         m = FILE_NAME.match(path.name)
         begins = week_start(f"{m[2]}-W{m[3]}") if m else None
-        if m and (m[1] in old_ids or begins is None or begins < first):  # an old id of mine, or out of the window
-            path.unlink(missing_ok=True)  # anyone's: an old week counts for nobody, and a deletion merges cleanly
+        mine_before = bool(m) and m[1] in old_ids
+        # anyone's week well out of the window counts for nobody, and a deletion merges cleanly; a margin of a week
+        # keeps a machine whose clock runs ahead from deleting weeks the others still count
+        expired = begins is None or begins < first - DELETE_MARGIN
+        if m and (mine_before or expired) and _plain(path):
+            with contextlib.suppress(OSError):
+                path.unlink()
     added = []
     for week, counts in sorted(own_counts(project, records, relaunched_ids(decision_log), now).items()):
         path = folder / f"{mine}-{week.replace('-', '')}.json"
@@ -126,9 +133,12 @@ def write_own(project: str, records: list[dict[str, Any]], decision_log: Path,
             continue  # written once, never changed
         text = json.dumps({"v": FORMAT, "c": counts}, sort_keys=True, separators=(",", ":")) + "\n"
         fd, tmp = tempfile.mkstemp(dir=folder, prefix=".", suffix=".tmp")  # a fresh file: no link of anyone's followed
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        Path(tmp).replace(path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            Path(tmp).replace(path)
+        finally:
+            Path(tmp).unlink(missing_ok=True)  # gone after the replace; left only by a failed write
         added.append(path)
     return added
 
@@ -166,6 +176,15 @@ def pooled(project: str, since: str | None = None, now: datetime | None = None) 
             total["n"] += n
             total["fails"] += fails
     return out, sum(1 for theirs in per_install.values() if theirs)
+
+
+def _plain(path: Path) -> bool:
+    """Say whether `path` is a regular file or a link (which unlink removes, never its target), not a directory."""
+    try:
+        mode = path.lstat().st_mode
+    except OSError:
+        return False
+    return stat.S_ISREG(mode) or stat.S_ISLNK(mode)
 
 
 def _read(path: Path) -> list[tuple[tuple[str, str, str], int, int]]:

@@ -400,11 +400,14 @@ class Policy:
             rationale.append(f"tuning for {name} ignored: it replaced {entry['base']}, the start is now {start}")
             return start
         try:
-            tuned = self._available(parse_cell(str(entry["cell"])), rationale)
+            wanted = parse_cell(str(entry["cell"]))
         except ValueError:
             return start
-        if tuned.label != str(entry["cell"]):  # its model is not available here: what would stand in was never weighed
-            rationale.append(f"tuning for {name} ignored: {entry['cell']} would run as {tuned}")
+        tuned = self._available(wanted, rationale)
+        if tuned != wanted and tuned.capability < start.capability:
+            # its model is not available here, and what stands in is weaker than the start: a raise would undo
+            # itself, a cheaper start would go further down than anyone weighed
+            rationale.append(f"tuning for {name} ignored: {wanted} would run as {tuned}")
             return start
         floor = FLOOR.get(risk)
         if floor and tuned.capability < self._available(parse_cell(floor), []).capability:

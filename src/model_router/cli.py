@@ -523,8 +523,13 @@ def _cmd_project(args: argparse.Namespace) -> int:
     records = load_subagents(home() / SUBAGENT_LOG)
     if args.share:
         folder = shared.shared_dir(project)
+        if folder.parent.is_symlink() or folder.is_symlink():
+            raise SystemExit(f"{folder} is reached through a link: shared counts need a plain directory in the repository")
         folder.mkdir(parents=True, exist_ok=True)
         (folder / ".gitkeep").touch()  # git keeps no empty directory, and the directory is the opt-in
+        if not shared.sharing(project):
+            raise SystemExit(f"{folder} cannot be used for shared counts: it must be a directory inside the "
+                             f"repository, not reached through a link, and {shared.SHARE_ENV} must not be 0")
         written = shared.write_own(project, records, home() / "hook.jsonl")
         print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
               + (f" (added {len(written)} week file(s))" if written else

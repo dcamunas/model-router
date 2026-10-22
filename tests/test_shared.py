@@ -214,3 +214,48 @@ def test_an_applied_cheaper_start_is_in_force(tmp_path, monkeypatch):
     critical = start_in_force({})("review", "critical")
     below = {"start": {"review": {"critical": {"cell": "haiku/low", "base": critical.label}}}}
     assert start_in_force(below)("review", "critical") == critical  # never below a floor
+
+
+def test_an_undeletable_entry_never_stops_sharing_nor_hides_a_raise(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    (shared.shared_dir(project) / "343434343434-2020W01.json").mkdir()  # a directory with a file's name
+    cell = start_in_force({})("analysis", "medium").label
+    _theirs(project, "aaaaaaaaaaaa", WEEK, {f"analysis|medium|{cell}": [5, 2]})
+    home = tmp_path / "home"
+    (home / "subagents.jsonl").write_text(json.dumps(_rec(project, cell, 1, SETTLED)) + "\n")
+    (home / "hook.jsonl").write_text(json.dumps({"relaunch_of": "a1"}) + "\n")
+    out = handle({"hook_event_name": "SessionStart", "session_id": "s", "cwd": project})
+    assert out is not None and "now starts on" in out["systemMessage"]
+    assert (shared.shared_dir(project) / f"{_mine(project)}-{WEEK.replace('-', '')}.json").exists()
+
+
+def test_a_week_just_out_of_the_window_is_kept_a_little_longer(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    edge = projects.week_of(projects.window_start() - timedelta(days=3))
+    kept = _theirs(project, "aaaaaaaaaaaa", edge, {"analysis|medium|sonnet/low": [1, 0]})
+    shared.write_own(project, [], tmp_path / "none")
+    assert kept.exists() and shared.pooled(project) == ({}, 0)  # not counted, but not deleted yet
+
+
+def test_share_refuses_a_claude_directory_that_is_a_link(tmp_path, monkeypatch):
+    import pytest
+
+    from model_router.cli import main
+
+    project = _repo(tmp_path, monkeypatch, share=False)
+    (tmp_path / "tools").mkdir()
+    (Path(project) / ".claude").symlink_to(tmp_path / "tools")
+    with pytest.raises(SystemExit, match="through a link"):
+        main(["project", project, "--share"])
+    assert list((tmp_path / "tools").iterdir()) == []
+
+
+def test_a_raise_whose_model_is_gone_keeps_a_stronger_stand_in(monkeypatch):
+    plain = Policy(calibration=None).plan(Task(prompt="x", kind="analysis", risk="medium")).start
+    raised = projects.step_up(plain, projects.lattice())
+    assert raised is not None
+    tuning = {"name": "repo", "start": {"analysis": {"medium": {"cell": raised.label, "base": plain.label}}}}
+    others = [m for m in ("haiku", "sonnet", "opus", "fable") if m != raised.spec.short]
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", ",".join(others))
+    start = Policy(calibration=None, tuning=tuning).plan(Task(prompt="x", kind="analysis", risk="medium")).start
+    assert start.capability >= plain.capability

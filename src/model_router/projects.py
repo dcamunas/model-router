@@ -86,15 +86,20 @@ def install_key() -> tuple[bytes, bool]:
             pass
         except OSError:
             return salt, False
+        tmp = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{SALT_FILE}", suffix=".tmp")
+            with os.fdopen(fd, "wb") as f:
+                f.write(salt)
+            os.link(tmp, path)  # whole and exclusive: nobody ever reads a salt half written
         except FileExistsError:
             continue  # another process made it first: read theirs
         except OSError:
             return salt, False
-        with os.fdopen(fd, "wb") as f:
-            f.write(salt)
+        finally:
+            if tmp:
+                Path(tmp).unlink(missing_ok=True)
         return salt, True
     return salt, False
 
