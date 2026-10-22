@@ -22,7 +22,7 @@
     {
       "name": "tribunal",
       "source": "./plugins/tribunal",
-      "description": "Tribunal QA: a Claude judge and a Codex judge review the code each turn changes, blind, read-only; an arbiter on a split. Needs model-router.",
+      "description": "A Claude judge and a Codex judge review each change blind to each other; an arbiter decides when they split. Needs model-router.",
       "category": "productivity",
       "tags": [
         "qa",

@@ -120,8 +120,8 @@ EN = {
         "serving the chat, writes it.",
         "The turn ends with a change in the repository. Before it closes, the tribunal takes the diff and the "
         "request.",
-        "Two judges read them inside the repository, read-only, each in its own session: judge A on Claude, not "
-        "the model that wrote it; judge B on Codex. Neither knows the other exists.",
+        "Two judges, each in its own session: judge A on Claude, not the model that wrote it, reads the repository "
+        "read-only; judge B on Codex sees only what it is sent. Neither knows the other exists.",
         "They split. Judge A passes it. Judge B fails it: average([]) divides by zero.",
         "On a split, the arbiter reads the request, the change and both reasoned verdicts, with no names on them. "
         "One extra call, only on a split.",

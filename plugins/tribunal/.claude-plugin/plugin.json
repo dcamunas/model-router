@@ -2,7 +2,7 @@
   "name": "tribunal",
   "displayName": "Tribunal",
   "version": "0.15.1",
-  "description": "Final QA of the code each turn changes: a Claude judge and a Codex judge, blind to each other and read-only in the repository, an arbiter on a split; a fail goes back to Claude with the findings. Needs the model-router plugin.",
+  "description": "A Claude judge and a Codex judge review each change blind to each other; an arbiter decides when they split. A fail goes back to Claude with the findings. Needs the model-router plugin.",
   "author": {
     "name": "David Camuñas",
     "url": "https://github.com/dcamunas"

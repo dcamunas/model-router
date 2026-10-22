@@ -2,6 +2,16 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The README is a storefront now: a pitch, a flow figure in four symbols (light and dark), a quick
+  start, what you get, and a table that sends each question to its page. The detail moved, not cut,
+  to `docs/`: install, Claude Code, command line and library, how it decides, calibration, privacy and
+  background. The tribunal's README follows the same layout, with its own figure.
+- `docs/showcase/flow.py` draws both figures; the package description matches the README's pitch.
+
 ## [0.15.1] - 2026-10-22
 
 ### Changed
