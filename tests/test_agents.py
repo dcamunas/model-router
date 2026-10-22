@@ -1,0 +1,77 @@
+"""Advice on agents fixed by hand: repeats found by session, time and prompt, and the four answers."""
+
+import json
+from datetime import UTC, datetime, timedelta
+
+from model_router import agents
+from model_router.catalog import lattice
+from model_router.cli import main
+from model_router.projects import signature
+
+T0 = datetime(2026, 10, 22, 9, 0, tzinfo=UTC)
+REPO = "/repo"
+
+
+def _run(i: int, agent: str = "curator", *, model: str = "opus", effort: str = "xhigh", session: str = "s",
+         prompt: str | None = None, minutes: int = 0, seconds: int = 60, routed: str | None = None) -> dict:
+    return {"agent_id": f"{agent}-{i}", "agent_type": agent, "session": f"{session}{i}", "project": REPO,
+            "model": model, "effort": effort, "routed": routed, "at": (T0 + timedelta(minutes=minutes)).isoformat(),
+            "seconds": seconds, "turns": 10, "cost_usd": 1.0, "input_tokens": 1000, "output_tokens": 2000,
+            "cache_read_tokens": 100_000, "cache_write_tokens": 5000,
+            "sig": signature(prompt or f"curate migration batch {i} of the client tables with all the checks")}
+
+
+def test_a_run_is_repeated_when_another_starts_soon_after_on_an_alike_prompt_in_its_session():
+    brief = "curate the migration of the equipment tables, steps four eight and ten, with every check"
+    first = {**_run(1, prompt=brief), "session": "s"}
+    again = {**_run(2, agent="general-purpose", prompt=brief, minutes=10, seconds=300), "session": "s"}
+    other_session = {**_run(3, prompt=brief, minutes=10, seconds=300), "session": "t"}
+    too_late = {**_run(4, prompt=brief, minutes=90), "session": "s"}
+    unlike = {**_run(5, prompt="write the weekly report for the data team", minutes=5), "session": "s"}
+    assert agents.repeated_ids([first, again, other_session, unlike]) == {"curator-1"}
+    assert agents.repeated_ids([first, too_late]) == set()
+
+
+def test_the_four_answers():
+    cells = lattice()
+    few = [_run(i) for i in range(3)]
+    assert agents.advise(few, REPO, cells)[0].action == "measuring"
+    steady = [_run(i) for i in range(10)]
+    advice = agents.advise(steady, REPO, cells)[0]
+    assert advice.action == "lower" and advice.to is not None and advice.to.model == advice.cell.model
+    assert advice.saving is None  # an effort change is not priced
+    brief = "curate migration batch of the client tables with all the checks and the totals"
+    flaky = []
+    for i in range(6):
+        flaky.append({**_run(i, prompt=brief, minutes=i * 60), "session": "s"})
+        if i < 2:
+            flaky.append({**_run(100 + i, agent="general-purpose", prompt=brief, minutes=i * 60 + 5), "session": "s"})
+    advice = agents.advise(flaky, REPO, cells)[0]
+    assert advice.action == "raise" and advice.repeated == 2 and advice.to is not None
+    assert advice.to.model == "claude-fable-5-1" and advice.saving is not None and advice.saving < 0  # costs more
+    middling = [_run(i) for i in range(8)]
+    assert agents.advise(middling, REPO, cells)[0].action == "keep"
+
+
+def test_only_agents_fixed_by_hand_in_this_repository_are_advised():
+    records = [_run(1), _run(2, agent="general-purpose"), _run(3, agent="workflow-subagent"),
+               _run(4, agent="model-router:reader"), _run(5, agent="Explore"), _run(6, routed="haiku/low"),
+               {**_run(7), "project": "/other"}, {**_run(8), "model": "gpt-x"}]
+    assert [(a.agent, a.runs) for a in agents.advise(records, REPO, lattice())] == [("curator", 1)]
+
+
+def test_router_agents_prints_the_advice_and_where_the_agent_lives(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(home))
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".claude" / "agents").mkdir(parents=True)
+    (repo / ".claude" / "agents" / "curator.md").write_text("---\nname: curator\nmodel: opus\neffort: xhigh\n---\n")
+    lines = [{**_run(i), "project": str(repo), "final": True} for i in range(10)]
+    (home / "subagents.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
+    assert main(["agents", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "curator" in out and "opus/xhigh" in out and "lower to opus/" in out and "curator.md" in out
+    assert main(["agents", str(repo), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["action"] == "lower"

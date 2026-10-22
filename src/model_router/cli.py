@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
+from . import agents
 from ._fmt import money, table
 from .calibration import (
     BUILTIN,
@@ -553,6 +554,43 @@ def _cmd_project(args: argparse.Namespace) -> int:
     elif proposals:
         print("`router project --apply` applies them; a start that fails here too is raised on its own at session start")
     return 0
+
+
+def _cmd_agents(args: argparse.Namespace) -> int:
+    from . import projects
+
+    where = args.path or Path.cwd()
+    project = projects.project_of(str(where.expanduser()))
+    if project is None:
+        raise SystemExit(f"not inside a git repository: {where}. Agents are advised per repository")
+    with contextlib.suppress(OSError):
+        finalize_subagents(home() / SUBAGENT_LOG)
+    advice = agents.advise(load_subagents(home() / SUBAGENT_LOG), project, lattice())
+    if args.json:
+        print(json.dumps([a.to_dict() for a in advice], indent=2))
+        return 0
+    if not advice:
+        print(f"no agent with a fixed model has been measured in {project} yet")
+        return 0
+    rows = [[a.agent, a.cell.label, a.runs, a.repeated, f"{a.mean_turns:.1f}", money(a.total_cost),
+             _advice_text(a)] for a in advice]
+    print(f"agents with a fixed model in {project} (measured; list price, at least)")
+    print(table(["agent", "cell", "runs", "repeated", "turns", "spent", "advice"], rows))
+    for a in advice:
+        if a.to is not None and (path := agents.agent_file(project, a.agent)):
+            print(f"  {a.agent}: {path}")
+    print("Advice only: change `model:` and `effort:` in the agent yourself. A saving reprices the measured tokens at "
+          "the new model's prices; a change of effort also changes the tokens, which is not estimated.")
+    return 0
+
+
+def _advice_text(advice: agents.Advice) -> str:
+    if advice.action == "measuring":
+        return f"measuring ({advice.runs} of {agents.MIN_N} runs)"
+    if advice.to is None:
+        return "keep"
+    saving = "" if advice.saving is None else f", {money(abs(advice.saving))} {'less' if advice.saving >= 0 else 'more'}"
+    return f"{advice.action} to {advice.to}{saving}"
 
 
 @dataclass(frozen=True)
@@ -1095,6 +1133,12 @@ def build_parser() -> argparse.ArgumentParser:
     spj.add_argument("--share", action="store_true", help="share counts through the repository: creates "
                      ".claude/model-router/, to commit; each installation adds one small file per week there")
     spj.set_defaults(func=_cmd_project)
+
+    sa = sub.add_parser("agents", help="advice on the agents whose model and effort are fixed by hand, from what they "
+                                       "spent and how often they were repeated in this project")
+    sa.add_argument("path", nargs="?", type=Path, help="a directory in the project (default: the current one)")
+    sa.add_argument("--json", action="store_true", help="the advice as JSON")
+    sa.set_defaults(func=_cmd_agents)
 
     sg = sub.add_parser("config", help="show or set the profile for `router run`, the available models, the judge "
                                        "and the calibration (hooks untouched)")
