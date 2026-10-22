@@ -22,8 +22,9 @@ subagent to the read-only agent; the hook never guesses it from the wording, whi
 If the read-only agent answers that it cannot do the task, relaunch with `access: write`. What every
 subagent spent is measured when it ends: `router stats`. When a subagent's result is not good enough,
 relaunch the same task higher (set `model`, or more effort) rather than rephrasing it: the router reads
-that as a fail of its first choice and, after a few in the same project, starts that kind of task
-higher there (`router project` shows it).
+that as a fail of its first choice and, after a few in the same repository, starts that kind of task
+higher there (`router project` shows it). Keep the declaration line the same when you relaunch, apart
+from `access`: a relaunch counts only for the same kind and risk.
 What this skill adds is the rest of the loop: verify by risk and escalate on failure.
 
 ## Plain text: `router run`, not a subagent

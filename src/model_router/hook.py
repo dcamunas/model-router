@@ -38,7 +38,17 @@ from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
-from .projects import evidence, find_relaunch, load_tuning, project_of, raise_failing, relaunched_ids, signature
+from .projects import (
+    combine,
+    evidence,
+    find_relaunch,
+    load_tuning,
+    project_of,
+    raise_failing,
+    relaunched_ids,
+    signature,
+)
+from .shared import pooled, write_own
 from .subagents import LOG_FILE as SUBAGENT_LOG
 from .subagents import append as append_subagent
 from .subagents import finalize as finalize_subagents
@@ -226,17 +236,20 @@ def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], updated: dic
 
 def _tune(event: dict[str, Any]) -> list[str]:
     """Raise the start cells in force that keep failing in the session's project (`projects.raise_failing`), on
-    the evidence since the project's last reset or applied change, and return one line per change; nothing is
-    ever lowered here.
+    the evidence since the project's last reset or applied change (this machine's, plus the other installations'
+    counts when the repository shares them), write this installation's shared counts, and return one line per
+    change; nothing is ever lowered here.
     """
     project = project_of(str(event.get("cwd") or "") or None)
     if not project or os.environ.get(HOOK_LOG_ENV, "1") == "0":
         return []
     try:
         tuning = load_tuning(project)
-        ev = evidence(project, load_subagents(home() / SUBAGENT_LOG), relaunched_ids(home() / "hook.jsonl"),
-                      tuning.get("since"))
-        changes = raise_failing(project, ev, start_in_force(tuning))
+        records = load_subagents(home() / SUBAGENT_LOG)
+        mine = evidence(project, records, relaunched_ids(home() / "hook.jsonl"), tuning.get("since"))
+        changes = raise_failing(project, combine(mine, pooled(project, tuning.get("since"))[0]),
+                                start_in_force(tuning))
+        write_own(project, records, home() / "hook.jsonl")  # only in a repository that shares, closed weeks only
     except Exception as exc:  # noqa: BLE001 - tuning is a side task: it must never cost the session its context
         sys.stderr.write(f"router-hook: tuning skipped: {type(exc).__name__}: {exc}\n")
         return []

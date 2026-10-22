@@ -41,6 +41,7 @@ ALIKE = 0.6  # share of matching signature slots from which two prompts are the 
 RELAUNCH_WINDOW = timedelta(minutes=30)  # a relaunch comes soon after the first one finished
 MIN_N, MIN_FAILS, RAISE_RATE = 6, 2, 0.30
 DOWN_N = 10
+WINDOW = timedelta(weeks=13)  # evidence older than this says little about the models of today
 LOWER_SAVING = 0.20  # a proposed cheaper start must cost at least this much less, unless it is the cell raised from
 PROJECTS_DIR = "projects"
 SALT_FILE = "signature.salt"
@@ -167,9 +168,9 @@ def relaunched_ids(decision_log: Path) -> set[str]:
 def evidence(project: str, records: list[dict[str, Any]], relaunched: set[str],
              since: str | None = None) -> dict[tuple[str, str, str], dict[str, int]]:
     """Count, per (kind, risk, start cell) in `project`, the subagents whose model and effort the router chose
-    (`router_chose`), since `since` when given, and how many of them were relaunched higher.
+    (`router_chose`) in the last WINDOW and since `since` when given, and how many of them were relaunched higher.
     """
-    start = _when(since)
+    start = max(m for m in (_when(since), datetime.now(UTC) - WINDOW) if m is not None)
     out: dict[tuple[str, str, str], dict[str, int]] = {}
     for r in records:
         if r.get("project") != project or not r.get("routed") or not r.get("router_chose"):
@@ -177,11 +178,22 @@ def evidence(project: str, records: list[dict[str, Any]], relaunched: set[str],
         if not r.get("kind") or not r.get("risk"):
             continue
         moment = _when(r.get("at"))
-        if start is not None and (moment is None or moment <= start):  # what happened by then was already weighed
+        if moment is None or moment <= start:  # weighed already, or too old to say much about today's models
             continue
         e = out.setdefault((str(r["kind"]), str(r["risk"]), str(r["routed"])), {"n": 0, "fails": 0})
         e["n"] += 1
         e["fails"] += str(r.get("agent_id")) in relaunched
+    return out
+
+
+def combine(*sources: dict[tuple[str, str, str], dict[str, int]]) -> dict[tuple[str, str, str], dict[str, int]]:
+    """Add up evidence from several sources (this machine's, the repository's shared counts)."""
+    out: dict[tuple[str, str, str], dict[str, int]] = {}
+    for source in sources:
+        for key, e in source.items():
+            total = out.setdefault(key, {"n": 0, "fails": 0})
+            total["n"] += e["n"]
+            total["fails"] += e["fails"]
     return out
 
 

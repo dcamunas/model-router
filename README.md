@@ -263,23 +263,44 @@ works on three things, all of them on Claude models:
   tokens are a lower bound (a transcript keeps the usage taken when each message began), so the cost
   shown is a floor, and almost all of it is context anyway.
 
-- **Learning per project.** Each measurement carries its project (the git root) and a signature of
-  its prompt: sixteen numbers, no text. When Claude launches a task like one that finished a little
-  before, higher (a bigger model, more effort, or the general agent after the reader), the first one
-  is counted as a fail. A start cell relaunched higher in 2 of 6 launches or more (30 % at least)
-  starts one step up in that project, on its own, at the next session start, and Claude Code says so.
-  A cheaper start is only proposed, after 10 launches with no relaunch, and you apply it. The risk
-  floors hold, and the tuning lives in `~/.model-router/projects/`, never in the repository.
+- **Learning per project.** Each measurement carries its project (the git repository) and a
+  signature of its prompt: sixteen salted numbers, no text. When Claude relaunches the same task (same
+  kind and risk, an alike prompt, same session, within 30 minutes) on a bigger model or with more
+  effort, the first launch counts as a fail. Moving from the read-only agent to the general one does
+  not: the model was not the problem. Only launches where the router chose both model and effort
+  count, from the last 13 weeks. If the cell a kind and risk starts on fails in 2 of 6 launches or
+  more (30 % at least), it starts one step up in that project from the next session, and Claude Code
+  says so. Going back down is only proposed, after 10 launches without a fail, to the cell it was
+  raised from or to one at least 20 % cheaper, and you apply it. The risk floors always hold. The
+  tuning lives in `~/.model-router/projects/`; `--reset` or `--apply` restart the count, so what was
+  already weighed does not move it again.
+
+- **Shared through the repository (optional).** One person's numbers grow slowly. A team can pool them:
+  `router project --share` creates `.claude/model-router/` in the repo, and from then on every
+  installation keeps one small file there, to commit with the rest:
+
+  ```json
+  {"v":1,"weeks":{"2026-W42":{"review|high|opus/medium":[12,1]}}}
+  ```
+
+  Launches and fails per closed week, kind, risk and start cell. No prompts, signatures, paths, names,
+  costs or times. The file name is a salted hash, and one file per installation means nobody edits
+  anyone else's. Each installation adds the others' files to its own log, never its own file (that
+  would count it twice), with the same rules: weeks before a reset do not count, nor weeks beyond the
+  13. The file changes at most once a week. Git still says who committed each file, so weekly counts
+  per person are visible to anyone who looks.
 
 ```bash
 router stats                 # ... then "Claude Code subagents, measured from their transcripts"
 router project               # this repo: routed subagents, relaunches, tuning in force, cheaper starts proposed
 router project --apply       # apply the proposed cheaper starts; --reset removes the project's tuning
+router project --share       # pool counts with the team through .claude/model-router/ in the repo
 router config --lean off     # keep every subagent on the agent Claude chose
 ```
 
-With personal use the numbers grow slowly: six launches of one kind on one start cell in one project
-before anything moves. That is on purpose; a tuning built on two runs would be noise.
+Alone, the numbers grow slowly: six launches of one kind on one start cell in one project before
+anything moves. That is on purpose; a tuning built on two runs would be noise. Shared, they grow with
+the team.
 
 `SessionStart` tells Claude the hook exists and what to declare. The skill `router` covers what a
 hook cannot do: verify a subagent's result, escalate, and send text-only subtasks through `router
@@ -382,6 +403,8 @@ the numbers to pick a judge with, instead of the error rates the simulation assu
   it; every measurement goes to `~/.model-router/subagents.jsonl` with numbers, that hash, a
   signature of sixteen numbers (no text) and the project's path, read from the transcript Claude Code
   already keeps on your disk. A project's tuning goes to `~/.model-router/projects/`.
+- In a repository that shares counts, the hook writes one file to `.claude/model-router/` with the
+  counts above and nothing else. It leaves your machine only when you commit and push it.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
   or your Claude Code account, and to nobody else. (The tribunal plugin also sends a reviewed change
   to Codex; its README says what goes.)

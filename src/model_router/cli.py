@@ -509,8 +509,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:
 
 
 def _cmd_project(args: argparse.Namespace) -> int:
-    from . import projects
-    from .hook import start_in_force
+    from . import projects, shared
 
     project = projects.project_of(str((args.path or Path.cwd()).expanduser()))
     if project is None:
@@ -521,16 +520,36 @@ def _cmd_project(args: argparse.Namespace) -> int:
         return 0
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)
+    records = load_subagents(home() / SUBAGENT_LOG)
+    if args.share:
+        shared.shared_dir(project).mkdir(parents=True, exist_ok=True)
+        written = shared.write_own(project, records, home() / "hook.jsonl")
+        print(f"{shared.shared_dir(project)}: shared counts on; commit this directory with the repository"
+              + (f" (wrote {written.name})" if written else " (nothing to write until a week with routed subagents closes)"))
     tuning = projects.load_tuning(project)
-    ev = projects.evidence(project, load_subagents(home() / SUBAGENT_LOG), projects.relaunched_ids(home() / "hook.jsonl"),
-                           tuning.get("since"))
+    mine = projects.evidence(project, records, projects.relaunched_ids(home() / "hook.jsonl"), tuning.get("since"))
+    others, files = shared.pooled(project, tuning.get("since"))
+    ev = projects.combine(mine, others)
     print(f"project {project}" + (f" (evidence since {tuning['since'][:16]})" if tuning.get("since") else ""))
+    if shared.sharing(project):
+        print(f"shared counts: on, {files} other installation(s) with evidence in {shared.shared_dir(project)}")
     if not ev:
         print("no subagent routed here yet with model and effort both chosen by the router")
     else:
-        rows = [[kind, risk, cell, e["n"], e["fails"]] for (kind, risk, cell), e in sorted(ev.items())]
+        rows = [[kind, risk, cell, e["n"], e["fails"], others.get((kind, risk, cell), {}).get("n", 0)]
+                for (kind, risk, cell), e in sorted(ev.items())]
         print("\nsubagents the router routed here (relaunched = launched again higher, same kind and risk: a fail)")
-        print(table(["kind", "risk", "start cell", "n", "relaunched"], rows))
+        print(table(["kind", "risk", "start cell", "n", "relaunched", "n from others"], rows))
+    _show_tuning(project, tuning, ev, apply=args.apply)
+    return 0
+
+
+def _show_tuning(project: str, tuning: dict[str, Any], ev: dict[tuple[str, str, str], dict[str, int]], *,
+                 apply: bool) -> None:
+    """Print a project's tuning in force, its last changes and the cheaper starts the evidence supports."""
+    from . import projects
+    from .hook import start_in_force
+
     tuned = [[kind, risk, e["cell"], e["base"]] for kind, row in sorted(tuning.get("start", {}).items())
              for risk, e in sorted(row.items())]
     if tuned:
@@ -544,11 +563,10 @@ def _cmd_project(args: argparse.Namespace) -> int:
         print(f"\ncheaper starts the evidence supports ({projects.DOWN_N}+ launches, none relaunched); not applied:")
         for c in proposals:
             print(f"  {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, {c['n']} launches")
-        if args.apply:
+        if apply:
             print(f"applied: {projects.apply(project, proposals)}")
         else:
             print("`router project --apply` applies them; raising a failing start happens on its own at session start")
-    return 0
 
 
 def _cmd_db(args: argparse.Namespace) -> int:
@@ -944,6 +962,8 @@ def build_parser() -> argparse.ArgumentParser:
     spj.add_argument("path", nargs="?", type=Path, help="a directory in the project (default: the current one)")
     spj.add_argument("--apply", action="store_true", help="apply the proposed cheaper starts")
     spj.add_argument("--reset", action="store_true", help="remove this project's tuning")
+    spj.add_argument("--share", action="store_true", help="share counts through the repository: creates "
+                     ".claude/model-router/ and writes this installation's file there, to commit")
     spj.set_defaults(func=_cmd_project)
 
     sg = sub.add_parser("config", help="show or set the profile for `router run`, the available models, the judge "
