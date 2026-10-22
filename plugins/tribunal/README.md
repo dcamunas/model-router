@@ -23,12 +23,14 @@ ChatGPT account.
 
 ```bash
 claude plugin marketplace add dcamunas/model-router
-claude plugin install model-router@dcamunas      # the tribunal runs from its environment
+claude plugin install model-router@dcamunas    # the tribunal runs from its environment
 claude plugin install tribunal@dcamunas
-uv tool install git+https://github.com/dcamunas/model-router@v0.15.1   # the `router` and `tribunal` commands
-tribunal config --codex-home ~/.codex           # your Codex home, signed in with ChatGPT; lists its models
-tribunal config --codex-models terra             # declare the Codex model that judges
+uv tool install git+https://github.com/dcamunas/model-router@v0.15.1
+tribunal config --codex-home ~/.codex          # your Codex home; lists its models
+tribunal config --codex-models terra           # the Codex model that judges
 ```
+
+The `uv tool install` line gives you the `router` and `tribunal` commands.
 
 From then on, a turn that changes code ends with one line, or with the findings sent back to Claude.
 With an Opus chat and Terra as the Codex model, the line reads
