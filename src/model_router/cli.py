@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
-from . import agents
+from . import agents, team
 from ._fmt import money, table
 from .calibration import (
     BUILTIN,
@@ -88,6 +88,7 @@ from .task import (
     json_checker,
     regex_checker,
 )
+from .team import PLUGIN_ID
 from .version import router_version
 
 if TYPE_CHECKING:
@@ -97,7 +98,6 @@ ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this m
 REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
 MIN_REASON_CHARS = 16
 DECLARED_ONLY_PROMPT = "(kind and risk declared, no text)"  # what `router plan` plans when it is given no text
-PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
 
 
 def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True, with_verify: bool = True) -> None:
@@ -533,6 +533,8 @@ def _cmd_project(args: argparse.Namespace) -> int:
     if project is None:
         raise SystemExit(f"not inside a git repository: {where}. The router learns per repository: run it inside "
                          "one, or pass a path inside one")
+    if args.team:
+        return _turn_on_for_team(project)
     if args.reset:
         projects.reset(project)
         print(f"tuning of {project} removed; evidence counts from now on, so nothing comes back on its own")
@@ -591,6 +593,18 @@ def _advice_text(advice: agents.Advice) -> str:
         return "keep"
     saving = "" if advice.saving is None else f", {money(abs(advice.saving))} {'less' if advice.saving >= 0 else 'more'}"
     return f"{advice.action} to {advice.to}{saving}"
+
+
+def _turn_on_for_team(project: str) -> int:
+    """Declare the marketplace and turn the plugin on in the repository's settings, and say what each person does."""
+    try:
+        changed = team.enable(project)
+    except team.SettingsError as exc:
+        raise SystemExit(str(exc)) from exc
+    settings = team.settings_path(project)
+    print(f"{settings}: " + ("; ".join(changed) if changed else "the plugin was already on for the team"))
+    print(f"Commit it. Each person, once, in this repository: `{team.INSTALL_COMMAND}` (needs uv), then a new session.")
+    return 0
 
 
 @dataclass(frozen=True)
@@ -686,6 +700,22 @@ def _print_floors(project: str) -> None:
         print(f"  not used: {problem}")
 
 
+def _team_check(profile: Path) -> tuple[Path | None, tuple[bool, str] | None]:
+    """Check a repository that turns the plugin on for its team (`router project --team`): is it installed in this
+    profile? Return the repository's settings when it is (the plugin is on through them), and the check.
+    """
+    from .projects import project_of
+
+    project = project_of(str(Path.cwd()))
+    if project is None or not team.enabled_in(project):
+        return None, None
+    settings = team.settings_path(project)
+    if team.installed_in(profile):
+        return settings, (True, f"plugin turned on for the team in {settings} and installed in {profile}")
+    return None, (False, f"plugin turned on for the team in {settings} but not installed in {profile}: run "
+                         f"`{team.INSTALL_COMMAND}` here once, then start a new session")
+
+
 def _floors_check() -> tuple[bool, str] | None:
     """Check the floors of the repository the command runs in, when it has a floors file."""
     from . import floors
@@ -766,9 +796,10 @@ def _hook_decisions(path: Path) -> list[list[Any]]:
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
 
-def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
+def _profile_checks(profile: Path, *, enabled_by: Path | None = None) -> list[tuple[bool, str]]:
     """Check how the router is wired into the Claude profile at `profile`: through the plugin (hooks and
-    skill come with it; its venv appears at the first session) or through `router install`.
+    skill come with it; its venv appears at the first session), turned on in the profile or by the repository's
+    settings at `enabled_by`, or through `router install`.
     """
     settings = profile / "settings.json"
     try:
@@ -779,9 +810,10 @@ def _profile_checks(profile: Path) -> list[tuple[bool, str]]:
         return [(False, f"{settings} is not a JSON object: Claude Code ignores the whole file")]
     checks: list[tuple[bool, str]] = []
     plugins = data.get("enabledPlugins")
-    if isinstance(plugins, dict) and plugins.get(PLUGIN_ID):
-        checks.append((True, f"plugin {PLUGIN_ID} enabled in {settings}: hooks, skill and the read-only agent "
-                             f"(model-router:reader) come from the plugin"))
+    on_here = isinstance(plugins, dict) and bool(plugins.get(PLUGIN_ID))
+    if on_here or enabled_by is not None:
+        checks.append((True, f"plugin {PLUGIN_ID} enabled in {settings if on_here else enabled_by}: hooks, skill and "
+                             "the read-only agent (model-router:reader) come from the plugin"))
         venv_hook = profile / "plugins" / "data" / PLUGIN_ID.replace("@", "-") / "venv" / "bin" / "router-hook"
         ready = venv_hook.exists()
         note = "" if ready else " (built when a session starts; needs uv)"
@@ -870,7 +902,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     if floors_check is not None:
         checks.append(floors_check)
     if profile is not None and profile.is_dir():
-        checks += _profile_checks(profile)
+        enabled_by, team_check = _team_check(profile)
+        if team_check is not None:
+            checks.append(team_check)
+        checks += _profile_checks(profile, enabled_by=enabled_by)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
     checks.append((True, f"state in {home()}: {ledger_n} tasks in the ledger, {hook_n} hook decisions"))
@@ -1130,6 +1165,8 @@ def build_parser() -> argparse.ArgumentParser:
     spj.add_argument("--apply", action="store_true", help="apply the proposed changes (cheaper starts, raises on the "
                      "team's counts alone)")
     spj.add_argument("--reset", action="store_true", help="remove this project's tuning")
+    spj.add_argument("--team", action="store_true", help="turn the plugin on for everyone in this repository: writes "
+                     "the marketplace and the plugin into .claude/settings.json, to commit")
     spj.add_argument("--share", action="store_true", help="share counts through the repository: creates "
                      ".claude/model-router/, to commit; each installation adds one small file per week there")
     spj.set_defaults(func=_cmd_project)
