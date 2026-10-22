@@ -142,7 +142,9 @@ the effort and the agent each one needs, and a measurement of what each one real
 
 ### Removed
 
-The declarations of such models, their doctor checks, and the judges and workers on them are gone; a model list or a judge setting from an older version that names one no longer stops the router or the hook.
+- Models of other companies. The router works with Claude models only: their declarations, their doctor
+  checks, and the judges and workers on them are gone. A model list or a judge setting from an older version
+  that names one no longer stops the router or the hook.
 
 ## [0.13.0] - 2026-10-22
 
@@ -166,7 +168,14 @@ Everything in this version left the router in 0.16.0 and is recorded where it we
 
 ### Changed
 
-The light judge never goes more than one tier down: a Fable worker is judged by opus/low, and when the only other model is the full judge's the worker's own cell, effort capped, takes the second seat rather than a second effort of the judge's model. Measured on a private eval of 28 real tasks: Haiku and Sonnet passed their own first attempts on 89 % and 93 %; an Opus judge passed 64 % and 68 % of the same answers, with word limits broken, formats ignored and facts invented among the reasons. The bench estimate prices the judges the plan names instead of a constant per mode, and `router calibrate` skips `router judge` records, whose worker cost is not this router's.
+- `light` verification (the default at high risk) is no longer the worker's own cell in a fresh context: it is
+  the nearest other model at low effort, the tier above before the one below (haiku is judged by sonnet/low,
+  sonnet by opus/low, opus by fable/low, fable by opus/low). It never goes more than one tier down; when the
+  only other model is the full judge's, the worker's own cell, effort capped, takes the seat. Measured on a
+  private eval of 28 real tasks: Haiku and Sonnet passed their own first attempts on 89 % and 93 %; an Opus
+  judge passed 64 % and 68 % of the same answers, with word limits broken, formats ignored and facts invented
+  among the reasons. The bench estimate prices the judges the plan names instead of a constant per mode, and
+  `router calibrate` skips `router judge` records, whose worker cost is not this router's.
 
 - `router calibrate` counts only independent verdicts as evidence: a checker, or a judge on a model other than the worker's that backed the final verdict. A verdict the worker's own model alone gave, as `light` produced until now and as a one-model installation still does, is counted in the report's "left out" figure and moves nothing. The calibration file carries that count (`self_judged`); older files load with 0. On the private eval, the proposal went from 21 moves to 15, and the moves that rested on a cheap cell passing its own reviews and analyses are gone.
 
@@ -184,7 +193,7 @@ The light judge never goes more than one tier down: a Fable worker is judged by 
 
 ### Changed
 
-- `--models` (install and config) lists the models that may do the work, declared ones included; `all` means every Anthropic model.
+- `--models` (install and config) lists the models that may do the work; `all` means every Claude model.
 
 ## [0.9.0] - 2026-10-20
 
