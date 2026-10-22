@@ -83,7 +83,9 @@ SESSION_CONTEXT = (
     "agent says it cannot do a task, relaunch it with `access: write`. Do not set `model` yourself unless the user asks or the "
     "task is high risk. A critical review goes to a model other than the one serving this chat. Text-only "
     "subtasks with no tools (classify, extract, summarise, draft) are cheaper through `router run \"...\"` than "
-    "as a subagent. The `router` skill has the rest: verifying and escalating by risk."
+    "as a subagent. Do not launch a subagent for what you would do in two or three steps, or for work that depends "
+    "on this conversation and does not fit in a short brief: a subagent costs the brief and the reading of its answer. "
+    "The `router` skill has the rest: verifying and escalating by risk."
 )
 
 

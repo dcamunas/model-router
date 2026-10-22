@@ -50,7 +50,8 @@ def test_only_model_is_set_when_claude_chose_an_effort():
 
 def test_session_start_adds_context_and_other_events_are_silent():
     out = routed({"hook_event_name": "SessionStart", "source": "startup"})
-    assert "Model router active" in out["hookSpecificOutput"]["additionalContext"]
+    context = out["hookSpecificOutput"]["additionalContext"]
+    assert "Model router active" in context and "two or three steps" in context and len(context) < 1600
     assert handle({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}) is None
     assert handle({"hook_event_name": "PostToolUse", "tool_name": "Agent"}) is None
 

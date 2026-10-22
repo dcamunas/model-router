@@ -27,6 +27,17 @@ higher there (`router project` shows it). Keep the declaration line the same whe
 from `access`: a relaunch counts only for the same kind and risk.
 What this skill adds is the rest of the loop: verify by risk and escalate on failure.
 
+## When not to launch a subagent
+
+A subagent costs two steps before it does anything: writing the brief and reading its answer, and it
+starts with none of this conversation. Do the work yourself when:
+
+- you would do it in two or three steps;
+- it depends on what was said here and does not fit in a brief of a few lines.
+
+Delegate what makes you read a lot (sweeps, logs, long files) and returns a conclusion, and work that
+runs while you do something else.
+
 ## Plain text: `router run`, not a subagent
 
 A Claude Code subagent drags the whole session prompt along (tools, MCP, skills: about 100K tokens).
