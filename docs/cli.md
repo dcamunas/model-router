@@ -58,6 +58,9 @@ router calibrate --classifier tasks.yaml
 # Advice for the agents whose model and effort are fixed by hand, in this repository
 router agents
 
+# Models over their usage limit and the exact moment each resets; --check asks now (a refused question is free)
+router limits --check fable
+
 # What has happened so far and what it has learned
 router stats
 

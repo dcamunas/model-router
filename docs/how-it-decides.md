@@ -61,6 +61,8 @@ A programmatic checker, when the task has one, always runs first and is final wh
 - The risk floors (`high` at `sonnet/low` or above, `critical` at `opus/medium` or above) hold over
   the table, the feedback and any per-repository tuning. A repository can also raise the risk itself
   from what a brief says ([risk floors per repository](claude-code.md#risk-floors-per-repository)).
+- A model over its usage limit is not available until the exact reset
+  ([usage limits](claude-code.md#usage-limits)): its cells go to the next model, as for a model you lack.
 - No cell the router picks on its own is at `max` effort: a `max` cell from a calibration or a tuning
   runs at `xhigh`, and the plan says so.
 

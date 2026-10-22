@@ -28,6 +28,7 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from . import limits
 from .paths import MODELS_ENV, read_config
 
 PRICES_AS_OF = "2026-10-06"
@@ -195,16 +196,23 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
     return [m for m in MODELS if m in ids]
 
 
-def available_models() -> list[str]:
+def available_models(*, with_limited: bool = False) -> list[str]:
     """Return the Claude models this installation may route work to, in catalogue order. The MODEL_ROUTER_MODELS
     variable wins, then `models` in config.json (`router config --models`); with neither, every Claude model in
     the catalogue. Use it when a plan or an account lacks a model (no Fable, say). A name the catalogue does not
-    know, or a registered model's, is ignored: the router routes to Claude only.
+    know, or a registered model's, is ignored: the router routes to Claude only. A model whose usage limit is spent
+    (`limits.py`) is left out until the exact moment its window resets, unless `with_limited`; when every model
+    is out, none is left out, since there is nowhere else to go.
     """
     claude = [m for m, spec in MODELS.items() if spec.claude]
     known = [n for n in listed_models() if n in SHORT_TO_ID or n in MODELS]
     ids = [m for m in parse_models(known) if MODELS[m].claude] if known else []
-    return ids or claude  # nothing listed, or nothing left: every Claude model
+    chosen = ids or claude  # nothing listed, or nothing left: every Claude model
+    if with_limited:
+        return chosen
+    limited = set(limits.active())
+    usable = [m for m in chosen if MODELS[m].short not in limited]
+    return usable or chosen
 
 
 def listed_models() -> list[str]:

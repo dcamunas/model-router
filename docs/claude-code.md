@@ -64,6 +64,26 @@ The router learns, per git repository, where each kind of task should start.
 Alone, the numbers grow slowly: six launches of one kind on one start cell in one repository before
 anything moves. That is on purpose; a tuning built on two runs would be noise.
 
+## Usage limits
+
+A Claude subscription caps usage in windows: five hours, seven days, and a separate weekly allowance for
+some models, Fable among them. When one is spent, every call to that model is refused until the window
+resets. The router finds out from the failure and then knows the exact moment:
+
+- **Detected.** A subagent that dies on a limit fires `StopFailure` with `error: rate_limit` (it never
+  reaches `SubagentStop`), and `router run` gets the same 429 back.
+- **Exact reset.** The router then asks that model for one word through `claude -p --output-format
+  stream-json`, whose `rate_limit_event` carries the window and its `resetsAt`. A refused question costs
+  nothing. What it learns goes to `~/.model-router/limits.json`.
+- **Routed around.** Until that moment the model is left out of the available ones: the hook, plans,
+  judges and `router run` pick the next model, and each launch's notice says until when. At the reset it
+  is back with no other step. A launch that names the limited model with `model` is refused, with the
+  time, so it does not fail later.
+- **Told.** The session context names the limited models, `router doctor` lists them, and `router limits`
+  shows each one's reset with the account's windows; `router limits --check` asks now.
+- **Account-wide.** When the five-hour or seven-day window is spent, every model is refused: there is
+  nowhere to route to, and the router says so.
+
 ## Risk floors per repository
 
 The risk is what Claude declares, and Claude can forget that in one repository a migration or anything
@@ -150,6 +170,7 @@ router project --apply       # apply the proposed changes; --reset removes the p
 router project --share       # pool counts with the team through .claude/model-router/ in the repo
 router project --team        # turn the plugin on for everyone in the repo (Install, "In a team repository")
 router agents                # advice for the agents fixed by hand in this repo
+router limits                # models over their usage limit, until the exact reset; --check asks now
 router config --lean off     # keep every subagent on the agent Claude chose
 ```
 

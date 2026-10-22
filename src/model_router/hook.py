@@ -43,7 +43,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any  # Any: hook events and log records are decoded JSON
 
-from . import clock, floors
+from . import clock, floors, limits
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
@@ -142,7 +142,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     feedback = FeedbackStore(home() / "feedback.json")
     project = project_of(cwd)
     raised = floors.apply(cls.risk, floors.head(prompt, description), floors=floors.load(project))
-    risk, floor = raised.risk, raised.rule
+    risk = raised.risk
     tuning = load_tuning(project)
     try:
         policy = Policy(cells=claude, feedback=feedback, tuning=tuning)
@@ -168,11 +168,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     }
     if cross:
         record["cross"] = cross
-    if floor is not None:
-        record["floor"] = f"{cls.risk} -> {risk}: {floor.label}"
-        record["floor_match"] = floor.match
-    if raised.unsearched:
-        record["floor_unsearched"] = list(raised.unsearched)
+    record.update(_notes(cls.risk, raised))
     lean = lean_agent(cwd)
     safe, why = read_only(prompt, description)
     if lean is not None and safe:
@@ -181,6 +177,20 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
         record["agent"] = lean
     record["lean"] = why if lean is not None else "no lean agent installed or lean off"
     return updated, record
+
+
+def _notes(declared: str, raised: floors.Raised) -> dict[str, Any]:
+    """Return what a decision record adds about the repository's floors and the models over their usage limit."""
+    notes: dict[str, Any] = {}
+    if raised.rule is not None:
+        notes["floor"] = f"{declared} -> {raised.risk}: {raised.rule.label}"
+        notes["floor_match"] = raised.rule.match
+    if raised.unsearched:
+        notes["floor_unsearched"] = list(raised.unsearched)
+    held = {name: limit for name, limit in limits.active().items() if name != limits.ALL_MODELS}
+    if held:
+        notes["limited"] = "; ".join(f"{name} limited until {limit.when()}" for name, limit in sorted(held.items()))
+    return notes
 
 
 def _cross_review(kind: str, risk: str, cell: Cell, *, chat_model: str | None, policy: Policy) -> tuple[Cell, str | None]:
@@ -311,6 +321,8 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
     if name == "SubagentStop":
         _measure(event)
         return None
+    if name == "StopFailure":
+        return _stop_failure(event)
     if name != "PreToolUse" or event.get("tool_name") != "Agent":
         return None
     return _pre_agent(event)
@@ -322,7 +334,8 @@ def _session_start(event: dict[str, Any]) -> dict[str, Any]:
     """
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)  # the last session's subagents, now that their transcripts settled
-    out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
+    context = SESSION_CONTEXT + _limits_context()
+    out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
     raised = _tune(event)
     _share(event)
     if raised and os.environ.get(HOOK_QUIET_ENV) != "1":
@@ -330,9 +343,57 @@ def _session_start(event: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _limits_context() -> str:
+    """Return a sentence for the session context on the models the account cannot use now, or nothing."""
+    held = limits.active()
+    if not held:
+        return ""
+    if limits.ALL_MODELS in held:
+        return f" The account's usage limit is spent until {held[limits.ALL_MODELS].when()}: every model is refused."
+    names = "; ".join(f"{name} until {limit.when()}" for name, limit in sorted(held.items()))
+    return (f" Usage limits: {names}. The router routes around them; do not set `model` to one of them, the launch "
+            "would be refused.")
+
+
+def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
+    """When a turn or a subagent dies on a usage limit, find which model, ask it for its exact reset, and keep it, so
+    the next launches go elsewhere until then.
+    """
+    if "rate_limit" not in str(event.get("error") or ""):
+        return None
+    name = limits.model_in_failure(str(event.get("last_assistant_message") or event.get("error_details") or ""))
+    if name is None:
+        return None
+    model_id = SHORT_TO_ID.get("haiku" if name == limits.ALL_MODELS else name)
+    if model_id is None:
+        return None
+    limit = limits.record(name, limits.probe(model_id))
+    if limit is None or os.environ.get(HOOK_QUIET_ENV) == "1":
+        return None
+    who = "every model" if limit.model == limits.ALL_MODELS else limit.model
+    return {"systemMessage": f"router: {who} limited until {limit.when()} ({limit.window}); subagents go to the next "
+                             "model until then"}
+
+
+def _limited_explicit(tool_input: dict[str, Any]) -> dict[str, Any] | None:
+    """Refuse a launch that names a model whose usage limit is spent: it would fail. Say until when, and what to do."""
+    wanted = str(tool_input.get("model") or "")
+    held = limits.active()
+    limit = held.get(wanted) if wanted else None
+    if limit is None:
+        return None
+    reason = (f"{wanted} is over its usage limit until {limit.when()}. Launch again without `model` (the router "
+              "picks an available one) or with another model.")
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
 def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
     """Route one Agent launch, note whether it relaunches an earlier subagent higher, and log the decision."""
     tool_input = event.get("tool_input") or {}
+    refused = _limited_explicit(tool_input)
+    if refused is not None:
+        return refused
     updated, record = decide(tool_input, main_model(event.get("transcript_path")),
                              cwd=str(event.get("cwd") or "") or None)
     try:
@@ -353,7 +414,8 @@ def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": updated}}
     if os.environ.get(HOOK_QUIET_ENV) != "1":
         out["systemMessage"] = f"router: {record['cell']} ({record['kind']}/{record['risk']})" + (
-            " · cross-checked against the chat" if record.get("cross") else "")
+            " · cross-checked against the chat" if record.get("cross") else "") + (
+            f" · {record['limited']}" if record.get("limited") else "")
     return out
 
 

@@ -2,6 +2,19 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.18.0] - 2026-10-22
+
+### Added
+
+- Usage limits. A subagent that dies on a spent limit fires `StopFailure`, now hooked, and `router run` gets
+  the same 429: the router asks that model for one word through `claude -p --output-format stream-json`, whose
+  rate-limit event gives the exact reset (a refused question costs nothing), and keeps it in
+  `~/.model-router/limits.json`. Until that moment the model is out of the available ones, so the hook, plans,
+  judges and `router run` pick the next one, and it is back at the reset with no other step. A launch that names
+  the limited model is refused with the time. The session context, each launch's notice, the plan's reasons and
+  `router doctor` say until when; `router limits` shows every limit and the account's windows, and `--check`
+  asks now. `router install` adds the StopFailure hook.
+
 ## [0.17.0] - 2026-10-22
 
 What a repository with a team needs to run the router well.

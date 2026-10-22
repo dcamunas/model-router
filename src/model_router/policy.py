@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol  # Any: a tuning file's decoded JSON (`projects.load_tuning`)
 
+from . import limits
 from .calibration import ACTIVE, Calibration, active_calibration_name, load_calibration
 from .catalog import (
     AUTO_EFFORTS,
@@ -253,7 +254,9 @@ class Policy:
         """
         near = worker_cell(cell, self.models)
         if near != cell:
-            rationale.append(f"{cell.spec.short} not available: {cell} -> {near}")
+            held = limits.active().get(cell.spec.short)
+            why = f"over its usage limit until {held.when()}" if held else "not available"
+            rationale.append(f"{cell.spec.short} {why}: {cell} -> {near}")
         if near.effort not in AUTO_EFFORTS:
             capped = _at(near.model, AUTO_EFFORTS[-1])
             rationale.append(f"{near}: the router never chooses {near.effort} effort -> {capped}")

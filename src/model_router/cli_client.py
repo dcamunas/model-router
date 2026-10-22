@@ -21,6 +21,7 @@ CLAUDECODE is dropped from the environment so the CLI does not think it is neste
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -32,7 +33,8 @@ from typing import Any  # Any: the JSON that `claude -p` prints
 
 from pydantic import BaseModel, ValidationError
 
-from .catalog import Cell, Usage
+from . import limits
+from .catalog import SHORT_TO_ID, Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
 from .paths import CHILD_ENV, CONFIG_DIR_ENV, config_path, read_config
 
@@ -40,6 +42,7 @@ DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what
 NO_MCP = '{"mcpServers":{}}'
 NOT_LOGGED_IN = "not logged in"
 ERROR_DETAIL_CHARS = 300  # how much of the CLI's stderr/stdout an error message carries
+RATE_LIMITED = 429
 
 
 def resolve_profile() -> tuple[Path, str]:
@@ -143,6 +146,16 @@ class CliClient:
             raise ClientUnavailableError(f"claude -p exited with code {proc.returncode}: {detail}")
         return self.to_completion(data, cell, output_format, seconds)
 
+    def _note_limit(self, cell: Cell, text: str) -> None:
+        """Keep the usage limit a refused call hit, with its exact reset (`limits.py`), so the next plans skip that
+        model until then.
+        """
+        name = limits.model_in_failure(text)
+        if name is not None:
+            probe_model = cell.model if name != limits.ALL_MODELS else SHORT_TO_ID["haiku"]
+            with contextlib.suppress(OSError):
+                limits.record(name, limits.probe(probe_model, config_dir=self.config_dir, binary=self.binary))
+
     def to_completion(self, data: dict[str, Any], cell: Cell, output_format: type[BaseModel] | None,
                       seconds: float) -> Completion:
         text = str(data.get("result") or "")
@@ -150,6 +163,8 @@ class CliClient:
             if NOT_LOGGED_IN in text.lower():
                 raise ClientUnavailableError(
                     f"profile {self.config_dir} is not logged in: open claude with that profile and run /login")
+            if data.get("api_error_status") == RATE_LIMITED:
+                self._note_limit(cell, text)
             raise ClientUnavailableError(f"claude -p: {text[:ERROR_DETAIL_CHARS] or 'error without details'}")
         u = data.get("usage") or {}
         usage = Usage(

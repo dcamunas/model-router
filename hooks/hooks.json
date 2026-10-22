@@ -35,6 +35,18 @@
           }
         ]
       }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/router-hook.sh",
+            "timeout": 60,
+            "statusMessage": "router: reading the usage limit"
+          }
+        ]
+      }
     ]
   }
 }

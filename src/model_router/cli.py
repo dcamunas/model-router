@@ -566,6 +566,42 @@ def _cmd_project(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_limits(args: argparse.Namespace) -> int:
+    from . import limits
+    from .cli_client import resolve_config_dir
+
+    if args.check is not None:
+        names = args.check or sorted({"haiku", *[n for n in limits.active() if n != limits.ALL_MODELS]})
+        config_dir = resolve_config_dir()
+        for name in names:
+            spec = MODELS.get(SHORT_TO_ID.get(name, name))
+            if spec is None or not spec.claude:
+                raise SystemExit(f"unknown Claude model: {name}")
+            limit = limits.record(spec.short, limits.probe(spec.id, config_dir=config_dir))
+            print(f"{spec.short}: " + (f"limited until {limit.when()} ({limit.window})" if limit else "available"))
+    held = limits.active()
+    if held:
+        print(table(["model", "limited until", "window"],
+                    [["every model" if n == limits.ALL_MODELS else n, lim.when(), lim.window]
+                     for n, lim in sorted(held.items())]))
+    else:
+        print("no model is over its usage limit")
+    seen = limits.windows()
+    if seen:
+        rows = [[name, f"{float(w.get('utilization') or 0):.0%}", _local(w.get("resets_at"))]
+                for name, w in sorted(seen.items())]
+        print(f"\naccount windows (as of {_local(limits.checked())})")
+        print(table(["window", "used", "resets"], rows))
+    return 0
+
+
+def _local(moment: object) -> str:
+    from . import clock
+
+    parsed = clock.parse_moment(moment) if moment else None
+    return parsed.astimezone().strftime("%a %d/%m %H:%M %Z") if parsed else "?"
+
+
 def _cmd_agents(args: argparse.Namespace) -> int:
     from . import projects
 
@@ -721,6 +757,15 @@ def _team_check(profile: Path) -> tuple[Path | None, tuple[bool, str] | None]:
                          f"`{team.INSTALL_COMMAND}` here once, then start a new session")
 
 
+def _limits_checks() -> list[tuple[bool, str]]:
+    """Report the models over their usage limit and until when; informative, so never a failure."""
+    from . import limits
+
+    return [(True, f"usage limit: {'every model' if name == limits.ALL_MODELS else name} until {limit.when()} "
+                   f"({limit.window}); `router limits` for the windows")
+            for name, limit in sorted(limits.active().items())]
+
+
 def _floors_check() -> tuple[bool, str] | None:
     """Check the floors of the repository the command runs in, when it has a floors file."""
     from .projects import project_of
@@ -842,10 +887,13 @@ def _profile_checks(profile: Path, *, enabled_by: Path | None = None) -> list[tu
 
         fix = " (missing: the plugin or router install)"
         pre, start, stop = wired("PreToolUse", "Agent"), wired("SessionStart"), wired("SubagentStop")
+        failure = wired("StopFailure")
         checks.append((pre, f"hook PreToolUse(Agent) in {settings}" + ("" if pre else fix)))
         checks.append((start, f"hook SessionStart in {settings}" + ("" if start else fix)))
         checks.append((stop, f"hook SubagentStop (measures subagents) in {settings}"
                        + ("" if stop else " (missing: run `router install` again)")))
+        checks.append((failure, f"hook StopFailure (reads a spent usage limit and its reset) in {settings}"
+                       + ("" if failure else " (missing: run `router install` again)")))
         link = profile / "skills" / "router"
         checks.append((link.is_dir(), f"skill router: {link}" + ("" if link.is_dir() else fix)))
         agent = profile / "agents" / "router-reader.md"
@@ -902,6 +950,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     except ValueError as exc:  # UnknownModelError is one too
         checks.append((False, f"judge for full verification: {exc} (check {JUDGE_ENV} or `router config --judge`)"))
     checks.append(_calibration_check())
+    checks += _limits_checks()
     floors_check = _floors_check()
     if floors_check is not None:
         checks.append(floors_check)
@@ -1174,6 +1223,12 @@ def build_parser() -> argparse.ArgumentParser:
     spj.add_argument("--share", action="store_true", help="share counts through the repository: creates "
                      ".claude/model-router/, to commit; each installation adds one small file per week there")
     spj.set_defaults(func=_cmd_project)
+
+    sl = sub.add_parser("limits", help="the models over their usage limit and the exact moment each resets, and the "
+                                       "account's windows")
+    sl.add_argument("--check", nargs="*", metavar="MODEL", help="ask now: the models named (default: haiku, for the "
+                    "windows, and every model held). A refused question costs nothing; an allowed one is one tiny call")
+    sl.set_defaults(func=_cmd_limits)
 
     sa = sub.add_parser("agents", help="advice on the agents whose model and effort are fixed by hand, from what they "
                                        "spent and how often they were repeated in this project")

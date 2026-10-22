@@ -254,6 +254,7 @@ def test_doctor_reports_missing_hooks(tmp_path, monkeypatch, capsys):
     assert "FAIL   hook SubagentStop" in out and "FAIL   read-only agent router-reader" in out  # an older install
     data = json.loads((profile / "settings.json").read_text())
     data["hooks"]["SubagentStop"] = [{"hooks": [{"type": "command", "command": str(hook)}]}]
+    data["hooks"]["StopFailure"] = [{"hooks": [{"type": "command", "command": str(hook)}]}]
     (profile / "settings.json").write_text(json.dumps(data))
     (profile / "agents").mkdir()
     (profile / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\nmodel router")

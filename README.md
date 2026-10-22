@@ -45,12 +45,12 @@ The kind is one of `classify`, `extract`, `summarize`, `search`, `chat`, `write`
 ([what each means](docs/how-it-decides.md#by-risk-at-a-glance)).
 
 For the `router` command (stats, plans, text-only tasks) install the CLI too:
-`uv tool install git+https://github.com/dcamunas/model-router@v0.17.0`, then `router doctor`. Other
+`uv tool install git+https://github.com/dcamunas/model-router@v0.18.0`, then `router doctor`. Other
 setups are in [Install](docs/install.md).
 
 ## What you get
 
-- **[The right model and effort per subagent](docs/claude-code.md#model-and-effort)**, from its kind and risk.
+- **[The right model and effort per subagent](docs/claude-code.md#model-and-effort)**, from its kind and risk, around spent limits.
 - **[Cheaper reading subagents](docs/claude-code.md#the-read-only-agent)**: 70 % less context cost in one measured review.
 - **[What each subagent really cost](docs/claude-code.md#measurement)**: turns, tokens and peak context.
 - **[Starts that learn per repository](docs/claude-code.md#learning-per-repository)**: up on their own, down by hand.
