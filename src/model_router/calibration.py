@@ -194,8 +194,8 @@ def load_calibration(name: str) -> Calibration:
 
 def _independent(attempt: dict[str, Any], worker: Cell) -> bool:
     """Say whether the verdict on `attempt` is evidence: a checker decided, or a judge on a model other than
-    `worker`'s backed the final verdict. A worker judging itself
-    in a fresh context passed a quarter of the answers an independent judge failed, so its lone verdict is not.
+    `worker`'s backed the final verdict. A worker judging itself in a fresh context passed a quarter of the
+    answers an independent judge failed, so its lone verdict is not.
     """
     if attempt.get("verdict_source") == "checker":
         return True
@@ -208,7 +208,7 @@ def _independent(attempt: dict[str, Any], worker: Cell) -> bool:
         label = str(vote.get("cell") or "")
         try:
             other = parse_cell(label).model != worker.model
-        except (UnknownModelError, ValueError):  # a judge no longer declared: its name still says whose it was
+        except (UnknownModelError, ValueError):  # a judge the catalogue no longer knows: its name still says whose it was
             other = bool(label) and label.split("/")[0] != worker.spec.short
         if other and vote.get("passed") is final:
             return True

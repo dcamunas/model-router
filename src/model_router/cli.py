@@ -859,7 +859,7 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
     print(table(["cell", "tier", "capability*", "ref. cost", "$/M in", "$/M out"], rows))
     print(f"\n* assumed capability (catalog.py), not measured · ref. cost = 2,000 tokens in, 1,500 out at effort high"
           f" · prices {PRICES_AS_OF}")
-    off = [spec.short for m, spec in MODELS.items() if spec.provider == "anthropic" and m not in available_models()]
+    off = [spec.short for m, spec in MODELS.items() if spec.claude and m not in available_models()]
     if off:
         print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router config --models`)")
     return 0

@@ -146,7 +146,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     cell, cross = worker_cell(plan.start, [c.model for c in claude]), None
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
         other = policy.verifier_for(cell, "full")
-        if (other is not None and other.spec.provider == "anthropic" and other.claude_code()["model"] != chat_model
+        if (other is not None and other.spec.claude and other.claude_code()["model"] != chat_model
                 and other.tier >= cell.tier):
             cross = f"{cls.risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
             cell = other

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: ledger records are JSON lines
 
 from ._fmt import money, table
+from .task import VERIFY_MODES
 
 if TYPE_CHECKING:
     from .runner import TaskResult
@@ -166,11 +167,15 @@ class Summary:
 
 
 def summarize(task_records: list[dict[str, Any]]) -> Summary:
-    """Aggregate `task_records` (as `Ledger.tasks` returns them) into a Summary."""
+    """Aggregate `task_records` (as `Ledger.tasks` returns them) into a Summary. A record of a verification mode
+    this router does not have (written by another version, or by another program sharing the ledger) is left out.
+    """
     s = Summary()
     cells: dict[str, dict[str, float]] = defaultdict(lambda: {"attempts": 0, "judged": 0, "passes": 0, "cost": 0.0})
     kinds: dict[str, dict[str, float]] = defaultdict(lambda: {"tasks": 0, "solved": 0, "cost": 0.0})
     for t in task_records:
+        if t.get("verify") is not None and t.get("verify") not in VERIFY_MODES:
+            continue
         s.tasks += 1
         solved = t["status"] == "solved"
         s.solved += solved

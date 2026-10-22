@@ -543,3 +543,24 @@ def test_a_task_file_cannot_ask_for_a_verification_mode_the_router_lacks(home, c
     spec.write_text("tasks:\n  - id: w\n    kind: write\n    risk: critical\n    prompt: write it\n    verify: twice\n")
     with pytest.raises(SystemExit, match="not a router mode"):
         main(["bench", str(spec), "--dry-run"])
+
+
+def test_doctor_names_the_listed_models_it_does_not_know(home, monkeypatch, capsys):
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonet")
+    main(["doctor"])
+    out = capsys.readouterr().out
+    assert "available models: haiku" in out and "does not know, ignored: sonet" in out
+
+
+def test_stats_leaves_out_records_of_a_verification_mode_this_router_lacks(home, capsys):
+    from model_router.ledger import Ledger, summarize
+    from model_router.runner import Router
+    from model_router.task import Task
+
+    ledger = Ledger(home / "ledger.jsonl")
+    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [Reply(parsed=_verdict(True))]})
+    Router(client, ledger=ledger).run(Task(prompt="x", kind="write", risk="critical"))
+    foreign = {**ledger.tasks()[0], "task_id": "foreign", "verify": "twice"}
+    with (home / "ledger.jsonl").open("a") as handle:
+        handle.write(json.dumps({"type": "task", **foreign}) + "\n")
+    assert summarize(ledger.tasks()).tasks == 1

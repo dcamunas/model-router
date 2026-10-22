@@ -111,3 +111,24 @@ def test_profile_must_be_explicit(monkeypatch, tmp_path):
     assert resolve_config_dir() == tmp_path
     with pytest.raises(ClientUnavailableError, match="cannot find"):
         CliClient(binary="claude-does-not-exist")
+
+
+def test_every_session_the_router_starts_is_marked_as_its_child(tmp_path, monkeypatch):
+    import json
+    import os
+    import subprocess
+
+    from model_router.catalog import parse_cell
+    from model_router.cli_client import CliClient
+    from model_router.paths import CHILD_ENV
+
+    seen = {}
+
+    def fake_run(args, **kw):
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"result": "ok"}), stderr="")
+
+    monkeypatch.setattr("model_router.cli_client.shutil.which", lambda b: "/bin/claude")
+    monkeypatch.setattr("model_router.cli_client.subprocess.run", fake_run)
+    CliClient(config_dir=tmp_path).complete(parse_cell("haiku/low"), prompt="x")
+    assert seen[CHILD_ENV] == "1" and CHILD_ENV not in os.environ  # set for the child only

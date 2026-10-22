@@ -133,7 +133,7 @@ def test_critical_risk_gets_one_full_judge_and_high_risk_a_light_one():
     assert policy.plan(with_checker).verify == "full"
     assert policy.plan(Task(prompt="x", kind="analysis", risk="critical", verify="full")).verify == "full"
     with pytest.raises(ValueError, match="unknown verify mode"):
-        Task(prompt="x", kind="code", risk="low", verify="panel")
+        Task(prompt="x", kind="code", risk="low", verify="twice")
 
 
 def test_invalid_task_values_are_rejected():

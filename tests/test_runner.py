@@ -267,3 +267,17 @@ def test_scoreboard_counts_each_judge_s_verdicts_and_human_contradictions(tmp_pa
     assert board["fable/low"] == {"verdicts": 3, "passes": 2, "contradicted": 1}
     text = summarize(ledger.tasks()).text()
     assert "judges' scoreboard" in text and "fable/low" in text
+
+
+def test_ask_takes_another_prompt_system_and_role_for_a_seat_of_someone_else_s():
+    from model_router.verify import Verifier
+
+    client = FakeClient(judge={"*": [ok("the second judge was right")]})
+    verifier = Verifier(client, Router(client).policy)
+    task = Task(prompt="write the notice", kind="write", risk="critical")
+    result = verifier.ask(task, "the notice", parse_cell("sonnet/high"), prompt="<verdicts>both</verdicts>",
+                          system="You are the arbiter.", role="arbiter")
+    assert result.passed and result.source == "judge" and result.verdicts[0].role == "arbiter"
+    assert client.calls[0]["prompt"] == "<verdicts>both</verdicts>" and client.calls[0]["system"] == "You are the arbiter."
+    plain = verifier.ask(task, "the notice", parse_cell("sonnet/high"))
+    assert "<task>" in client.calls[1]["prompt"] and plain.verdicts[0].role == "judge"
