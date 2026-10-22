@@ -267,6 +267,32 @@ def load(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def load_recent(path: Path, max_bytes: int = 256_000) -> list[dict[str, Any]]:
+    """Read only the end of the subagent records (the last `max_bytes`, a few hundred records): what a relaunch can
+    point at, without reading months of history on every launch. A cut first line is skipped.
+    """
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - max_bytes))
+            chunk = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = chunk.splitlines()
+    if size > max_bytes and lines:
+        lines = lines[1:]
+    out = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
 def _text(content: Any) -> str:
     if isinstance(content, str):
         return content

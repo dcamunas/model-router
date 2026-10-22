@@ -134,3 +134,14 @@ def test_an_old_config_naming_another_provider_never_stops_the_router(tmp_path, 
     assert main(["plan", "review the payment code", "--risk", "high"]) == 0
     out = capsys.readouterr().out
     assert "judge setting cannot be used" in out and "opus/xhigh instead" in out
+
+
+def test_load_recent_reads_only_the_end_and_skips_a_cut_line(tmp_path):
+    from model_router.subagents import load_recent
+
+    log = tmp_path / "subagents.jsonl"
+    log.write_text("".join(json.dumps({"agent_id": f"a{i}", "pad": "x" * 50}) + "\n" for i in range(1000)))
+    recent = load_recent(log, max_bytes=2000)
+    assert recent and recent[-1]["agent_id"] == "a999" and len(recent) < 40
+    assert all("agent_id" in r for r in recent)  # the line cut in half at the start is not misread
+    assert load_recent(tmp_path / "missing.jsonl") == []

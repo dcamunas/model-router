@@ -41,7 +41,7 @@ from .projects import evidence, find_relaunch, load_tuning, project_of, raise_fa
 from .subagents import LOG_FILE as SUBAGENT_LOG
 from .subagents import append as append_subagent
 from .subagents import finalize as finalize_subagents
-from .subagents import find_decision, prompt_hash, read_transcript
+from .subagents import find_decision, load_recent, prompt_hash, read_transcript
 from .subagents import load as load_subagents
 from .subagents import record as subagent_record
 from .task import Task
@@ -216,7 +216,7 @@ def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], updated: dic
             if spec is not None:
                 cell = parse_cell(f"{spec.short}/{final.get('effort') or spec.default_effort}")
     agent = str(final.get("subagent_type") or "general-purpose")
-    found = find_relaunch(load_subagents(home() / SUBAGENT_LOG), event.get("session_id"), signature(prompt), cell, agent)
+    found = find_relaunch(load_recent(home() / SUBAGENT_LOG), event.get("session_id"), signature(prompt), cell, agent)
     return str(found["agent_id"]) if found and found.get("agent_id") else None
 
 
