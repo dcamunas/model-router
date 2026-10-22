@@ -2,6 +2,14 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.16.1] - 2026-10-22
+
+### Removed
+
+- The marketplace. The catalogue `dcamunas` is its own repository now,
+  [dcamunas/claude-plugins](https://github.com/dcamunas/claude-plugins); this one is the plugin and the
+  package. `claude plugin marketplace add dcamunas/claude-plugins` is the line that changes.
+
 ## [0.16.0] - 2026-10-22
 
 ### Removed

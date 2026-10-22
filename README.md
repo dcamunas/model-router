@@ -28,7 +28,7 @@ Claude models only. Status: experimental. The start table is an assumption until
 Needs Claude Code and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-claude plugin marketplace add dcamunas/model-router
+claude plugin marketplace add dcamunas/claude-plugins
 claude plugin install model-router@dcamunas
 ```
 
@@ -45,7 +45,7 @@ The kind is one of `classify`, `extract`, `summarize`, `search`, `chat`, `write`
 ([what each means](docs/how-it-decides.md#by-risk-at-a-glance)).
 
 For the `router` command (stats, plans, text-only tasks) install the CLI too:
-`uv tool install git+https://github.com/dcamunas/model-router@v0.16.0`, then `router doctor`. Other
+`uv tool install git+https://github.com/dcamunas/model-router@v0.16.1`, then `router doctor`. Other
 setups are in [Install](docs/install.md).
 
 ## What you get

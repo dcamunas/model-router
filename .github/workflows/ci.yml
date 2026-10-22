@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: plugin and marketplace manifests validate with the Claude Code CLI
+      - name: the plugin manifest validates with the Claude Code CLI
         run: |
           npm install -g @anthropic-ai/claude-code
           claude plugin validate . --strict

@@ -12,18 +12,18 @@ API key.
 Inside Claude Code, one line (2.1.275 or later):
 
 ```
-/plugin install model-router --marketplace dcamunas/model-router
+/plugin install model-router --marketplace dcamunas/claude-plugins
 ```
 
 Or from a terminal:
 
 ```bash
-claude plugin marketplace add dcamunas/model-router
+claude plugin marketplace add dcamunas/claude-plugins
 claude plugin install model-router@dcamunas
 ```
 
-The repository is both the marketplace (`dcamunas`) and the plugin (`model-router`). The first
-session takes a few seconds longer: the hook builds its own Python environment with `uv` in the
+The marketplace `dcamunas` lives at [dcamunas/claude-plugins](https://github.com/dcamunas/claude-plugins);
+this repository is the plugin. The first session takes a few seconds longer: the hook builds its own Python environment with `uv` in the
 plugin's data directory (`plugins/data/model-router-dcamunas/` inside the profile) and reuses it
 afterwards; with every new plugin version it rebuilds it on its own. `uv` has to be on the machine
 (`MODEL_ROUTER_UV=/path/to/uv` when it is not on the PATH). The only change to `settings.json` is
@@ -33,7 +33,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.16.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.16.1
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -45,7 +45,7 @@ the same hooks into the profile's `settings.json` and copies the skill and the r
 (as `router-reader`) into the profile.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.16.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.16.1
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor

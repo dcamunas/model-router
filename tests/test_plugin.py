@@ -23,12 +23,9 @@ def _version() -> str:
 VERSION = _version()
 
 
-def test_manifests_name_the_same_plugin_and_version_as_pyproject():
+def test_the_manifest_names_the_plugin_and_the_version_of_pyproject():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
-    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
     assert plugin["name"] == "model-router" and plugin["version"] == VERSION
-    entry = market["plugins"][0]
-    assert market["name"] == "dcamunas" and (entry["name"], entry["source"]) == ("model-router", ".")
     skills = ROOT / plugin["skills"]
     assert plugin["skills"].startswith("./") and (skills / "router" / "SKILL.md").is_file()
     hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
