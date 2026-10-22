@@ -12,6 +12,7 @@ import contextlib
 import fcntl
 import json
 import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any  # Any: config.json, decoded
@@ -71,3 +72,24 @@ def locked(log: Path) -> Iterator[None]:
     with log.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
+
+
+def read_regular(path: Path, max_bytes: int) -> bytes | None:
+    """Return the bytes of `path` when it is a regular file of at most `max_bytes`, reached without following a
+    link; None for anything else (missing, a link, a directory, a FIFO, too big, unreadable). For files that come
+    with a repository, which anyone may have written.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        raw = os.read(descriptor, max_bytes + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    return raw if len(raw) <= max_bytes else None
+

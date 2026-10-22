@@ -36,7 +36,7 @@ from typing import Any  # Any: decoded JSON (subagent records, shared files)
 
 from . import clock
 from .catalog import UnknownModelError, parse_cell
-from .paths import home, locked
+from .paths import home, locked, read_regular
 from .projects import Bucket, Counts, install_key, relaunched_ids, week_of, week_start, window_start
 from .task import KINDS, RISKS
 
@@ -232,19 +232,8 @@ def _plain(path: Path) -> bool:
 
 def _read(path: Path) -> list[tuple[Bucket, int, int]]:
     """Read one shared file: a regular file, not a link, at most MAX_FILE_BYTES; anything else gives nothing."""
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        return []
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            return []
-        raw = os.read(descriptor, MAX_FILE_BYTES + 1)
-    except OSError:
-        return []
-    finally:
-        os.close(descriptor)
-    if len(raw) > MAX_FILE_BYTES:
+    raw = read_regular(path, MAX_FILE_BYTES)
+    if raw is None:
         return []
     try:
         data = json.loads(raw.decode("utf-8"))

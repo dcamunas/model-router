@@ -136,6 +136,12 @@ def _task_from(
         cls = classify_llm(client, prompt) if (args.classify_llm and client is not None) else classify_rules(prompt)
         kind = kind or cls.kind
         risk = risk or cls.risk
+    from . import floors
+    from .projects import project_of
+
+    risk, floor = floors.apply(risk, floors.head(prompt), floors.load(project_of(str(Path.cwd()))))
+    if floor is not None:
+        print(f"risk raised to {risk} by this repository's floor: {floor.label}", file=sys.stderr)
     checker = None
     if args.check_regex:
         checker = regex_checker(args.check_regex)
@@ -539,6 +545,7 @@ def _cmd_project(args: argparse.Namespace) -> int:
     evidence = _project_evidence(project, records, since=tuning.get("since"))
     _print_evidence(project, evidence, since=tuning.get("since"))
     _print_tuning(project, tuning)
+    _print_floors(project)
     proposals = _proposals(project, tuning, evidence=evidence)
     _print_proposals(proposals)
     if proposals and args.apply:
@@ -621,6 +628,39 @@ def _print_tuning(project: str, tuning: dict[str, Any]) -> None:
               f"to {change['to']}, {change['relaunched']} of {change['n']} relaunched")
 
 
+def _print_floors(project: str) -> None:
+    """Print the repository's risk floors, how often each raised a subagent's risk here, and what is wrong with any."""
+    from . import floors
+
+    found = floors.load(project)
+    if found.path is None:
+        return
+    hits: dict[str, int] = {}
+    for record in _jsonl(home() / "hook.jsonl"):
+        if record.get("project") == project and record.get("floor"):
+            label = str(record["floor"]).split(": ", 1)[-1]
+            hits[label] = hits.get(label, 0) + 1
+    print(f"\nrisk floors ({found.path})")
+    if found.rules:
+        print(table(["at least", "when the brief says", "raised"],
+                    [[rule.risk, rule.label, hits.get(rule.label, 0)] for rule in found.rules]))
+    for problem in found.problems:
+        print(f"  not used: {problem}")
+
+
+def _floors_check() -> tuple[bool, str] | None:
+    """Check the floors of the repository the command runs in, when it has a floors file."""
+    from . import floors
+    from .projects import project_of
+
+    found = floors.load(project_of(str(Path.cwd())))
+    if found.path is None:
+        return None
+    if found.problems:
+        return False, f"risk floors in {found.path}: {len(found.rules)} usable; " + "; ".join(found.problems)
+    return True, f"risk floors in {found.path}: {len(found.rules)} rules"
+
+
 def _proposals(project: str, tuning: dict[str, Any], *, evidence: _Evidence) -> list[Change]:
     """Return the changes the evidence supports that wait for a hand: raises on other installations' counts alone,
     and cheaper starts.
@@ -665,17 +705,24 @@ def _cmd_db(args: argparse.Namespace) -> int:
     return 0
 
 
-def _hook_decisions(path: Path) -> list[list[Any]]:
+def _jsonl(path: Path) -> list[dict[str, Any]]:
+    """Return the JSON objects of a log, one per line; a line cut short by two sessions writing at once is skipped."""
     if not path.exists():
         return []
-    counts: dict[tuple[str, str, str], int] = {}
+    out = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
         try:
-            r = json.loads(line)
-        except ValueError:  # a line cut short by two sessions writing at once
+            record = json.loads(line) if line.strip() else None
+        except ValueError:
             continue
+        if isinstance(record, dict):
+            out.append(record)
+    return out
+
+
+def _hook_decisions(path: Path) -> list[list[Any]]:
+    counts: dict[tuple[str, str, str], int] = {}
+    for r in _jsonl(path):
         key = (r.get("cell", "?"), r.get("kind", "?"), r.get("risk", "?"))
         counts[key] = counts.get(key, 0) + 1
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
@@ -781,6 +828,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     except ValueError as exc:  # UnknownModelError is one too
         checks.append((False, f"judge for full verification: {exc} (check {JUDGE_ENV} or `router config --judge`)"))
     checks.append(_calibration_check())
+    floors_check = _floors_check()
+    if floors_check is not None:
+        checks.append(floors_check)
     if profile is not None and profile.is_dir():
         checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())

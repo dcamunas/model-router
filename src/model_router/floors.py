@@ -1,0 +1,136 @@
+r"""Risk floors a repository sets for its own work: what counts as high or critical there, said once in a file.
+
+The risk of a subagent is what Claude declares (or what the rules read from the text), and Claude can forget
+that in this repository "migration" or "production" is never low. A repository writes it down in
+`.claude/model-router.json`, committed with the code:
+
+    {"v": 1, "floors": [
+      {"match": "producci[oó]n|production", "risk": "critical", "why": "reaches production"},
+      {"match": "\\.sql\\b|migration", "risk": "high"}
+    ]}
+
+Each `match` is a regular expression, case-insensitive, searched in the subagent's description and the first
+HEAD_LINES non-empty lines of its prompt, where the task is said, never in the material pasted below. A floor only
+raises: the risk is the highest of the declared one and every rule that matches, so a rule can never make work
+cheaper than Claude asked for. A rule that cannot be used (a bad pattern, an unknown risk) is skipped, and
+`router doctor` lists it; a file that cannot be read gives no floors. The file is read as a regular file, never
+through a link, and only its first MAX_FILE_BYTES.
+
+The file sits next to `.claude/model-router/`, not inside it: that directory is the opt-in for shared counts
+(`shared.py`), and setting floors must not turn sharing on.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from .paths import read_regular
+from .task import RISKS
+
+FLOORS_FILE = Path(".claude") / "model-router.json"
+FORMAT = 1
+MAX_FILE_BYTES = 32 * 1024
+MAX_RULES = 50
+MAX_PATTERN_CHARS = 200  # a pattern runs on every subagent launch: long ones are where slow ones hide
+HEAD_LINES = 4  # the declaration line and the sentences that say the task
+MAX_HEAD_CHARS = 2000
+
+
+@dataclass(frozen=True)
+class FloorRule:
+    """One floor: the pattern as written, its compiled form, the risk it sets at least, and the reason shown."""
+
+    match: str
+    pattern: re.Pattern[str]
+    risk: str
+    why: str
+
+    @property
+    def label(self) -> str:
+        """Return what a decision record and `router project` call this rule: its reason, else its pattern."""
+        return self.why or self.match
+
+
+@dataclass(frozen=True)
+class Floors:
+    """A repository's floors: the usable rules, and what was wrong with the others (empty when all are fine)."""
+
+    path: Path | None
+    rules: tuple[FloorRule, ...] = ()
+    problems: tuple[str, ...] = ()
+
+
+def floors_path(project: str) -> Path:
+    """Return where a repository keeps its floors."""
+    return Path(project) / FLOORS_FILE
+
+
+def load(project: str | None) -> Floors:
+    """Return the floors of the repository at `project` (no floors outside a repository or without the file)."""
+    if not project:
+        return Floors(None)
+    path = floors_path(project)
+    raw = read_regular(path, MAX_FILE_BYTES)
+    if raw is None:
+        problem = (f"{path} is not a regular file of at most {MAX_FILE_BYTES // 1024} KB" if path.is_symlink()
+                   or path.exists() else None)
+        return Floors(path if path.exists() else None, problems=(problem,) if problem else ())
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError as exc:
+        return Floors(path, problems=(f"{path} is not valid JSON: {exc}",))
+    if not isinstance(data, dict) or data.get("v") != FORMAT or not isinstance(data.get("floors", []), list):
+        return Floors(path, problems=(f'{path}: expected {{"v": {FORMAT}, "floors": [...]}}',))
+    return parse(path, data.get("floors", []))
+
+
+def parse(path: Path | None, entries: list[object]) -> Floors:
+    """Turn the `floors` list of a file into rules, keeping a note for each entry that cannot be used."""
+    rules: list[FloorRule] = []
+    problems: list[str] = []
+    for n, entry in enumerate(entries[:MAX_RULES], start=1):
+        rule, problem = _rule(entry)
+        if rule is not None:
+            rules.append(rule)
+        else:
+            problems.append(f"floor {n}: {problem}")
+    if len(entries) > MAX_RULES:
+        problems.append(f"only the first {MAX_RULES} floors are read; {len(entries) - MAX_RULES} left out")
+    return Floors(path, tuple(rules), tuple(problems))
+
+
+def _rule(entry: object) -> tuple[FloorRule | None, str]:
+    if not isinstance(entry, dict):
+        return None, "expected an object with `match` and `risk`"
+    match, risk, why = entry.get("match"), entry.get("risk"), entry.get("why", "")
+    if not isinstance(match, str) or not match.strip():
+        return None, "`match` must be a non-empty pattern"
+    if len(match) > MAX_PATTERN_CHARS:
+        return None, f"`match` is longer than {MAX_PATTERN_CHARS} characters"
+    if risk not in RISKS:
+        return None, f"`risk` must be one of {', '.join(RISKS)}, not {risk!r}"
+    if not isinstance(why, str):
+        return None, "`why` must be text"
+    try:
+        pattern = re.compile(match, re.IGNORECASE)
+    except re.error as exc:
+        return None, f"`match` is not a valid pattern ({exc})"
+    return FloorRule(match, pattern, str(risk), why.strip()), ""
+
+
+def head(prompt: str, description: str = "") -> str:
+    """Return the text a floor is searched in: the description and the first HEAD_LINES non-empty prompt lines."""
+    lines = [line for line in prompt.splitlines() if line.strip()][:HEAD_LINES]
+    return "\n".join([description, *lines])[:MAX_HEAD_CHARS]
+
+
+def apply(risk: str, text: str, floors: Floors) -> tuple[str, FloorRule | None]:
+    """Return the risk after the floors that match `text`, and the rule that set it (None when none raised it)."""
+    best: FloorRule | None = None
+    for rule in floors.rules:
+        if RISKS.index(rule.risk) > RISKS.index(best.risk if best else risk) and rule.pattern.search(text):
+            best = rule
+    return (best.risk, best) if best else (risk, None)

@@ -41,7 +41,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any  # Any: hook events and log records are decoded JSON
 
-from . import clock
+from . import clock, floors
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
@@ -139,19 +139,15 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
     feedback = FeedbackStore(home() / "feedback.json")
     project = project_of(cwd)
+    risk, floor = floors.apply(cls.risk, floors.head(prompt, description), floors.load(project))
     tuning = load_tuning(project)
     try:
         policy = Policy(cells=claude, feedback=feedback, tuning=tuning)
     except ValueError:  # a judge setting this router cannot resolve: route anyway, `router doctor` reports it
         policy = Policy(cells=claude, feedback=feedback, judge=parse_cell(DEFAULT_JUDGE), tuning=tuning)
-    plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=cls.risk))
-    cell, cross = worker_cell(plan.start, [c.model for c in claude]), None
-    if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
-        other = policy.verifier_for(cell, "full")
-        if (other is not None and other.spec.claude and other.claude_code()["model"] != chat_model
-                and other.tier >= cell.tier):
-            cross = f"{cls.risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
-            cell = other
+    plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=risk))
+    cell, cross = _cross_review(cls.kind, risk, worker_cell(plan.start, [c.model for c in claude]),
+                                chat_model=chat_model, policy=policy)
     cc = cell.claude_code()
     updated = dict(tool_input)
     updated["model"] = cc["model"]
@@ -160,7 +156,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
         updated["effort"] = cc["effort"]
         fields.append("effort")
     record = {
-        "kind": cls.kind, "risk": cls.risk, "cell": cell.label, "set": fields, "why": cls.reason,
+        "kind": cls.kind, "risk": risk, "cell": cell.label, "set": fields, "why": cls.reason,
         "subagent": subagent or "general-purpose", "prompt_head": prompt.strip()[:PROMPT_HEAD_CHARS],
         "prompt_hash": prompt_hash(prompt), "project": project,
         # model and effort both the router's, on the table's cell: evidence about its tables (a cross-checked review
@@ -169,6 +165,8 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     }
     if cross:
         record["cross"] = cross
+    if floor is not None:
+        record["floor"] = f"{cls.risk} -> {risk}: {floor.label}"
     lean = lean_agent(cwd)
     safe, why = read_only(prompt, description)
     if lean is not None and safe:
@@ -177,6 +175,18 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
         record["agent"] = lean
     record["lean"] = why if lean is not None else "no lean agent installed or lean off"
     return updated, record
+
+
+def _cross_review(kind: str, risk: str, cell: Cell, *, chat_model: str | None, policy: Policy) -> tuple[Cell, str | None]:
+    """Return the cell a review runs on, and why it moved: a review that gets a full judge (critical) does not run
+    on the chat's own model when a Claude model at least as capable is there to take it.
+    """
+    if kind != "review" or VERIFY_BY_RISK[risk] != "full" or cell.claude_code()["model"] != chat_model:
+        return cell, None
+    other = policy.verifier_for(cell, "full")
+    if other is None or not other.spec.claude or other.claude_code()["model"] == chat_model or other.tier < cell.tier:
+        return cell, None
+    return other, f"{risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
 
 
 def lean_agent(cwd: str | None = None) -> str | None:
