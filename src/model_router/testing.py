@@ -45,7 +45,7 @@ class FakeClient:
         max_tokens: int = NON_STREAMING_MAX_TOKENS,
         output_format: type[BaseModel] | None = None,
     ) -> Completion:
-        with self._lock:  # a tribunal may ask its judges from two threads
+        with self._lock:  # a caller may ask from several threads at once
             self.calls.append({"cell": cell.label, "prompt": prompt, "system": system, "max_tokens": max_tokens,
                                "output_format": output_format.__name__ if output_format else None})
             table = self.judge if output_format is not None else self.script

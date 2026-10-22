@@ -12,8 +12,7 @@ What each part of the router writes on your disk and what it sends, and to whom.
 - In a repository that shares counts, the hook adds weekly files to `.claude/model-router/` with the
   counts above and nothing else. They leave your machine only when you commit and push them.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
-  or your Claude Code account, and to nobody else. (The tribunal plugin also sends a reviewed change
-  to Codex; [its page](../plugins/tribunal/docs/privacy.md) says what goes.)
+  or your Claude Code account, and to nobody else.
 - The ledger and its SQLite index keep tokens, cost, cell, verdict and the judges' reasons for every
   attempt; they keep neither the prompt nor the answer, only a hash of the task. A reason may quote a
   few words of either.

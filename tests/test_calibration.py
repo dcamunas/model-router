@@ -46,18 +46,18 @@ def test_a_verdict_only_the_workers_own_model_backed_is_no_evidence():
     records = [
         _record("write", "haiku/medium", True, source="judge", verifier="haiku/medium"),  # itself, fresh context
         _record("write", "haiku/medium", True, source="judge", verifier="sonnet/low"),  # another model
-        _record("write", "haiku/medium", True, source="tribunal",  # both agreed: the other model backs it
-                verdicts=[vote("haiku/medium", True), vote("opus/xhigh", True)]),
-        _record("write", "haiku/medium", False, source="panel",  # its own fail stopped the panel: no evidence
+        _record("write", "haiku/medium", True, source="judge",  # a record that kept the judge's own verdict
+                verdicts=[vote("opus/xhigh", True)]),
+        _record("write", "haiku/medium", False, source="judge",  # its own model's fail: no evidence
                 verdicts=[vote("haiku/medium", False)]),
-        _record("write", "haiku/medium", True, source="tribunal",  # a split the arbiter (another model) settled
-                verdicts=[vote("haiku/medium", True), vote("opus/xhigh", False), vote("fable/low", True, "arbiter")]),
+        _record("write", "haiku/medium", True, source="judge",  # two seats of another writer: the other model backs it
+                verdicts=[vote("haiku/medium", True), vote("opus/xhigh", False), vote("fable/low", True, "other")]),
         _record("write", "haiku/medium", False, source="judge", verifier="haiku/medium", overridden=True),  # a human
     ]
     records += [
         _record("write", "haiku/medium", True, source="judge", verifier="gpt/high"),  # a judge no longer declared
         _record("write", "haiku/medium", True, source="judge", verifier="haiku/high"),  # unknown effort, same model
-        _record("write", "haiku/medium", True, source="tribunal", verdicts=["opus/xhigh", {"cell": 1}]),  # malformed
+        _record("write", "haiku/medium", True, source="judge", verdicts=["opus/xhigh", {"cell": 1}]),  # malformed
     ]
     records[-3]["attempts"][0]["verdicts"] = "not a list"
     external = _record("write", "opus/low", True, source="judge", verifier="fable/low")

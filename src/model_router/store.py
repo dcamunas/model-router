@@ -17,9 +17,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any  # Any: ledger records are JSON
 
-from .catalog import UnknownModelError, parse_cell
-
-SCHEMA_VERSION = 3  # 3: no calibration table (they are files); 2: rows keyed by (source file, task id); 1: by task id
+SCHEMA_VERSION = 4  # 4: one judge per attempt; 3: no calibration table; 2: rows keyed by (source file, task id)
 _LOCK = threading.Lock()
 LedgerFiles = Iterable[tuple[Path, str | None]]  # (file, strategy name when it is a bench ledger)
 SIDECARS = ("-journal", "-wal", "-shm")  # SQLite's companions of the index file
@@ -44,13 +42,13 @@ CREATE TABLE IF NOT EXISTS attempt (
     source TEXT NOT NULL, task_id TEXT NOT NULL, n INTEGER NOT NULL, cell TEXT NOT NULL, served_model TEXT,
     stop_reason TEXT, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0, verdict INTEGER, verdict_source TEXT, reason TEXT, verifier TEXT,
-    verify_cost_usd REAL NOT NULL DEFAULT 0, arbiter TEXT, carried_reason INTEGER NOT NULL DEFAULT 0,
+    verify_cost_usd REAL NOT NULL DEFAULT 0, carried_reason INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source, task_id, n)
 );
 CREATE INDEX IF NOT EXISTS attempt_cell ON attempt(cell);
 CREATE TABLE IF NOT EXISTS verdict (
     source TEXT NOT NULL, task_id TEXT NOT NULL, n INTEGER NOT NULL, idx INTEGER NOT NULL, cell TEXT NOT NULL,
-    provider TEXT, role TEXT NOT NULL, passed INTEGER NOT NULL, confidence REAL, reason TEXT,
+    role TEXT NOT NULL, passed INTEGER NOT NULL, confidence REAL, reason TEXT,
     PRIMARY KEY (source, task_id, n, idx)
 );
 CREATE TABLE IF NOT EXISTS override (
@@ -58,13 +56,6 @@ CREATE TABLE IF NOT EXISTS override (
 );
 """
 TABLES = ("task", "attempt", "verdict", "override", "source")
-
-
-def _provider(label: str) -> str | None:
-    try:
-        return parse_cell(label).spec.provider
-    except (UnknownModelError, ValueError):
-        return None
 
 
 def _signature(path: Path) -> tuple[int, int] | None:
@@ -195,20 +186,19 @@ class Store:
             verdict = a.get("verdict")
             conn.execute(
                 "INSERT OR REPLACE INTO attempt (source, task_id, n, cell, served_model, stop_reason, input_tokens, "
-                "output_tokens, cost_usd, verdict, verdict_source, reason, verifier, verify_cost_usd, arbiter, "
-                "carried_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "output_tokens, cost_usd, verdict, verdict_source, reason, verifier, verify_cost_usd, "
+                "carried_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (source, task_id, int(a.get("n") or 0), a.get("cell", "?"), a.get("served_model"), a.get("stop_reason"),
                  int(usage.get("input") or 0), int(usage.get("output") or 0), float(a.get("cost_usd") or 0.0),
                  None if verdict is None else int(bool(verdict)), a.get("verdict_source"), a.get("reason"),
-                 a.get("verifier"), float(a.get("verify_cost_usd") or 0.0), a.get("arbiter"),
-                 int(bool(a.get("carried_reason", False)))),
+                 a.get("verifier"), float(a.get("verify_cost_usd") or 0.0), int(bool(a.get("carried_reason", False)))),
             )
             for idx, v in enumerate(a.get("verdicts") or []):
                 conn.execute(
-                    "INSERT OR REPLACE INTO verdict (source, task_id, n, idx, cell, provider, role, passed, confidence, "
-                    "reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (source, task_id, int(a.get("n") or 0), idx, v.get("cell", "?"), _provider(str(v.get("cell", ""))),
-                     v.get("role", "judge"), int(bool(v.get("passed"))), v.get("confidence"), v.get("reason")),
+                    "INSERT OR REPLACE INTO verdict (source, task_id, n, idx, cell, role, passed, confidence, reason) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (source, task_id, int(a.get("n") or 0), idx, v.get("cell", "?"), v.get("role", "judge"),
+                     int(bool(v.get("passed"))), v.get("confidence"), v.get("reason")),
                 )
 
     def rebuild(self, ledgers: LedgerFiles) -> dict[str, int]:

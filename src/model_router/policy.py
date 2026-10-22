@@ -4,10 +4,6 @@ it has seen enough verdicts for a kind. The router verifies in three modes: none
 other model at low effort in a fresh context; `full`, a fixed judge cell (opus/xhigh unless configured)
 on another model than the worker. Verifying is easier than producing, so the judge does not have to
 outrank the worker: it has to be independent and good enough, and it never thinks above `xhigh`.
-
-Two judges at once (`panel`, both must agree; `tribunal`, blind to each other with an arbiter on a split)
-belong to the tribunal plugin, not to the router's own plan: the policy never picks them, but it still
-seats them (`choose_panel`, `choose_arbiter`) when the tribunal asks.
 """
 
 from __future__ import annotations
@@ -21,17 +17,18 @@ from .calibration import ACTIVE, Calibration, active_calibration_name, load_cali
 from .catalog import (
     EFFORTS,
     MODELS,
-    SHORT_TO_ID,
     Cell,
     ladder,
     lattice,
+    listed_models,
     nearest_available,
     nearest_effort,
     parse_cell,
     step_up,
+    unknown_listed,
     worker_cell,
 )
-from .paths import ARBITER_ENV, JUDGE_ENV, MODELS_ENV, read_config
+from .paths import JUDGE_ENV, read_config
 from .task import Task
 
 if TYPE_CHECKING:
@@ -93,8 +90,6 @@ class PolicyProtocol(Protocol):
 
     def judges_for(self, worker: Cell, mode: str) -> list[Cell]: ...
 
-    def arbiter_for(self, worker: Cell) -> Cell | None: ...
-
 
 def _judge_cost(cell: Cell) -> float:
     return cell.expected_cost(JUDGE_INPUT_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
@@ -108,10 +103,8 @@ def _at(model: str, effort: str) -> Cell:
 
 
 def _by_tier(cells: list[Cell]) -> list[str]:
-    """Return the models of `cells`, once each, by tier; within a tier a Claude model first, then by name, so
-    that the choice never depends on set order.
-    """
-    return sorted({c.model for c in cells}, key=lambda m: (MODELS[m].tier, MODELS[m].provider != "anthropic", m))
+    """Return the models of `cells`, once each, by tier, then by name, so that the choice never depends on set order."""
+    return sorted({c.model for c in cells}, key=lambda m: (MODELS[m].tier, m))
 
 
 def _cap_effort(cell: Cell) -> Cell:
@@ -119,14 +112,17 @@ def _cap_effort(cell: Cell) -> Cell:
     return _at(cell.model, capped)
 
 
-def _lists_no_claude_model() -> bool:
-    """Say whether the configured model list names only models of another provider (an older version's setting)."""
-    cfg = read_config()
-    configured = os.environ.get(MODELS_ENV) or cfg.get("models")
-    if not configured:
-        return False
-    names = [n.strip() for n in configured.split(",")] if isinstance(configured, str) else [str(n) for n in configured]
-    return all(n not in SHORT_TO_ID and n not in MODELS for n in names if n)
+def models_note() -> str | None:
+    """Return the note a plan carries when the models setting names models the catalogue does not know (a typo, an
+    older version's model), or None when every name is known.
+    """
+    unknown = unknown_listed()
+    if not unknown:
+        return None
+    if len(unknown) == len(listed_models()):
+        return (f"the models setting lists no model this router knows ({', '.join(unknown)}): every Claude model "
+                "is used; `router config --models` fixes it")
+    return f"the models setting names models this router does not know, ignored: {', '.join(unknown)}"
 
 
 def default_judge_cell(models: Iterable[str] | None = None) -> Cell:
@@ -147,20 +143,19 @@ def default_judge(models: Iterable[str] | None = None) -> Cell:
     return _cap_effort(nearest_available(parse_cell(str(raw)), models))
 
 
-def _light_judge(worker: Cell, cells: list[Cell], *, avoid: Cell | None = None) -> Cell:
+def _light_judge(worker: Cell, cells: list[Cell]) -> Cell:
     """Return the light judge of `worker`: the nearest other model at low effort, the tiers above first (the
-    lowest of them), then another model of the worker's tier, then the tier just below, never further down;
-    in a panel, a model other than `avoid` (the full judge). The worker's own cell, effort capped, when no
-    such model is available: a worker judging itself in a fresh context passed a quarter of the answers an
-    independent judge failed, but a judge two tiers down is no check either.
+    lowest of them), then another model of the worker's tier, then the tier just below, never further down.
+    The worker's own cell, effort capped, when no such model is available: a worker judging itself in a fresh
+    context passed a quarter of the answers an independent judge failed, but a judge two tiers down is no
+    check either.
     """
     models = _by_tier(cells)
     above = [m for m in models if MODELS[m].tier > worker.tier]
     same = [m for m in models if MODELS[m].tier == worker.tier and m != worker.model]
     below = [m for m in models if MODELS[m].tier == worker.tier - 1]
     for m in above + same + below:
-        if avoid is None or m != avoid.model:
-            return _at(m, "low")
+        return _at(m, "low")
     return _cap_effort(worker)
 
 
@@ -172,8 +167,8 @@ def _full_judge(worker: Cell, judge: Cell, cells: list[Cell]) -> Cell:
     if above:
         return _at(above[0], "low")
     below = [m for m in models if MODELS[m].tier < worker.tier]
-    if below:  # the highest tier below, a Claude model before a declared one of the same tier
-        return _at(max(below, key=lambda m: (MODELS[m].tier, MODELS[m].provider == "anthropic")), judge.effort)
+    if below:  # the highest tier below
+        return _at(max(below, key=lambda m: MODELS[m].tier), judge.effort)
     same = [c for c in cells if c.model == worker.model and c != worker and c.effort_rank <= judge.effort_rank]
     if not same:
         return _cap_effort(worker)
@@ -195,85 +190,6 @@ def choose_verifier(worker: Cell, mode: str, cells: list[Cell], *, judge: Cell |
     return _full_judge(worker, judge, cells)
 
 
-def choose_panel(worker: Cell, cells: list[Cell], *, judge: Cell | None = None) -> list[Cell]:
-    """Return the judges of a panel or a tribunal for `worker`, cheapest first: the full judge (see
-    `choose_verifier`) and the light judge, on a model other than the worker's and the full judge's when the
-    cells hold one (see `_light_judge`). When both are the same cell, one judge.
-    """
-    judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
-    full = _full_judge(worker, judge, cells)
-    return sorted({_light_judge(worker, cells, avoid=full), full}, key=_judge_cost)
-
-
-class _Arbiter:
-    """An arbiter resolved on first use: the given cell, else the configured one (`default_arbiter`)."""
-
-    def __init__(self, given: Cell | None, models: Iterable[str]) -> None:
-        self.given, self.models = given, list(models)
-        self._cell: Cell | None = None
-        self._done = False
-
-    def cell(self) -> Cell | None:
-        if not self._done:
-            given = self.given
-            self._cell = _cap_effort(nearest_available(given, self.models)) if given else default_arbiter(self.models)
-            self._done = True
-        return self._cell
-
-
-def default_arbiter(models: Iterable[str] | None = None) -> Cell | None:
-    """Return the configured arbiter cell (MODEL_ROUTER_ARBITER, else `arbiter` in config.json), capped at
-    JUDGE_MAX_EFFORT and moved to the nearest available model, or None when nothing is configured and the
-    rule in `choose_arbiter` applies.
-
-    Raises:
-        UnknownModelError: the configured model is not in the catalogue.
-        ValueError: the configured effort does not exist.
-    """
-    raw = os.environ.get(ARBITER_ENV) or read_config().get("arbiter")
-    if not raw:
-        return None
-    return _cap_effort(nearest_available(parse_cell(str(raw)), models))
-
-
-def choose_arbiter(
-    worker: Cell, cells: list[Cell], *, judge: Cell | None = None, arbiter: Cell | None = None
-) -> Cell | None:
-    """Return the cell that settles a split between the two judges of `worker`'s tribunal, or None when no
-    cell other than the judges themselves is available (a split then fails, as in a panel). `arbiter`
-    (the configured one when None) wins when it is not one of the judges; otherwise the first of these
-    that is not a judge (a cell at an effort its door does not accept counts as the nearest it does), the
-    cells that share a company with neither the full judge nor the worker first,
-    then those that do not share the worker's (an arbiter with the worker's blind spots passes what it
-    passed), then those that do not share the full judge's; among those, a cell at the worker's tier or above
-    before one below it, a model other than the worker's before the worker's own, the highest tier first. The
-    candidates: the models above the full judge and the worker at low effort, the full judge's model one effort
-    up, the worker's model one effort up, the light judge's model one effort up.
-    """
-    judges = choose_panel(worker, cells, judge=judge)
-    arbiter = _cap_effort(arbiter) if arbiter else default_arbiter({c.model for c in cells})
-    if arbiter is not None and arbiter not in judges:
-        return arbiter
-    judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
-    full = _full_judge(worker, judge, cells)
-    light = _light_judge(worker, cells, avoid=full)
-    models = _by_tier(cells)
-    above = [m for m in models if MODELS[m].tier > max(full.tier, worker.tier)]
-    candidates = [_at(m, "low") for m in above]
-    candidates += [_effort_up(full), _effort_up(worker), _effort_up(light)]
-    candidates.sort(key=lambda c: (
-        (c.spec.family == full.spec.family) + (c.spec.family == worker.spec.family),
-        c.spec.family == worker.spec.family, c.spec.family == full.spec.family,
-        c.tier < worker.tier, c.model == worker.model, -c.tier,
-    ))
-    return next((c for c in candidates if c not in judges), None)
-
-
-def _effort_up(cell: Cell) -> Cell:
-    """Return `cell` one effort up (capped at JUDGE_MAX_EFFORT), or `cell` itself when its door accepts none above."""
-    return _at(cell.model, EFFORTS[min(cell.effort_rank + 1, EFFORTS.index(JUDGE_MAX_EFFORT))])
-
-
 def _resolve_calibration(value: Calibration | str | None) -> tuple[Calibration | None, str | None]:
     """Return the calibration `value` asks for and, when it names one that cannot be loaded, that name: a
     Calibration as is, None for the code tables, ACTIVE for the one the environment or config.json names,
@@ -293,8 +209,7 @@ def _resolve_calibration(value: Calibration | str | None) -> tuple[Calibration |
 class Policy:
     """The default policy: the START table (or the active calibration's, see `calibration.py`), the risk
     floors, feedback nudges, cost-aware escalation and a fixed judge (`judge`, else the configured one) for
-    full verification. `arbiter` (else the configured one, else the rule in `choose_arbiter`) only seats a
-    tribunal the tribunal plugin asks for.
+    full verification.
     """
 
     calibration_id = "builtin"  # which tables decide; an instance with a calibration carries its id instead
@@ -307,7 +222,6 @@ class Policy:
         feedback: FeedbackStore | None = None,
         min_gain: float = 0.08,
         judge: Cell | None = None,
-        arbiter: Cell | None = None,
         calibration: Calibration | str | None = ACTIVE,
         tuning: dict[str, Any] | None = None,  # Any: a tuning file's decoded JSON (`projects.load_tuning`)
     ) -> None:
@@ -321,32 +235,21 @@ class Policy:
         self.feedback = feedback
         self.min_gain = min_gain
         self.notes: list[str] = []
-        if _lists_no_claude_model():
-            self.notes.append("the models setting lists no Claude model: every Claude model is used; "
-                              "`router config --models` fixes it")
+        note = models_note()
+        if note:
+            self.notes.append(note)
         try:
             self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
-        except ValueError as exc:  # a judge setting from an older version (another provider's model), or a typo
+        except ValueError as exc:  # a judge setting from an older version, or a typo
             self.judge = default_judge_cell(self.models)
             self.notes.append(f"judge setting cannot be used ({exc}): {self.judge} instead; `router config --judge` "
                               f"sets another, `router doctor` shows it")
-        self._arbiter = _Arbiter(arbiter, self.models)
-
-    @property
-    def arbiter(self) -> Cell | None:
-        """The arbiter of a tribunal split, resolved when first asked: the router's own plans never need one, so a
-        stale `arbiter` setting cannot stop it.
-        """
-        return self._arbiter.cell()
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
-        """Replace a cell whose model may not work here (a Claude model this installation lacks, a declared model
-        that `router config --models` does not list) with the one `worker_cell` picks, and say so.
-        """
+        """Replace a cell whose model this installation lacks with the one `worker_cell` picks, and say so."""
         near = worker_cell(cell, self.models)
         if near != cell:
-            why = "not available" if cell.spec.provider == "anthropic" else "not listed to work (router config --models)"
-            rationale.append(f"{cell.spec.short} {why}: {cell} -> {near}")
+            rationale.append(f"{cell.spec.short} not available: {cell} -> {near}")
         return near
 
     def plan(self, task: Task) -> Plan:
@@ -417,26 +320,15 @@ class Policy:
         return tuned
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
-        """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`; for `panel` it is the
-        full judge alone, `judges_for` has both.
-        """
+        """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`."""
         return choose_verifier(worker, mode, self.cells, judge=self.judge)
 
     def judges_for(self, worker: Cell, mode: str) -> list[Cell]:
-        """Return every judge `mode` consults on `worker`'s answer, cheapest first: none for `none`, one
-        for `light` and `full`, two for `panel`.
-        """
+        """Return the judges `mode` consults on `worker`'s answer: none for `none`, one for `light` and `full`."""
         return _judges(worker, mode, self.cells, self.judge)
 
-    def arbiter_for(self, worker: Cell) -> Cell | None:
-        """Return the cell that settles a split in `worker`'s tribunal, or None when none is available."""
-        return choose_arbiter(worker, self.cells, judge=self.judge, arbiter=self.arbiter)
-
     def attempt_cost(self, cell: Cell, verify: str, est_input: int, out_tokens: int) -> float:
-        """Return the expected cost of one attempt on `cell` including its verification calls (both judges
-        of a panel or a tribunal; the panel skips the second on a fail, the tribunal's arbiter only runs
-        on a split, neither is priced here).
-        """
+        """Return the expected cost of one attempt on `cell` including its verification call."""
         cost = cell.expected_cost(est_input, out_tokens)
         for judge in self.judges_for(cell, verify):
             cost += judge.expected_cost(est_input + out_tokens + JUDGE_PROMPT_OVERHEAD_TOKENS, JUDGE_OUTPUT_TOKENS_AT_HIGH)
@@ -457,14 +349,13 @@ class Policy:
 
 class LadderPolicy:
     """A fixed ladder, for benchmarks: 'always Opus high', 'Sonnet then Opus on failure', etc. `verify` is a
-    mode, or `auto` for the mode the default policy would pick for each task (by risk, tribunal at critical).
+    mode, or `auto` for the mode the default policy would pick for each task (by risk, full at critical).
     """
 
     calibration_id = "fixed"
 
     def __init__(
         self, cells: list[Cell], *, verify: str = "none", budget_usd: float = 100.0, judge: Cell | None = None,
-        arbiter: Cell | None = None,
     ) -> None:
         if not cells:
             raise ValueError("a ladder needs at least one cell")
@@ -477,13 +368,7 @@ class LadderPolicy:
             self.judge = _cap_effort(nearest_available(judge, models)) if judge else default_judge(models)
         except ValueError:  # an unusable judge setting: the default, as `Policy` does
             self.judge = default_judge_cell(models)
-        self._arbiter = _Arbiter(arbiter, models)
-        self._auto = Policy(judge=self.judge, arbiter=arbiter, calibration=None) if verify == "auto" else None
-
-    @property
-    def arbiter(self) -> Cell | None:
-        """The arbiter of a tribunal split, resolved when first asked (see `Policy.arbiter`)."""
-        return self._arbiter.cell()
+        self._auto = Policy(judge=self.judge, calibration=None) if verify == "auto" else None
 
     def plan(self, task: Task) -> Plan:
         cells = list(self.ladder_cells)
@@ -500,16 +385,10 @@ class LadderPolicy:
         return choose_verifier(worker, mode, self._all, judge=self.judge)
 
     def judges_for(self, worker: Cell, mode: str) -> list[Cell]:
-        """Return every judge `mode` consults on `worker`'s answer, chosen from the whole lattice."""
+        """Return the judges `mode` consults on `worker`'s answer, chosen from the whole lattice."""
         return _judges(worker, mode, self._all, self.judge)
-
-    def arbiter_for(self, worker: Cell) -> Cell | None:
-        """Return the cell that settles a split in `worker`'s tribunal, chosen from the whole lattice."""
-        return choose_arbiter(worker, self._all, judge=self.judge, arbiter=self.arbiter)
 
 
 def _judges(worker: Cell, mode: str, cells: list[Cell], judge: Cell) -> list[Cell]:
-    if mode in ("panel", "tribunal"):
-        return choose_panel(worker, cells, judge=judge)
     one = choose_verifier(worker, mode, cells, judge=judge)
     return [] if one is None else [one]

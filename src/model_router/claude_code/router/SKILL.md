@@ -33,8 +33,6 @@ A Claude Code subagent drags the whole session prompt along (tools, MCP, skills:
 For a subtask that needs no tools (classify, extract, summarise, draft, review a text you already
 have) use the router directly: about 900 tokens of context, model and effort by kind and risk, an
 optional checker, one judge by risk on another model than the worker, and an entry in the ledger.
-For a second opinion from another company, two judges and an arbiter, use the tribunal plugin
-(`tribunal judge` for a text, `tribunal qa` for code) when it is installed.
 
 ```bash
 router run "<task>" --kind <kind> --risk <risk>              # the answer goes to stdout
@@ -75,15 +73,14 @@ fails, `router doctor` says so.
    router judge "<the same subtask>" --kind <kind> --risk <risk> --cell <start cell> --answer result.md
    ```
 
-   It runs the plan's judge (light or full, possibly a model from another provider), records every verdict in the ledger for the scoreboard, prints the reasons and exits
-   1 on a fail. About 900 tokens of context per judge instead of a subagent.
+   It runs the plan's judge (light or full), records every verdict in the ledger for the scoreboard, prints
+   the reasons and exits 1 on a fail. About 900 tokens of context per judge instead of a subagent.
 
    Launch judge subagents instead only when the verdict needs tools (run the tests, read the repo):
    - `none`: accept.
    - `light`: check the result against the brief yourself, or with a checker (tests, valid JSON).
    - `full`: launch **another** subagent on the verifier's cell, fresh context, with the brief and
      the result, and ask it for `passed / reason / issues`. Never the subagent that did the work.
-   - A judge from another provider is not a Claude Code model: it only sits through `router judge`.
 
 4. On failure, relaunch on the next cell of the ladder with the reason for the failure in the brief.
    Stop when it passes, when the ladder runs out, or when the cost is not worth it.

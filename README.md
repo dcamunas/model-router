@@ -45,7 +45,7 @@ The kind is one of `classify`, `extract`, `summarize`, `search`, `chat`, `write`
 ([what each means](docs/how-it-decides.md#by-risk-at-a-glance)).
 
 For the `router` command (stats, plans, text-only tasks) install the CLI too:
-`uv tool install git+https://github.com/dcamunas/model-router@v0.15.1`, then `router doctor`. Other
+`uv tool install git+https://github.com/dcamunas/model-router@v0.16.0`, then `router doctor`. Other
 setups are in [Install](docs/install.md).
 
 ## What you get
@@ -77,12 +77,6 @@ model, solved.
    go to the ledger.
 
 The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.md).
-
-## Tribunal (separate plugin)
-
-Two judges, one Claude and one Codex, blind to each other, and an arbiter when they disagree. It
-reviews the code each turn changes, and critical texts when you ask. You install it apart, and the
-router works the same without it. [Tribunal README](plugins/tribunal/README.md)
 
 ## Documentation
 

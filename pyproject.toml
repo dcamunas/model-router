@@ -1,6 +1,6 @@
 [project]
 name = "model-router"
-version = "0.15.1"
+version = "0.16.0"
 description = "Picks the model and effort for every Claude Code subagent by its risk, and checks and escalates the work that needs it."
 readme = "README.md"
 license = "MIT"
@@ -34,8 +34,6 @@ Changelog = "https://github.com/dcamunas/model-router/blob/main/CHANGELOG.md"
 [project.scripts]
 router = "model_router.cli:main"
 router-hook = "model_router.hook:main"
-router-tribunal-hook = "model_router.tribunal_hook:main"
-tribunal = "model_router.tribunal_cli:entry"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

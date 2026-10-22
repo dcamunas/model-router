@@ -121,16 +121,14 @@ def test_finalize_keeps_records_appended_meanwhile_survives_bad_ones_and_counts_
     assert rows[0][2] == 3  # three subagents, a1 once (its last record)
 
 
-def test_an_old_config_naming_another_provider_never_stops_the_router(tmp_path, monkeypatch, capsys):
+def test_an_old_config_naming_unknown_models_never_stops_the_router(tmp_path, monkeypatch, capsys):
     from model_router.catalog import available_models
     from model_router.cli import main
 
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
     monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
-    (tmp_path / "config.json").write_text(json.dumps({"judge": "gpt/high", "models": ["luna"], "external": {
-        "luna": {"provider": "codex", "id": "gpt-6-luna", "input": 0.1, "output": 0.5},
-        "gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}))
-    assert len(available_models()) == 4  # only declared names listed: every Claude model instead of none
+    (tmp_path / "config.json").write_text(json.dumps({"judge": "gpt/high", "models": ["luna"]}))
+    assert len(available_models()) == 4  # only unknown names listed: every Claude model instead of none
     assert main(["plan", "review the payment code", "--risk", "high"]) == 0
     out = capsys.readouterr().out
     assert "judge setting cannot be used" in out and "opus/xhigh instead" in out

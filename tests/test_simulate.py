@@ -25,9 +25,9 @@ def test_frontier_solves_at_least_as_much_as_sonnet_and_costs_more():
 def test_the_simulated_router_verifies_with_one_judge_at_most():
     tasks, reports = run_simulation(100, seed=1)
     by = {r.name: r for r in reports}
-    assert "router (panel)" not in by and by["router"].verify_cost > 0
+    assert by["router"].verify_cost > 0
     sources = {a["verdict_source"] for t in by["router"].ledger.tasks() for a in t["attempts"]}
-    assert not sources & {"panel", "tribunal"}
+    assert sources <= {"checker", "judge", "none", "judge-error"}
     assert "router" in format_report(tasks, reports, 1)
 
 

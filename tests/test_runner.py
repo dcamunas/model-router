@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from model_router.catalog import Usage, parse_cell
 from model_router.client import ClientUnavailableError
 from model_router.feedback import FeedbackStore
@@ -50,120 +48,17 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
     assert len(judge_calls) == 2 and "<answer>" in judge_calls[0]["prompt"]
 
 
-def test_panel_needs_both_judges_and_a_split_escalates():
-    client = FakeClient(
-        script={"opus/medium": [Reply("draft")], "fable/low": [Reply("better draft")]},
-        judge={"sonnet/low": [ok()], "fable/low": [ko("thin"), ok()], "opus/xhigh": [ok()]},
-    )
-    result = Router(client).run(Task(prompt="write the incident report", kind="write", risk="critical", verify="panel"))
-    assert result.verify == "panel" and result.solved
-    first, second = result.attempts
-    assert first.cell.label == "opus/medium" and first.verdict is False and first.verdict_source == "panel"
-    assert [j.label for j in first.judges] == ["sonnet/low", "fable/low"] and first.verifier == parse_cell("fable/low")
-    assert "panel split: sonnet/low passed, fable/low failed" in first.reason and "thin" in first.reason
-    assert second.cell.label == "fable/low" and second.verdict is True
-    assert [j.label for j in second.judges] == ["opus/xhigh", "fable/low"] and "panel agreed" in second.reason
-    judge_calls = [c["cell"] for c in client.calls if c["output_format"] == "Verdict"]
-    assert judge_calls == ["sonnet/low", "fable/low", "opus/xhigh", "fable/low"]  # a Fable worker: nothing a tier up
-    assert first.verify_cost_usd == pytest.approx(0.030)  # sonnet/low 0.005 + fable/low 0.025 on Usage(2000, 100)
-    assert result.verify_cost_usd == pytest.approx(first.verify_cost_usd + second.verify_cost_usd) == pytest.approx(0.065)
-    assert result.to_dict()["attempts"][0]["judges"] == ["sonnet/low", "fable/low"]
-
-
-def test_tribunal_asks_both_judges_and_the_arbiter_settles_a_split(tmp_path: Path):
-    client = FakeClient(
-        script={"*": [Reply("the notice")]},
-        judge={"sonnet/low": [ok("fine")], "fable/low": [ko("thin")], "fable/medium": [ok("judge A was right")]},
-    )
-    ledger = Ledger(tmp_path / "ledger.jsonl")
-    result = Router(client, ledger=ledger).run(Task(prompt="write the incident report", kind="write", risk="critical",
-                                                    verify="tribunal"))
-    assert result.verify == "tribunal" and result.solved and len(result.attempts) == 1
-    attempt = result.attempts[0]
-    assert attempt.verdict is True and attempt.verdict_source == "tribunal" and attempt.arbiter == parse_cell("fable/medium")
-    assert [j.label for j in attempt.judges] == ["sonnet/low", "fable/low"]
-    assert [(v.cell.label, v.passed, v.role) for v in attempt.verdicts] == [
-        ("sonnet/low", True, "judge"), ("fable/low", False, "judge"), ("fable/medium", True, "arbiter"),
-    ]
-    assert "tribunal split: sonnet/low passed, fable/low failed; arbiter fable/medium sided with sonnet/low" in attempt.reason
-    calls = [c for c in client.calls if c["output_format"] == "Verdict"]
-    assert [c["cell"] for c in calls] == ["sonnet/low", "fable/low", "fable/medium"]
-    ruling = calls[-1]["prompt"]
-    assert "<verdicts>" in ruling and "Judge A passed" in ruling and "Judge B failed" in ruling
-    assert "fable" not in ruling.split("<verdicts>")[1]  # the arbiter does not see who the judges were
-    assert attempt.verify_cost_usd == pytest.approx(0.005 + 0.025 + 0.025)
-    record = ledger.tasks()[0]["attempts"][0]
-    assert record["arbiter"] == "fable/medium" and [v["role"] for v in record["verdicts"]] == ["judge", "judge", "arbiter"]
-
-
-def test_tribunal_agreement_needs_no_arbiter_and_a_split_without_one_fails(monkeypatch):
-    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
-    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", verify="tribunal"))
-    attempt = result.attempts[0]
-    assert result.solved and attempt.arbiter is None and "tribunal agreed" in attempt.reason
-    assert len([c for c in client.calls if c["output_format"] == "Verdict"]) == 2
-    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ko()]})
-    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1, verify="tribunal"))
-    assert result.status == "unsolved" and "tribunal agreed" in result.attempts[0].reason
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
-    client = FakeClient(script={"*": [Reply("x")]}, judge={"opus/high": [ok()], "opus/xhigh": [ko("no")]})
-    router = Router(client, policy=LadderPolicy([parse_cell("opus/high")], verify="tribunal"))
-    result = router.run(Task(prompt="x", kind="write", risk="critical"))
-    attempt = result.attempts[0]
-    assert result.status == "unsolved" and attempt.verdict is False and "no arbiter available" in attempt.reason
-    assert attempt.arbiter is None and len(attempt.verdicts) == 2
-
-
-def test_scoreboard_counts_agreement_arbiter_backing_and_human_contradictions(tmp_path: Path):
-    ledger = Ledger(tmp_path / "ledger.jsonl")
-    client = FakeClient(
-        script={"*": [Reply("x")]},
-        judge={"sonnet/low": [ok(), ok(), ok()], "fable/low": [ko("thin"), ok(), ok()], "fable/medium": [ok()]},
-    )
-    router = Router(client, ledger=ledger)
-    for i in range(3):
-        router.run(Task(prompt="x", kind="write", risk="critical", id=f"w{i}", verify="tribunal"))
-    ledger.override("w2", passed=False, note="it was bad")
-    board = summarize(ledger.tasks()).by_judge
-    assert board["sonnet/low"] == {"verdicts": 3, "passes": 3, "agreed": 2, "split": 1, "backed": 1, "overruled": 0,
-                                    "contradicted": 1}
-    assert board["fable/low"] == {"verdicts": 3, "passes": 2, "agreed": 2, "split": 1, "backed": 0, "overruled": 1,
-                                  "contradicted": 1}
-    assert "fable/medium" not in board  # the arbiter is not a judge on the scoreboard
-    text = summarize(ledger.tasks()).text()
-    assert "judges' scoreboard" in text and "sonnet/low" in text
-
-
-def test_panel_stops_at_the_first_failing_judge():
-    client = FakeClient(script={"*": [Reply("draft")]}, judge={"sonnet/low": [ko("vague")], "*": [ok()]})
-    result = Router(client).run(Task(prompt="x", kind="write", risk="critical", max_attempts=1, verify="panel"))
-    assert result.status == "unsolved"
-    attempt = result.attempts[0]
-    assert attempt.verdict is False and attempt.verdict_source == "panel"
-    assert [j.label for j in attempt.judges] == ["sonnet/low"] and "was not asked" in attempt.reason
-    assert len([c for c in client.calls if c["output_format"] == "Verdict"]) == 1
-
-
-def test_panel_reduced_to_one_judge_is_reported_as_a_judge(monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
-    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
-    router = Router(client, policy=LadderPolicy([parse_cell("opus/max")], verify="panel"))
-    result = router.run(Task(prompt="x", kind="analysis", risk="critical"))
-    attempt = result.attempts[0]
-    assert result.solved and attempt.verdict_source == "judge" and [j.label for j in attempt.judges] == ["opus/xhigh"]
-
-
 def test_judge_records_an_external_answer_without_worker_cost(tmp_path: Path):
     ledger = Ledger(tmp_path / "ledger.jsonl")
     store = FeedbackStore(tmp_path / "fb.json")
     client = FakeClient(judge={"*": [ok("solid")]})
     router = Router(client, ledger=ledger, feedback=store)
     result = router.judge(Task(prompt="write the notice", kind="write", risk="critical", id="ext1"), "the notice",
-                          mode="tribunal")
-    assert result.solved and result.verify == "tribunal" and result.answer == "the notice"
+                          mode="full")
+    assert result.solved and result.verify == "full" and result.answer == "the notice"
     attempt = result.attempts[0]
     assert attempt.stop_reason == "external" and attempt.cost_usd == 0 and attempt.usage.total == 0
-    assert attempt.verdict is True and attempt.verdict_source == "tribunal" and len(attempt.judges) == 2
+    assert attempt.verdict is True and attempt.verdict_source == "judge" and len(attempt.judges) == 1
     assert result.verify_cost_usd > 0 and "judged only" in result.rationale[-1]
     assert all(c["output_format"] == "Verdict" for c in client.calls)  # no worker call
     assert ledger.tasks()[0]["attempts"][0]["stop_reason"] == "external" and store.data == {}
@@ -353,9 +248,22 @@ def test_result_records_fingerprint_version_and_calibration():
     assert fixed.calibration_id == "fixed" and fixed.eval_id == "e1" and fixed.repeat == 3
 
 
-def test_tribunal_verdicts_feed_the_feedback_store(tmp_path: Path):
+def test_a_judge_s_verdict_feeds_the_feedback_store(tmp_path: Path):
     client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
     feedback = FeedbackStore(tmp_path / "feedback.json")
-    result = Router(client, feedback=feedback).run(Task(prompt="x", kind="write", risk="critical", verify="tribunal"))
-    assert result.attempts[0].verdict_source == "tribunal"
+    result = Router(client, feedback=feedback).run(Task(prompt="x", kind="write", risk="critical", verify="full"))
+    assert result.attempts[0].verdict_source == "judge"
     assert feedback.data["write"]["opus/medium"] == {"n": 1, "pass": 1, "n_first": 1, "pass_first": 1}
+
+
+def test_scoreboard_counts_each_judge_s_verdicts_and_human_contradictions(tmp_path: Path):
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    client = FakeClient(script={"*": [Reply("x")]}, judge={"fable/low": [ok(), ok(), ko("thin")]})
+    router = Router(client, ledger=ledger)
+    for i in range(3):
+        router.run(Task(prompt="x", kind="write", risk="critical", id=f"w{i}", max_attempts=1))
+    ledger.override("w1", passed=False, note="it was bad")
+    board = summarize(ledger.tasks()).by_judge
+    assert board["fable/low"] == {"verdicts": 3, "passes": 2, "contradicted": 1}
+    text = summarize(ledger.tasks()).text()
+    assert "judges' scoreboard" in text and "fable/low" in text

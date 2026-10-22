@@ -1,11 +1,6 @@
-"""Build the flow figures at the top of the READMEs, in one visual language: rounded squares with a stroke
-icon, a title and one short line under each, grey arrows for the way through, blue for a pass or an
-agreement, orange for a fail or a split. Each comes in a light and a dark version; a README picks one with
-`<picture>` and the reader's colour scheme.
-
-- `flow-*.png`: the router's loop (README.md): task, start cheap, check, log, and a fail one step up.
-- `tribunal-*.png`: the tribunal (plugins/tribunal/README.md): the change, two blind judges, the verdict,
-  back to Claude, and the arbiter on a split.
+"""Build the flow figure at the top of the README: rounded squares with a stroke icon, a title and one short
+line under each, grey arrows for the way through, blue for a pass, orange for a fail. It comes in a light and
+a dark version (`flow-*.png`); the README picks one with `<picture>` and the reader's colour scheme.
 
     uv run docs/showcase/flow.py
 
@@ -26,7 +21,6 @@ HERE = Path(__file__).resolve().parent
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 SCALE = 2  # captured at twice the canvas, so the figure is sharp at any width GitHub shows it
 NODE = 170  # side of a symbol's square
-SMALL_NODE = 130  # the arbiter's: it sits off the main way
 ICON = 92  # side of an icon's drawing box
 CAPTION_W = 350  # a caption's width: the gap between two centres, less a margin
 ARROW_LENGTH, ARROW_HALF_WIDTH = 16, 9
@@ -45,8 +39,8 @@ class Theme:
     border: str
     text: str
     secondary: str
-    accent: str  # a pass, an agreement, the path taken
-    accent2: str  # a fail, a split, the way back
+    accent: str  # a pass, the path taken
+    accent2: str  # a fail, the way back
     muted: str  # a step the risk does not allow
 
 
@@ -66,7 +60,6 @@ class Node:
     line: str
     icon: Icon
     size: int = NODE
-    caption: str = "below"  # or "right", for a node off the main way
 
     @property
     def cy(self) -> float:
@@ -109,34 +102,6 @@ def _icon_log(t: Theme) -> str:
               f'fill="{t.accent}">$</text>')
 
 
-def _icon_diff(t: Theme) -> str:
-    return (_stroke(t, "M22 10 h40 l18 18 v62 h-58 z") + _stroke(t, "M62 10 v18 h18")
-            + _stroke(t, "M32 46 h20 m-10 -10 v20", colour=t.accent) + _stroke(t, "M32 72 h20", colour=t.accent2))
-
-
-def _lens(t: Theme, x: int) -> str:
-    return (f'<circle cx="{x}" cy="40" r="16" fill="none" stroke="{t.text}" stroke-width="4"/>'
-            + _stroke(t, f"M{x + 11} 52 l12 12", width=5))
-
-
-def _icon_judges(t: Theme) -> str:
-    return _lens(t, 20) + _lens(t, 62) + _stroke(t, "M46 8 v80", colour=t.secondary, width=3)
-
-
-def _icon_gavel(t: Theme) -> str:
-    return (f'<rect x="30" y="12" width="40" height="22" rx="4" transform="rotate(35 50 23)" fill="{t.accent2}"/>'
-            + _stroke(t, "M44 34 L18 72", width=6) + _stroke(t, "M48 84 h34", width=5))
-
-
-def _icon_verdict(t: Theme) -> str:
-    return (f'<circle cx="46" cy="46" r="32" fill="none" stroke="{t.text}" stroke-width="5"/>'
-            + _stroke(t, "M31 47 l10 10 l20 -22", colour=t.accent, width=6))
-
-
-def _icon_back(t: Theme) -> str:
-    return _stroke(t, "M70 70 V42 a18 18 0 0 0 -18 -18 H24 m12 -12 l-12 12 l12 12", width=6)
-
-
 # ---- drawing ----------------------------------------------------------------------------------------------------
 
 
@@ -175,21 +140,6 @@ def _router_wires(t: Theme, nodes: list[Node]) -> str:
             + _label((start.cx + check.cx) / 2, loop_y - 14, "fail: one step up, with the reason", t.accent2))
 
 
-def _tribunal_wires(t: Theme, nodes: list[Node]) -> str:
-    """Return the tribunal's arrows: through the main row, and a split over the arbiter to the verdict."""
-    change, judges, verdict, back, arbiter = nodes
-    top = verdict.top - GAP
-    arbiter_left, arbiter_right = arbiter.cx - arbiter.size / 2 - GAP, arbiter.cx + arbiter.size / 2 + GAP
-    return (_across(change, judges, t.secondary) + _across(judges, verdict, t.accent)
-            + _label((judges.cx + verdict.cx) / 2, judges.cy - 16, "agree", t.accent)
-            + _across(verdict, back, t.secondary)
-            + _bent(f"M{judges.cx} {judges.top - GAP} V{arbiter.cy} H{arbiter_left - ARROW_LENGTH + 2}", t.accent2)
-            + _arrow_head(arbiter_left, arbiter.cy, t.accent2, pointing="right")
-            + _label(judges.cx + 14, (judges.top + arbiter.cy) / 2 + 8, "split", t.accent2, anchor="start")
-            + _bent(f"M{arbiter_right} {arbiter.cy} H{verdict.cx} V{top - ARROW_LENGTH + 2}", t.accent2)
-            + _arrow_head(verdict.cx, top, t.accent2, pointing="down"))
-
-
 @dataclass(frozen=True)
 class Figure:
     """One figure: its file name, canvas, symbols and the arrows between them."""
@@ -208,28 +158,11 @@ ROUTER = Figure("flow", 1480, 480, [
     Node(1280, 120, "Log", "every attempt, and<br>what the solved task cost", _icon_log),
 ], _router_wires)
 
-TRIBUNAL = Figure("tribunal", 1480, 640, [
-    Node(200, 250, "The change", "your request, the diff<br>and the changed files", _icon_diff),
-    Node(560, 250, "Two judges", "one Claude, one Codex,<br>blind to each other", _icon_judges),
-    Node(920, 250, "Verdict", "a pass is one line;<br>a fail lists the findings", _icon_verdict),
-    Node(1280, 250, "Back to Claude", "on a fail, it fixes<br>what is right and says<br>why it disagrees", _icon_back),
-    Node(740, 40, "Arbiter", "only on a split: reads the<br>work and both verdicts", _icon_gavel,
-         size=SMALL_NODE, caption="right"),
-], _tribunal_wires)
-
-RIGHT_CAPTION_OFFSET = 210  # how far right of an off-row square its words start: past the arrow leaving it
-
-
 def _node_html(node: Node, t: Theme) -> str:
     """Return the HTML of one symbol: its square with the icon, its title and its line."""
     square = (f'<div class="node" style="left:{node.cx - node.size / 2}px;top:{node.top}px;width:{node.size}px;'
               f'height:{node.size}px"><svg width="{ICON}" height="{ICON}" viewBox="0 0 {ICON} {ICON}">'
               f"{node.icon(t)}</svg></div>")
-    if node.caption == "right":
-        left = node.cx + node.size / 2 + GAP + RIGHT_CAPTION_OFFSET
-        return (square + f'<div class="title" style="left:{left}px;top:{node.top - 4}px;text-align:left">'
-                f'{node.title}</div><div class="line" style="left:{left}px;top:{node.top + 44}px;text-align:left">'
-                f"{node.line}</div>")
     left = node.cx - CAPTION_W / 2
     return (square + f'<div class="title" style="left:{left}px;top:{node.top + node.size + 16}px">{node.title}</div>'
             f'<div class="line" style="left:{left}px;top:{node.top + node.size + 64}px">{node.line}</div>')
@@ -264,12 +197,11 @@ def capture(figure: Figure, t: Theme, out: Path) -> None:
 
 
 def main() -> None:
-    """Build every figure in both themes next to this script."""
-    for figure in (ROUTER, TRIBUNAL):
-        for theme in (LIGHT, DARK):
-            out = HERE / f"{figure.name}-{theme.name}.png"
-            capture(figure, theme, out)
-            print(out)
+    """Build the figure in both themes next to this script."""
+    for theme in (LIGHT, DARK):
+        out = HERE / f"{ROUTER.name}-{theme.name}.png"
+        capture(ROUTER, theme, out)
+        print(out)
 
 
 if __name__ == "__main__":

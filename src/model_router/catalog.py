@@ -15,33 +15,24 @@ with real verdicts:
   and effort fine-tunes within the tier, following Anthropic's published guidance that a frontier
   model at low effort often beats a lower tier at high effort.
 
-The router works with Claude models only. One other door exists, for the tribunal plugin's second judge:
-`codex` (ChatGPT through the Codex CLI). Its models are declared in config.json by `tribunal config
---codex-models` (or `NAME=codex/MODEL_ID@INPUT/OUTPUT[/TIER]` by hand) and `load_external` registers them
-when the tribunal starts; the router never loads them, so its lattice, its plans and its hook stay on
-Claude. A declared model's cached tokens are priced at the input rate, and its list price is declared even
-on a subscription, so the ledger prices every call the same way.
+The router works with Claude models only. Another package may `register` a model it serves itself (its
+`provider` says which door), so that model's cells can be named, priced and recorded; the router never routes
+to it: `available_models`, the lattice, the plans and the hook stay on Claude.
 """
 
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any  # Any: config.json, decoded
 
 from .paths import MODELS_ENV, read_config
 
 PRICES_AS_OF = "2026-10-06"
-KNOWN_PROVIDERS: tuple[str, ...] = ("anthropic", "codex")
-PROVIDER_FAMILY: dict[str, str] = {"anthropic": "anthropic", "codex": "openai"}  # the company behind each door
-EXTERNAL_TIER = 2  # the tier of a declared model whose declaration gives none: as capable as Opus
-TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}
-EXTERNAL_SYNTAX = re.compile(r"^([a-z][a-z0-9-]*)=(?:([a-z]+)/([^@\s]+)@([0-9.]+)/([0-9.]+)(?:/([0-3]))?)?$")
+CLAUDE = "anthropic"  # the provider of the models the router routes to
+TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}  # a registered model's capability, by tier
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
-PROVIDER_EFFORTS: dict[str, tuple[str, ...]] = {"codex": ("low", "medium", "high", "xhigh")}  # what Codex accepts
 EFFORT_OUTPUT_MULT: dict[str, float] = {"low": 0.5, "medium": 0.75, "high": 1.0, "xhigh": 1.6, "max": 2.5}
 CAPABILITY_TIER: dict[str, float] = {"haiku": 0.40, "sonnet": 0.60, "opus": 0.75, "fable": 0.90}
 CAPABILITY_EFFORT: dict[str, float] = {"low": -0.06, "medium": -0.03, "high": 0.0, "xhigh": 0.03, "max": 0.05}
@@ -69,13 +60,13 @@ class ModelSpec:
     max_output: int = 128_000
     long_prompt_from: int | None = None  # prompt tokens above which `long_prompt_mult` applies
     long_prompt_mult: float = 1.0
-    provider: str = "anthropic"  # the door that serves it
+    provider: str = CLAUDE  # the door that serves it; a registered model names its own
     efforts: tuple[str, ...] = EFFORTS  # the efforts this door accepts: the cells the lattice makes of the model
 
     @property
-    def family(self) -> str:
-        """Return the company behind the door: `codex` is OpenAI."""
-        return PROVIDER_FAMILY.get(self.provider, self.provider)
+    def claude(self) -> bool:
+        """Say whether this is a Claude model, one the router may route to."""
+        return self.provider == CLAUDE
 
 
 MODELS: dict[str, ModelSpec] = {
@@ -90,65 +81,30 @@ MODELS: dict[str, ModelSpec] = {
 SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
 
 
-def parse_external(text: str) -> tuple[str, ModelSpec | None]:
-    """Parse one `tribunal config --declare` value, `NAME=codex/MODEL_ID@INPUT/OUTPUT[/TIER]` (prices in
-    USD per million tokens; TIER 0 Haiku to 3 Fable, EXTERNAL_TIER when omitted), into the short name and its
-    spec; `NAME=` alone means remove, and returns None.
+def register(spec: ModelSpec) -> None:
+    """Add `spec` to the catalogue, replacing a registered model of the same id, so its cells can be named, priced
+    and recorded. The router routes to Claude only: a registered model never enters `available_models`, and the
+    package that registers it serves its calls.
 
     Raises:
-        ValueError: the syntax, the provider or the name is not acceptable, or the model id is already
-            declared under another name (an Anthropic model's id included).
+        ValueError: `spec` is a Claude model, or takes a Claude model's id or short name.
     """
-    m = EXTERNAL_SYNTAX.match(text.strip())
-    if m is None:
-        raise ValueError(f"expected NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT[/TIER] (TIER 0 to 3; NAME= removes), got {text!r}")
-    name, provider, model_id, price_in, price_out, tier = m.groups()
-    if any(spec.short == name and spec.provider == "anthropic" for spec in MODELS.values()):
-        raise ValueError(f"{name!r} is an Anthropic model; pick another short name")
-    if provider is None:
-        return name, None
-    if provider not in KNOWN_PROVIDERS or provider == "anthropic":
-        raise ValueError(f"unknown provider {provider!r}; known: {', '.join(p for p in KNOWN_PROVIDERS if p != 'anthropic')}")
-    taken = MODELS.get(model_id)
-    if taken is not None and taken.short != name:  # the catalogue is keyed by model id: one door per model
-        raise ValueError(f"{model_id!r} is already {taken.short!r}; one declaration per model id")
-    cost_in, cost_out = float(price_in), float(price_out)
-    efforts = PROVIDER_EFFORTS[provider]
-    default = "medium" if "medium" in efforts else efforts[0]
-    tier_n = int(tier) if tier else EXTERNAL_TIER
-    return name, ModelSpec(model_id, name, tier_n, cost_in, cost_out, cost_in, cost_in, default, False,
-                           provider=provider, efforts=efforts)
+    if spec.claude or spec.short in {s.short for s in MODELS.values() if s.claude}:
+        raise ValueError(f"{spec.short!r} is a Claude model's name; a registered model needs its own")
+    taken = MODELS.get(spec.id)
+    if taken is not None and taken.claude:
+        raise ValueError(f"{spec.id!r} is a Claude model's id; a registered model needs its own")
+    if taken is not None:
+        SHORT_TO_ID.pop(taken.short, None)
+    MODELS[spec.id] = spec
+    SHORT_TO_ID[spec.short] = spec.id
 
 
-def load_external(config: dict[str, Any]) -> list[str]:
-    """Register the Codex models declared in `config["external"]` (as `tribunal config --declare` writes
-    them) in the catalogue, replacing any registered before, and return their short names. Entries that
-    do not parse are skipped, a second declaration of a model id among them.
-    """
-    for model_id in [m for m, spec in MODELS.items() if spec.provider != "anthropic"]:
+def unregister(model_id: str) -> None:
+    """Remove a registered model from the catalogue; a Claude model, or an id nobody registered, is left alone."""
+    spec = MODELS.get(model_id)
+    if spec is not None and not spec.claude:
         SHORT_TO_ID.pop(MODELS.pop(model_id).short, None)
-    loaded = []
-    declared = config.get("external")
-    for name, entry in (declared.items() if isinstance(declared, dict) else []):
-        if not isinstance(entry, dict):
-            continue
-        declared_as = f"{name}={entry.get('provider')}/{entry.get('id')}@{entry.get('input')}/{entry.get('output')}"
-        if entry.get("tier") is not None:
-            declared_as += f"/{entry['tier']}"
-        try:
-            _, spec = parse_external(declared_as)
-        except ValueError:
-            continue
-        if spec is not None:
-            MODELS[spec.id] = spec
-            SHORT_TO_ID[spec.short] = spec.id
-            loaded.append(spec.short)
-    return loaded
-
-
-def external_models() -> list[ModelSpec]:
-    """Return the declared Codex models: the tribunal's judges. The router never routes to them."""
-    return [spec for spec in MODELS.values() if spec.provider != "anthropic"]
 
 
 class UnknownModelError(ValueError):
@@ -237,18 +193,29 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
 def available_models() -> list[str]:
     """Return the Claude models this installation may route work to, in catalogue order. The MODEL_ROUTER_MODELS
     variable wins, then `models` in config.json (`router config --models`); with neither, every Claude model in
-    the catalogue. Use it when a plan or an account lacks a model (no Fable, say). A name of another provider's
-    model in the list is ignored: the router routes to Claude only.
+    the catalogue. Use it when a plan or an account lacks a model (no Fable, say). A name the catalogue does not
+    know, or a registered model's, is ignored: the router routes to Claude only.
     """
-    cfg = read_config()
-    configured = os.environ.get(MODELS_ENV) or cfg.get("models")
+    claude = [m for m, spec in MODELS.items() if spec.claude]
+    known = [n for n in listed_models() if n in SHORT_TO_ID or n in MODELS]
+    ids = [m for m in parse_models(known) if MODELS[m].claude] if known else []
+    return ids or claude  # nothing listed, or nothing left: every Claude model
+
+
+def listed_models() -> list[str]:
+    """Return the names the models setting lists, as written: MODEL_ROUTER_MODELS, else `models` in config.json."""
+    configured = os.environ.get(MODELS_ENV) or read_config().get("models")
     if not configured:
-        return [m for m, spec in MODELS.items() if spec.provider == "anthropic"]
+        return []
     names = [n.strip() for n in configured.split(",")] if isinstance(configured, str) else [str(n) for n in configured]
-    declared = set(cfg.get("external") or {})  # the tribunal's Codex models, listed by an older version: not the router's
-    kept = [n for n in names if n and n not in declared]
-    ids = [m for m in parse_models(kept) if MODELS[m].provider == "anthropic"] if kept else []
-    return ids or [m for m, spec in MODELS.items() if spec.provider == "anthropic"]  # nothing left: every Claude model
+    return [n for n in names if n]
+
+
+def unknown_listed() -> list[str]:
+    """Return the names the models setting lists that the catalogue does not know (a typo, an older version's
+    model): `available_models` ignores them, and the plan, `router config` and `router doctor` say so.
+    """
+    return [n for n in listed_models() if n not in SHORT_TO_ID and n not in MODELS]
 
 
 @dataclass(frozen=True)
@@ -317,26 +284,24 @@ def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None =
 
 
 def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
-    """Return the cell a judge runs on: `cell` itself when its model is in `models` or belongs to another
-    provider (a declared judge is always available: its key or its sign-in is checked when it is called);
-    otherwise what `worker_cell` picks.
+    """Return the cell a judge runs on: `cell` itself when its model is in `models` or is a registered one (whoever
+    registered it serves its calls and checks its own access); otherwise what `worker_cell` picks.
     """
-    if cell.spec.provider != "anthropic":
+    if not cell.spec.claude:
         return cell
     return worker_cell(cell, models)
 
 
 def worker_cell(cell: Cell, models: Iterable[str] | None = None) -> Cell:
     """Return the cell a worker runs on: `cell` itself when its model is in `models` (the available ones when
-    None; an empty list leaves `cell` as it is); otherwise the available model of its tier (a Claude model
-    before a declared one), else the most capable one below it, else the least capable one above, at the
-    nearest effort that model accepts. A declared model that is not listed to work keeps judging but never
-    takes a task; a missing Claude model hands its tasks to the next one down.
+    None; an empty list leaves `cell` as it is); otherwise the available model of its tier, else the most
+    capable one below it, else the least capable one above, at the nearest effort that model accepts. A missing
+    Claude model hands its tasks to the next one down.
     """
     avail = [resolve_model(m) for m in (available_models() if models is None else models)]
     if cell.model in avail or not avail:
         return cell
-    specs = sorted((MODELS[m] for m in avail), key=lambda spec: (spec.tier, spec.provider != "anthropic"))
+    specs = sorted((MODELS[m] for m in avail), key=lambda spec: spec.tier)
     same = [spec for spec in specs if spec.tier == cell.tier]
     below = [spec for spec in specs if spec.tier < cell.tier]
     chosen = same[0] if same else (below[-1] if below else specs[0])

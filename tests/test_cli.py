@@ -27,7 +27,6 @@ def test_plan_at_critical_risk_prints_one_judge_on_another_model(capsys):
     assert main(argv) == 0
     out = capsys.readouterr().out
     assert "verification full" in out and "verifier (full): opus/xhigh" in out
-    assert "tribunal" not in out and "arbiter" not in out  # two judges are the tribunal plugin's
 
 
 def test_plan_claude_code_prints_frontmatter_values(capsys):
@@ -267,10 +266,10 @@ def test_doctor_shows_the_effort_of_the_chat_model_whatever_its_version(tmp_path
     assert "main chat: model fable, effort low" in capsys.readouterr().out
 
 
-def test_an_unknown_model_is_a_one_line_error_not_a_traceback(home, monkeypatch, capsys):
+def test_an_unknown_model_is_said_in_the_plan_and_refused_by_install(home, monkeypatch, capsys):
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonet")
-    with pytest.raises(SystemExit, match="unknown model 'sonet'.*haiku, sonnet, opus, fable"):
-        main(["plan", "classify this", "--kind", "classify", "--risk", "low"])
+    assert main(["plan", "classify this", "--kind", "classify", "--risk", "low"]) == 0
+    assert "does not know, ignored: sonet" in capsys.readouterr().out
     monkeypatch.delenv("MODEL_ROUTER_MODELS")
     with pytest.raises(SystemExit, match="unknown model 'opsu'"):
         main(["install", "--settings", str(home / "s.json"), "--no-skill", "--models", "opsu"])
@@ -539,8 +538,8 @@ def test_every_subcommand_prints_its_help(capsys):
         assert "usage: router " + cmd in capsys.readouterr().out
 
 
-def test_a_task_file_cannot_ask_the_router_for_two_judges(home, capsys):
+def test_a_task_file_cannot_ask_for_a_verification_mode_the_router_lacks(home, capsys):
     spec = home / "t.yaml"
-    spec.write_text("tasks:\n  - id: w\n    kind: write\n    risk: critical\n    prompt: write it\n    verify: tribunal\n")
+    spec.write_text("tasks:\n  - id: w\n    kind: write\n    risk: critical\n    prompt: write it\n    verify: twice\n")
     with pytest.raises(SystemExit, match="not a router mode"):
         main(["bench", str(spec), "--dry-run"])

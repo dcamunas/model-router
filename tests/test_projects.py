@@ -16,7 +16,7 @@ def _frozen(freeze_clock):
 
 
 def test_a_signature_ignores_the_declaration_line_tells_tasks_apart_and_is_salted(tmp_path, monkeypatch):
-    task = "Review src/model_router/policy.py for bugs in the arbiter rule and report each with path:line."
+    task = "Review src/model_router/policy.py for bugs in the floor rule and report each with path:line."
     same = projects.signature("kind: review, risk: high, access: write\n" + task)
     assert projects.alike(projects.signature(task), same) == 1.0
     other = projects.signature("Summarise the meeting notes from Tuesday into five bullet points for the team.")

@@ -22,8 +22,7 @@ claude plugin marketplace add dcamunas/model-router
 claude plugin install model-router@dcamunas
 ```
 
-The repository is both the marketplace (`dcamunas`) and the plugin (`model-router`); the marketplace
-also carries [`tribunal`](../plugins/tribunal/README.md), the code-review plugin, which you install the same way when you want it. The first
+The repository is both the marketplace (`dcamunas`) and the plugin (`model-router`). The first
 session takes a few seconds longer: the hook builds its own Python environment with `uv` in the
 plugin's data directory (`plugins/data/model-router-dcamunas/` inside the profile) and reuses it
 afterwards; with every new plugin version it rebuilds it on its own. `uv` has to be on the machine
@@ -34,7 +33,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.15.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.16.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -46,7 +45,7 @@ the same hooks into the profile's `settings.json` and copies the skill and the r
 (as `router-reader`) into the profile.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.15.1
+uv tool install git+https://github.com/dcamunas/model-router@v0.16.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor

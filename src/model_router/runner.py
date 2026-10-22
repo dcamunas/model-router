@@ -38,9 +38,8 @@ def with_failure(prompt: str, cell: Cell, reason: str) -> str:
 @dataclass
 class Attempt:
     """One call to a worker cell and what came of it: usage and cost, whether it was refused or cut short,
-    the verdict with its source (checker, judge, panel, tribunal, none) and, for judged attempts, the
-    deciding judge's cell, every judge asked, each judge's own verdict (plus the arbiter's after a split)
-    and what they cost.
+    the verdict with its source (checker, judge, none) and, for judged attempts, the deciding judge's cell,
+    every judge asked, each judge's own verdict and what they cost.
     """
 
     n: int
@@ -60,7 +59,6 @@ class Attempt:
     verify_cost_usd: float = 0.0
     judges: list[Cell] = field(default_factory=list)
     verdicts: list[JudgeVerdict] = field(default_factory=list)
-    arbiter: Cell | None = None
     carried_reason: bool = False  # the prompt carried the reason the attempt before failed for
 
     @property
@@ -75,8 +73,7 @@ class Attempt:
             "verdict_source": self.verdict_source, "reason": self.reason,
             "verifier": self.verifier.label if self.verifier else None, "verify_usage": self.verify_usage.to_dict(),
             "verify_cost_usd": round(self.verify_cost_usd, 6), "judges": [j.label for j in self.judges],
-            "verdicts": [v.to_dict() for v in self.verdicts], "arbiter": self.arbiter.label if self.arbiter else None,
-            "carried_reason": self.carried_reason,
+            "verdicts": [v.to_dict() for v in self.verdicts], "carried_reason": self.carried_reason,
         }
 
 
@@ -173,7 +170,7 @@ class Router:
 
     def run(self, task: Task, *, eval_id: str | None = None, repeat: int | None = None) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
         """Run `task` through its plan and return the result. Side effects: the result is appended to the
-        ledger and, with a feedback store, every verified verdict (checker, judge, panel or tribunal) is
+        ledger and, with a feedback store, every verified verdict (checker or judge) is
         recorded and the store saved; a judge that cannot be reached ends the task with status `error`.
         After a verified fail, the next attempt's prompt carries the reason (`with_failure`). `eval_id`
         and `repeat` say which eval file and repetition a bench is running, for the record.
@@ -235,7 +232,7 @@ class Router:
             spent += verdict.cost_usd
             attempts.append(replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
                                     verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
-                                    judges=verdict.judges, verdicts=verdict.verdicts, arbiter=verdict.arbiter))
+                                    judges=verdict.judges, verdicts=verdict.verdicts))
             answer, parsed, final = completion.text, completion.parsed, cell
             if verdict.passed:
                 status = "solved"
@@ -287,7 +284,7 @@ class Router:
         else:
             attempt = replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
                               verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
-                              judges=verdict.judges, verdicts=verdict.verdicts, arbiter=verdict.arbiter)
+                              judges=verdict.judges, verdicts=verdict.verdicts)
             status = "solved" if verdict.passed else "unsolved"
         result = TaskResult(
             task_id=task.id, kind=task.kind, risk=task.risk, plan=[c.label for c in plan.ladder], verify=mode,

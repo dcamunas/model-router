@@ -2,15 +2,34 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.16.0] - 2026-10-22
+
+### Removed
+
+- The tribunal. Two judges blind to each other with an arbiter on a split, the Codex door, the model
+  discovery for a Codex home, the `tribunal` command, its hook and its plugin are now their own project,
+  [model-tribunal](https://github.com/dcamunas/model-tribunal), which depends on this package for the
+  engine. Gone from here: the `panel` and `tribunal` verification modes, `arbiter` in plans, records and
+  the SQLite index (schema 4; `router db rebuild` runs on its own), the `MODEL_ROUTER_TRIBUNAL`,
+  `MODEL_ROUTER_ARBITER` and `MODEL_ROUTER_CODEX_HOME` variables, the `external`, `codex_home`, `arbiter`
+  and `qa` keys of config.json (an old one is ignored), and the scoreboard's agreement columns. The
+  router verifies with one judge, as it always did on its own.
+
+### Added
+
+- `catalog.register` and `catalog.unregister`: another package may add a model it serves itself, so its
+  cells can be named, priced and recorded; the router never routes to it.
+- `Verifier.ask`: one judge, one prompt, one verdict, for a package that composes more judges on it.
+- `MODEL_ROUTER_CHILD=1` in every session the router starts itself (a worker, a judge), so a hook that
+  watches a person's turns can leave them alone.
 
 ### Changed
 
 - The README is a storefront now: a pitch, a flow figure in four symbols (light and dark), a quick
   start, what you get, and a table that sends each question to its page. The detail moved, not cut,
   to `docs/`: install, Claude Code, command line and library, how it decides, calibration, privacy and
-  background. The tribunal's README follows the same layout, with its own figure.
-- `docs/showcase/flow.py` draws both figures; the package description matches the README's pitch.
+  background.
+- `docs/showcase/flow.py` draws the figure; the package description matches the README's pitch.
 
 ## [0.15.1] - 2026-10-22
 

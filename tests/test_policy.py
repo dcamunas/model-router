@@ -2,7 +2,7 @@ import pytest
 
 from model_router.catalog import lattice, parse_cell
 from model_router.feedback import FeedbackStore
-from model_router.policy import LadderPolicy, Policy, choose_arbiter, choose_panel, choose_verifier, default_judge
+from model_router.policy import LadderPolicy, Policy, choose_verifier, default_judge
 from model_router.task import Task, contains_checker
 
 
@@ -110,93 +110,30 @@ def test_judge_on_a_single_model_falls_back_to_the_model_below_or_another_cell(m
     assert choose_verifier(parse_cell("opus/xhigh"), "full", cells) == parse_cell("opus/high")
 
 
-def test_panel_pairs_the_fixed_judge_with_a_light_judge_on_a_third_model():
-    cells = lattice()
-    panel = choose_panel(parse_cell("opus/high"), cells)
-    assert [c.label for c in panel] == ["sonnet/low", "fable/low"]  # cheapest first; Fable is the full judge here
-    panel = choose_panel(parse_cell("sonnet/medium"), cells)
-    assert [c.label for c in panel] == ["opus/xhigh", "fable/low"]  # Opus is the full judge: the light one skips it
-    panel = choose_panel(parse_cell("fable/max"), cells)
-    assert [c.label for c in panel] == ["opus/xhigh", "fable/xhigh"]  # Opus judges; Sonnet is two tiers down: itself
-    for worker in ("haiku/low", "sonnet/medium", "opus/high"):
-        panel = choose_panel(parse_cell(worker), cells)
-        assert len({c.model for c in panel} | {parse_cell(worker).model}) == 3  # no two of the three share a model
-
-
 def test_light_judge_stays_within_a_tier_and_falls_back_to_the_worker(monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,opus")
     cells = lattice()
     light = choose_verifier(parse_cell("opus/high"), "light", cells)
     assert light is not None and light.label == "opus/high"  # Haiku is two tiers down: no check, itself instead
-    assert [c.label for c in choose_panel(parse_cell("opus/high"), cells)] == ["haiku/xhigh", "opus/high"]
     monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus,fable")
     cells = lattice()
-    assert [c.label for c in choose_panel(parse_cell("opus/high"), cells)] == ["opus/high", "fable/low"]  # never one judge
-    assert [c.label for c in choose_panel(parse_cell("fable/low"), cells)] == ["opus/xhigh", "fable/low"]
-    assert choose_arbiter(parse_cell("fable/low"), cells) == parse_cell("fable/medium")
+    light = choose_verifier(parse_cell("opus/high"), "light", cells)
+    assert light is not None and light.label == "fable/low"  # the tier above, at low effort
+    full = choose_verifier(parse_cell("fable/low"), "full", cells)
+    assert full is not None and full.label == "opus/xhigh"  # the configured judge: another model than the worker
 
 
-def test_panel_with_one_model_uses_two_cells_and_degrades_to_one_at_the_top(monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
-    cells = lattice()
-    panel = choose_panel(parse_cell("opus/medium"), cells)
-    assert [c.label for c in panel] == ["opus/medium", "opus/xhigh"]
-    assert choose_panel(parse_cell("opus/max"), cells) == [parse_cell("opus/xhigh")]
-
-
-def test_the_router_never_picks_two_judges_itself_even_at_critical_risk():
+def test_critical_risk_gets_one_full_judge_and_high_risk_a_light_one():
     policy = Policy()
     for kind in ("analysis", "write", "review", "code"):
-        assert policy.plan(Task(prompt="x", kind=kind, risk="critical")).verify == "full"  # two judges: the tribunal plugin
-    assert policy.judges_for(parse_cell("opus/medium"), "tribunal")  # it still seats a tribunal when asked
+        assert policy.plan(Task(prompt="x", kind=kind, risk="critical")).verify == "full"
+    assert len(policy.judges_for(parse_cell("opus/medium"), "full")) == 1
     assert policy.plan(Task(prompt="x", kind="analysis", risk="high")).verify == "light"
     with_checker = Task(prompt="x", kind="analysis", risk="critical", checker=contains_checker("42"))
     assert policy.plan(with_checker).verify == "full"
     assert policy.plan(Task(prompt="x", kind="analysis", risk="critical", verify="full")).verify == "full"
-    assert policy.plan(Task(prompt="x", kind="code", risk="low", verify="panel")).verify == "panel"
-    plan = policy.plan(Task(prompt="x", kind="review", risk="critical"))
-    assert not any("tribunal" in r for r in plan.rationale)
-
-
-def test_arbiter_is_the_next_model_up_from_the_judge_else_one_effort_up(monkeypatch):
-    monkeypatch.delenv("MODEL_ROUTER_ARBITER", raising=False)
-    cells = lattice()
-    # judges fable/low + opus/xhigh: fable/low and opus/xhigh are taken, so the light judge's model one effort up
-    assert choose_arbiter(parse_cell("sonnet/medium"), cells) == parse_cell("fable/medium")
-    # judges opus/medium + fable/low: nothing above fable, so the judge one effort up
-    assert choose_arbiter(parse_cell("opus/medium"), cells) == parse_cell("fable/medium")
-    # judges sonnet/low + opus/xhigh: nothing above Fable and opus/xhigh is taken, so the worker one effort up
-    assert choose_arbiter(parse_cell("fable/low"), cells) == parse_cell("fable/medium")
-    # judges opus/low + haiku/xhigh (a judge below the worker): the next model above both, never the worker's own
-    assert choose_arbiter(parse_cell("sonnet/medium"), cells, judge=parse_cell("haiku/xhigh")) == parse_cell("fable/low")
-    # a configured arbiter wins unless it is one of the judges
-    assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("sonnet/max")) == parse_cell("sonnet/xhigh")
-    assert choose_arbiter(parse_cell("opus/medium"), cells, arbiter=parse_cell("fable/low")) == parse_cell("fable/medium")
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus")
-    cells = lattice()
-    assert choose_arbiter(parse_cell("opus/medium"), cells) == parse_cell("opus/high")  # judges opus/medium + opus/xhigh
-    assert choose_arbiter(parse_cell("opus/high"), cells) is None  # judges opus/high + opus/xhigh: nothing is left
-
-
-def test_arbiter_comes_from_the_environment_or_config(monkeypatch, tmp_path):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.delenv("MODEL_ROUTER_ARBITER", raising=False)
-    assert Policy().arbiter is None
-    (tmp_path / "config.json").write_text('{"arbiter": "fable/max"}')
-    assert Policy().arbiter == parse_cell("fable/xhigh")
-    monkeypatch.setenv("MODEL_ROUTER_ARBITER", "sonnet/high")
-    assert Policy().arbiter == parse_cell("sonnet/high")
-    assert LadderPolicy([parse_cell("opus/low")]).arbiter == parse_cell("sonnet/high")
-    assert Policy().arbiter_for(parse_cell("opus/medium")) == parse_cell("sonnet/high")
-
-
-def test_judges_for_lists_every_judge_and_the_panel_cost_counts_both():
-    policy = Policy()
-    cell = parse_cell("opus/high")
-    assert policy.judges_for(cell, "none") == []
-    assert policy.judges_for(cell, "full") == [choose_verifier(cell, "full", policy.cells)]
-    assert policy.judges_for(cell, "panel") == choose_panel(cell, policy.cells)
-    assert policy.attempt_cost(cell, "panel", 2000, 1500) > policy.attempt_cost(cell, "full", 2000, 1500)
+    with pytest.raises(ValueError, match="unknown verify mode"):
+        Task(prompt="x", kind="code", risk="low", verify="panel")
 
 
 def test_invalid_task_values_are_rejected():
@@ -223,3 +160,11 @@ def test_policy_falls_back_when_the_table_names_a_missing_model(monkeypatch):
     plan = policy.plan(Task(prompt="x", kind="code", risk="critical"))  # floor opus/medium still applies
     assert plan.start.capability >= parse_cell("opus/medium").capability
     assert all(c.spec.short != "fable" for c in plan.ladder)
+
+
+def test_judges_for_lists_the_one_judge_and_its_cost_counts_in_the_attempt():
+    policy = Policy()
+    cell = parse_cell("opus/high")
+    assert policy.judges_for(cell, "none") == []
+    assert policy.judges_for(cell, "full") == [choose_verifier(cell, "full", policy.cells)]
+    assert policy.attempt_cost(cell, "full", 2000, 1500) > policy.attempt_cost(cell, "none", 2000, 1500)

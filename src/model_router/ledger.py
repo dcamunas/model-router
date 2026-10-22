@@ -18,9 +18,6 @@ if TYPE_CHECKING:
     from .runner import TaskResult
     from .store import Store
 
-TRIBUNAL_CALIBRATION = "tribunal"  # the calibration id of a tribunal plugin record (`qa.run_qa`, `qa.judge_answer`)
-
-
 _LOCK = threading.Lock()
 
 
@@ -124,9 +121,6 @@ class Summary:
     by_cell: dict[str, dict[str, float]] = field(default_factory=dict)
     by_kind: dict[str, dict[str, float]] = field(default_factory=dict)
     by_judge: dict[str, dict[str, int]] = field(default_factory=dict)  # the scoreboard, see `scoreboard`
-    tribunal_reviews: int = 0  # the tribunal plugin's records: kept out of the totals above, counted here
-    tribunal_passed: int = 0
-    tribunal_cost: float = 0.0
 
     @property
     def total_cost(self) -> float:
@@ -147,9 +141,6 @@ class Summary:
             f"work cost {money(self.work_cost)} · verification {money(self.verify_cost)} · total {money(self.total_cost)}",
             f"cost per solved task: {money(self.cost_per_solved) if self.cost_per_solved is not None else 'n/a'}",
         ]
-        if self.tribunal_reviews:
-            lines.append(f"tribunal (plugin): {self.tribunal_reviews} reviews · {self.tribunal_passed} passed · "
-                         f"verification {money(self.tribunal_cost)}")
         if self.by_cell:
             rows = []
             for label, s in sorted(self.by_cell.items(), key=lambda kv: -kv[1]["attempts"]):
@@ -167,18 +158,10 @@ class Summary:
         if self.by_judge:
             rows = []
             for label, s in sorted(self.by_judge.items(), key=lambda kv: -kv[1]["verdicts"]):
-                paired = s["agreed"] + s["split"]
-                ruled = s["backed"] + s["overruled"]
-                rows.append([
-                    label, s["verdicts"], f"{s['passes'] / s['verdicts']:.0%}",
-                    f"{s['agreed'] / paired:.0%} of {paired}" if paired else "-",
-                    f"{s['backed'] / ruled:.0%} of {ruled}" if ruled else "-",
-                    s["contradicted"],
-                ])
+                rows.append([label, s["verdicts"], f"{s['passes'] / s['verdicts']:.0%}", s["contradicted"]])
             lines.append("")
-            lines.append("judges' scoreboard (agreed = with the other judge; backed = by the arbiter on a split; "
-                         "contradicted = by a human override)")
-            lines.append(table(["judge", "verdicts", "pass rate", "agreed", "backed", "contradicted"], rows))
+            lines.append("judges' scoreboard (contradicted = by a human override of the task's final verdict)")
+            lines.append(table(["judge", "verdicts", "pass rate", "contradicted"], rows))
         return "\n".join(lines)
 
 
@@ -188,11 +171,6 @@ def summarize(task_records: list[dict[str, Any]]) -> Summary:
     cells: dict[str, dict[str, float]] = defaultdict(lambda: {"attempts": 0, "judged": 0, "passes": 0, "cost": 0.0})
     kinds: dict[str, dict[str, float]] = defaultdict(lambda: {"tasks": 0, "solved": 0, "cost": 0.0})
     for t in task_records:
-        if t.get("calibration_id") == TRIBUNAL_CALIBRATION:  # the tribunal plugin's: its judges count, not as a task here
-            s.tribunal_reviews += 1
-            s.tribunal_passed += t["status"] == "solved"
-            s.tribunal_cost += t.get("verify_cost_usd", 0.0)
-            continue
         s.tasks += 1
         solved = t["status"] == "solved"
         s.solved += solved
@@ -225,29 +203,18 @@ def summarize(task_records: list[dict[str, Any]]) -> Summary:
 
 
 def scoreboard(task_records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
-    """Return, per judge cell, how many verdicts it gave and how many passed, how often it agreed with the other
-    judge when both were asked (`agreed` / `split`), how often the arbiter sided with it on a split (`backed` /
-    `overruled`) and how many of its verdicts on a task's final attempt a human override contradicted.
+    """Return, per judge cell, how many verdicts it gave, how many passed, and how many of its verdicts on a task's
+    final attempt a human override contradicted.
     """
-    board: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"verdicts": 0, "passes": 0, "agreed": 0, "split": 0, "backed": 0, "overruled": 0, "contradicted": 0}
-    )
+    board: dict[str, dict[str, int]] = defaultdict(lambda: {"verdicts": 0, "passes": 0, "contradicted": 0})
     for t in task_records:
         attempts = t.get("attempts") or []
         human = (t["status"] == "solved") if t.get("overridden") else None
         for i, a in enumerate(attempts):
-            judges = [v for v in a.get("verdicts") or [] if v.get("role") == "judge"]
-            arbiter = next((v for v in a.get("verdicts") or [] if v.get("role") == "arbiter"), None)
-            for v in judges:
+            for v in [v for v in a.get("verdicts") or [] if v.get("role") == "judge"]:
                 b = board[v["cell"]]
                 b["verdicts"] += 1
                 b["passes"] += bool(v["passed"])
                 if human is not None and i == len(attempts) - 1 and bool(v["passed"]) != human:
                     b["contradicted"] += 1
-            if len(judges) == 2:
-                same = bool(judges[0]["passed"]) == bool(judges[1]["passed"])
-                for v in judges:
-                    board[v["cell"]]["agreed" if same else "split"] += 1
-                    if not same and arbiter is not None:
-                        board[v["cell"]]["backed" if bool(v["passed"]) == bool(arbiter["passed"]) else "overruled"] += 1
     return dict(board)

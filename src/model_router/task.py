@@ -20,9 +20,8 @@ KINDS: tuple[str, ...] = (
     "classify", "extract", "summarize", "search", "chat", "write", "code", "review", "analysis", "agentic", "unknown",
 )
 RISKS: tuple[str, ...] = ("low", "medium", "high", "critical")
-VERIFY_MODES: tuple[str, ...] = ("none", "light", "full", "panel", "tribunal")  # what the verifier can do
-ROUTER_VERIFY_MODES: tuple[str, ...] = ("none", "light", "full")  # what the router offers; two judges are the tribunal's
-VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge", "panel", "tribunal"})  # verdict sources that are evidence
+VERIFY_MODES: tuple[str, ...] = ("none", "light", "full")  # what the verifier can do
+VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge"})  # verdict sources that are evidence
 
 DEFAULT_MAX_TOKENS = 16_000  # equals client.NON_STREAMING_MAX_TOKENS, so the api backend never streams by default
 CHARS_PER_TOKEN = 4  # rough average for Spanish and English prose and code; planning only
@@ -56,7 +55,7 @@ class Task:
     max_tokens: int = DEFAULT_MAX_TOKENS
     budget_usd: float | None = None  # overrides the risk default
     max_attempts: int | None = None  # overrides the risk default
-    verify: str | None = None  # overrides the risk default: none | light | full | panel | tribunal
+    verify: str | None = None  # overrides the risk default: none | light | full
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:

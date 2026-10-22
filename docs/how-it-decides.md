@@ -79,8 +79,6 @@ A programmatic checker, when the task has one, always runs first and is final wh
   worker judging itself passed a quarter of the answers an independent judge failed.
 - `full` is one fixed judge, `opus/xhigh` unless `router config --judge` or `MODEL_ROUTER_JUDGE` say
   otherwise, on another model than the worker (see [Who judges](#who-judges)).
-- Two judges at once are the tribunal plugin's job. The router's plan never asks for them, and a task
-  file that says `verify: tribunal` is refused.
 
 ### 5. Stopping
 

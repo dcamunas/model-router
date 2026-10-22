@@ -22,13 +22,11 @@ MODELS_ENV = "MODEL_ROUTER_MODELS"  # models this installation may route to, e.g
 CONFIG_DIR_ENV = "MODEL_ROUTER_CLAUDE_CONFIG_DIR"  # Claude profile for the cli backend
 JUDGE_ENV = "MODEL_ROUTER_JUDGE"  # the cell that judges in `full` mode, e.g. "opus/xhigh"
 LEAN_ENV = "MODEL_ROUTER_LEAN"  # 0 keeps every subagent on the agent Claude chose: no switch to the read-only one
-TRIBUNAL_ENV = "MODEL_ROUTER_TRIBUNAL"  # 0 turns the tribunal plugin's hooks off; every CLI call the router starts sets it
-ARBITER_ENV = "MODEL_ROUTER_ARBITER"  # the cell that settles a tribunal's split; unset = the rule in policy.py
 CALIBRATION_ENV = "MODEL_ROUTER_CALIBRATION"  # the calibration that decides: an id or a file; "none" = the code tables
-CODEX_HOME_ENV = "MODEL_ROUTER_CODEX_HOME"  # the Codex home (ChatGPT account) for `codex` cells; never the ambient ~/.codex
 HOOK_ENV = "MODEL_ROUTER_HOOK"  # "0" disables the Claude Code hook without uninstalling it
 HOOK_LOG_ENV = "MODEL_ROUTER_HOOK_LOG"  # "0" stops the hook's decisions log
 HOOK_QUIET_ENV = "MODEL_ROUTER_HOOK_QUIET"  # "1" hides the hook's one-line notice in the UI
+CHILD_ENV = "MODEL_ROUTER_CHILD"  # "1" in every session the router starts itself (a worker, a judge): not a person's turn
 
 
 def home() -> Path:

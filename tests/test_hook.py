@@ -145,9 +145,8 @@ def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp
 
 def test_a_judge_setting_the_router_cannot_resolve_never_stops_the_routing(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    (tmp_path / "config.json").write_text(json.dumps({  # an older version's config: a ChatGPT judge and model list
-        "judge": "luna/high", "models": ["haiku", "sonnet", "opus", "fable", "luna"],
-        "external": {"luna": {"provider": "codex", "id": "gpt-6-luna", "input": 0.1, "output": 0.5}}}))
+    (tmp_path / "config.json").write_text(json.dumps({  # an older version's config: a judge and a model it does not know
+        "judge": "luna/high", "models": ["haiku", "sonnet", "opus", "fable", "luna"]}))
     updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
     assert updated["model"] in ("opus", "fable") and record["cell"].split("/")[0] in ("opus", "fable")
 

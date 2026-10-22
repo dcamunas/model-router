@@ -21,8 +21,11 @@
     },
     {
       "name": "tribunal",
-      "source": "./plugins/tribunal",
-      "description": "A Claude judge and a Codex judge review each change blind to each other; an arbiter decides when they split. Needs model-router.",
+      "source": {
+        "source": "github",
+        "repo": "dcamunas/model-tribunal"
+      },
+      "description": "A Claude judge and a Codex judge review each change blind to each other; an arbiter decides when they split.",
       "category": "productivity",
       "tags": [
         "qa",

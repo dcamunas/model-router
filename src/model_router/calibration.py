@@ -194,7 +194,7 @@ def load_calibration(name: str) -> Calibration:
 
 def _independent(attempt: dict[str, Any], worker: Cell) -> bool:
     """Say whether the verdict on `attempt` is evidence: a checker decided, or a judge on a model other than
-    `worker`'s backed the final verdict (the arbiter's ruling counts as such a judge). A worker judging itself
+    `worker`'s backed the final verdict. A worker judging itself
     in a fresh context passed a quarter of the answers an independent judge failed, so its lone verdict is not.
     """
     if attempt.get("verdict_source") == "checker":

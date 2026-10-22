@@ -34,7 +34,7 @@ from pydantic import BaseModel, ValidationError
 
 from .catalog import Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
-from .paths import CONFIG_DIR_ENV, TRIBUNAL_ENV, config_path, read_config
+from .paths import CHILD_ENV, CONFIG_DIR_ENV, config_path, read_config
 
 DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
 NO_MCP = '{"mcpServers":{}}'
@@ -123,7 +123,7 @@ class CliClient:
             args += ["--json-schema", json.dumps(output_format.model_json_schema())]
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CONFIG_DIR"] = str(self.config_dir)
-        env[TRIBUNAL_ENV] = "0"  # a worker's or a judge's session is never itself sent to the tribunal plugin
+        env[CHILD_ENV] = "1"  # a session the router starts, not a person's turn: hooks that watch turns may skip it
         env.setdefault("ENABLE_CLAUDEAI_MCP_SERVERS", "false")
         t0 = time.monotonic()
         try:

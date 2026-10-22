@@ -72,8 +72,9 @@ def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
     assert available_models() == ["claude-sonnet-5-5", "claude-opus-5-5"]
     assert [c.label for c in lattice()][-1] == "opus/max"
     monkeypatch.setenv(MODELS_ENV, "sonet")
-    with pytest.raises(ValueError):
-        available_models()
+    assert available_models() == list(MODELS)  # a name it does not know is ignored, and the plan says so
+    monkeypatch.setenv(MODELS_ENV, "sonet,opus")
+    assert available_models() == ["claude-opus-5-5"]
     with pytest.raises(ValueError):
         parse_models("")
     # nearest: same effort on the best model below; the first one above when nothing is below
@@ -82,48 +83,41 @@ def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
     assert nearest_available(parse_cell("opus/high"), ["opus"]).label == "opus/high"
 
 
-def test_codex_models_are_the_tribunal_s_and_never_enter_the_router_s_lattice(monkeypatch, tmp_path):
+def test_a_registered_model_can_be_named_and_priced_but_never_enters_the_router_s_lattice(monkeypatch, tmp_path):
     from model_router.catalog import (
         MODELS,
+        ModelSpec,
         available_models,
-        external_models,
         lattice,
-        load_external,
+        nearest_available,
         nearest_effort,
-        parse_external,
+        parse_cell,
+        register,
+        unregister,
+        worker_cell,
     )
 
-    name, luna = parse_external("luna=codex/gpt-6-luna@0.1/0.5/0")
-    assert name == "luna" and luna is not None and (luna.provider, luna.family, luna.tier) == ("codex", "openai", 0)
-    assert luna.efforts == ("low", "medium", "high", "xhigh") and luna.default_effort == "medium"
-    with pytest.raises(ValueError, match="one declaration per model id"):
-        parse_external("x=codex/claude-opus-5-5@1/1")  # a Claude id through another door would replace Opus
-    for gone in ("gpt=openai/gpt-5.5@5/30", "gem=gemini/g@1/1", "ds=deepseek/d@1/1", "grok=xai/g@1/1"):
-        with pytest.raises(ValueError, match="known: codex"):
-            parse_external(gone)  # the router is Claude only; Codex is the tribunal's one other door
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    load_external({"external": {"luna": {"provider": "codex", "id": "gpt-6-luna", "input": 0.1, "output": 0.5}}})
+    other = ModelSpec("vendor-model-1", "vendor", 0, 0.1, 0.5, 0.1, 0.1, "medium", False, provider="vendor",
+                      efforts=("low", "medium", "high", "xhigh"))
+    with pytest.raises(ValueError, match="Claude model's name"):
+        register(ModelSpec("vendor-opus", "opus", 2, 1, 1, 1, 1, "medium", False, provider="vendor"))
+    with pytest.raises(ValueError, match="Claude model's id"):
+        register(ModelSpec("claude-opus-5-5", "vendor2", 2, 1, 1, 1, 1, "medium", False, provider="vendor"))
+    register(other)
     try:
-        anthropic = [m for m, s in MODELS.items() if s.provider == "anthropic"]
-        assert [s.short for s in external_models()] == ["luna"]
-        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,luna")  # an older version's list
-        assert available_models() == anthropic and len(lattice()) == 20  # luna is declared, listed, and still out
+        claude = [m for m, s in MODELS.items() if s.claude]
+        assert parse_cell("vendor/high").capability == 0.40 and parse_cell("vendor").effort == "medium"  # its tier's
+        assert nearest_available(parse_cell("vendor/high"), ["opus"]) == parse_cell("vendor/high")  # its registrar serves it
+        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,vendor,nosuch")  # an older version's list
+        assert available_models() == claude and len(lattice()) == 20  # registered, listed, and still out
+        assert worker_cell(parse_cell("haiku/low"), ["vendor"]).label == "vendor/low"  # asked for by name, it stands in
         assert nearest_effort("max", ("low", "high")) == "high" and nearest_effort("low", ("medium",)) == "medium"
+        register(ModelSpec("vendor-model-1", "vendor-b", 1, 1, 1, 1, 1, "low", False, provider="vendor"))
+        assert parse_cell("vendor-b/low").tier == 1  # the same id again: the first short name is gone
+        with pytest.raises(ValueError):
+            parse_cell("vendor/low")
     finally:
-        load_external({})
-
-
-def test_a_declared_tier_places_the_model_in_the_ladder(monkeypatch, tmp_path):
-    from model_router.catalog import load_external, parse_cell, worker_cell
-
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
-    declared = {"weak": {"provider": "codex", "id": "gpt-6-luna", "input": 2.5, "output": 12.5, "tier": 0},
-                "bad": {"provider": "codex", "id": "x", "input": 1, "output": 2, "tier": 9}}
-    assert load_external({"external": declared}) == ["weak"]  # a tier outside 0..3 does not load
-    try:
-        assert parse_cell("weak/medium").capability == 0.37  # Haiku-class, not Opus-class
-        assert worker_cell(parse_cell("haiku/low"), ["weak"]).label == "weak/low"  # it stands in for Haiku, not Opus
-        assert worker_cell(parse_cell("opus/high"), ["weak"]).label == "weak/high"  # the only model there is
-    finally:
-        load_external({})
+        unregister("vendor-model-1")
+        unregister("claude-opus-5-5")  # a Claude model is left alone
+    assert "vendor-model-1" not in MODELS and "claude-opus-5-5" in MODELS

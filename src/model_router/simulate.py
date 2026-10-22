@@ -5,8 +5,8 @@ hard tail, and it exercises the real Router, Policy and Verifier code paths end 
 
 The worker's answer carries its own ground truth (`SIM|task|cell|ok`), so a programmatic checker is
 perfect and a judge is wrong with the configured false-pass / false-fail rates. Judges of one answer
-share their random draw JUDGE_CORRELATION of the time: models of one family err together, so a panel
-of two is worth less here than two independent judges would be.
+share their random draw JUDGE_CORRELATION of the time: models of one family err together, so a second
+judge of the same family would be worth less than an independent one.
 """
 
 from __future__ import annotations

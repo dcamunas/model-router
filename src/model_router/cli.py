@@ -44,6 +44,7 @@ from .catalog import (
     available_models,
     lattice,
     parse_cell,
+    unknown_listed,
 )
 from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError, Completion
@@ -80,8 +81,8 @@ from .task import (
     DEFAULT_MAX_TOKENS,
     KINDS,
     RISKS,
-    ROUTER_VERIFY_MODES,
     VERIFIED_SOURCES,
+    VERIFY_MODES,
     Task,
     json_checker,
     regex_checker,
@@ -104,7 +105,7 @@ def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True, with
     p.add_argument("--kind", "-k", choices=KINDS, help="task kind (inferred by rules when missing)")
     p.add_argument("--risk", "-r", choices=RISKS, help="how bad a wrong answer is (inferred when missing)")
     if with_verify:
-        p.add_argument("--verify", choices=ROUTER_VERIFY_MODES, help="force the verification mode")
+        p.add_argument("--verify", choices=VERIFY_MODES, help="force the verification mode")
     p.add_argument("--budget", type=float, help="spending cap in USD for the task")
     p.add_argument("--max-attempts", type=int, help="maximum attempts")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
@@ -180,7 +181,7 @@ def _attempts_table(result: TaskResult, *, width: int | None = None) -> str:
     for a in result.attempts:
         verdict = "-" if a.verdict is None else ("pass" if a.verdict else "fail")
         served = a.served_model if a.fallback_ran else ""
-        judged = "+".join(j.label for j in a.judges) + (f" > {a.arbiter.label}" if a.arbiter else "")
+        judged = "+".join(j.label for j in a.judges)
         rows.append([a.n, a.cell.label, served, a.stop_reason, f"{a.usage.input_tokens:,}/{a.usage.output_tokens:,}",
                      money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + judged if judged else ''})",
                      money(a.verify_cost_usd), a.reason])
@@ -313,11 +314,10 @@ def _spec_task(spec: dict[str, Any]) -> Task:
 
 
 def _router_verify(spec: dict[str, Any]) -> str | None:
-    """Return a task file's `verify`, refusing a mode the router does not offer (two judges are the tribunal's)."""
+    """Return a task file's `verify`, refusing a mode the router does not offer."""
     verify = spec.get("verify")
-    if verify is not None and verify not in ROUTER_VERIFY_MODES:
-        raise SystemExit(f"task {spec.get('id', '?')}: verify {verify!r} is not a router mode "
-                         f"({', '.join(ROUTER_VERIFY_MODES)}); two judges are the tribunal plugin's (`tribunal judge`)")
+    if verify is not None and verify not in VERIFY_MODES:
+        raise SystemExit(f"task {spec.get('id', '?')}: verify {verify!r} is not a router mode ({', '.join(VERIFY_MODES)})")
     return verify
 
 
@@ -760,14 +760,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     hook_bin = hook_binary()
     missing = "not found (install the package: uv tool install ... or uv sync)"
     checks.append((hook_bin is not None, f"hook binary: {hook_bin or missing}"))
-    try:
-        avail = available_models()
-        source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if read_config().get("models") else "catalogue")
-        checks.append((True, f"available models: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
-    except UnknownModelError as exc:
-        checks.append((False, f"available models: {exc.name!r} does not exist (check {MODELS_ENV} or `router install --models`)"))
-    except ValueError:
-        checks.append((False, f"available models: empty list (check {MODELS_ENV} or `router install --models`)"))
+    avail = available_models()
+    source = MODELS_ENV if os.environ.get(MODELS_ENV) else ("config.json" if read_config().get("models") else "catalogue")
+    checks.append((True, f"available models: {', '.join(MODELS[m].short for m in avail)} (via {source})"))
+    unknown = unknown_listed()
+    if unknown:
+        checks.append((False, f"the models setting names models this router does not know, ignored: {', '.join(unknown)} "
+                              f"(check {MODELS_ENV} or `router config --models`)"))
     try:
         judge = default_judge()
         source = JUDGE_ENV if os.environ.get(JUDGE_ENV) else ("config.json" if read_config().get("judge") else "default")
@@ -957,7 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--yes", "-y", action="store_true", help="do not ask before spending")
     sb.add_argument("--jobs", "-j", type=int, default=3, help="tasks in parallel (default 3)")
     sb.add_argument("--repeat", type=int, default=1, help="run every task this many times (models are not deterministic)")
-    sb.add_argument("--verify", choices=("auto", *ROUTER_VERIFY_MODES),
+    sb.add_argument("--verify", choices=("auto", *VERIFY_MODES),
                     help="verification for fixed-cell strategies: a mode, or auto = what the router picks by risk "
                          "(default: light for a ladder, none for one cell)")
     sb.add_argument("--dry-run", action="store_true", help="validate the file and print the estimate; call nothing")

@@ -168,17 +168,14 @@ def model_names(models: str) -> list[str] | None:
 
 def remember(
     profile: Path | None, models: list[str] | None, *, reset_models: bool = False, judge: str | None = None,
-    arbiter: str | None = None, calibration: str | None = None, codex_home: Path | None = None,
+    calibration: str | None = None,
 ) -> None:
     """Record in config.json the Claude profile for `router run`, the models this installation may route
-    to (`reset_models` removes that restriction), the judge cell for full verification, the arbiter of
-    a tribunal split (an empty string removes it, so the rule applies), the active calibration (an
-    empty string removes it, so the code tables decide) and the Codex home for `codex` cells. A None
-    value leaves its key untouched.
+    to (`reset_models` removes that restriction), the judge cell for full verification and the active
+    calibration (an empty string removes it, so the code tables decide). A None value leaves its key untouched.
     """
     cfg = read_config()
-    lines = _apply_config(cfg, profile, models, reset_models=reset_models, judge=judge, arbiter=arbiter,
-                          calibration=calibration, codex_home=codex_home)
+    lines = _apply_config(cfg, profile, models, reset_models=reset_models, judge=judge, calibration=calibration)
     if not lines:
         return
     path = save_config(cfg)
@@ -188,7 +185,7 @@ def remember(
 
 def _apply_config(
     cfg: dict[str, Any], profile: Path | None, models: list[str] | None, *, reset_models: bool, judge: str | None,
-    arbiter: str | None, calibration: str | None = None, codex_home: Path | None = None,
+    calibration: str | None = None,
 ) -> list[str]:
     """Apply the requested changes to `cfg` in place and return one line per change, for the user."""
     lines = []
@@ -204,21 +201,12 @@ def _apply_config(
     if judge is not None:
         cfg["judge"] = judge
         lines.append(f"judge for full verification: {judge}")
-    if arbiter is not None:
-        if arbiter:
-            cfg["arbiter"] = arbiter
-        else:
-            cfg.pop("arbiter", None)
-        lines.append(f"arbiter for a tribunal split: {arbiter or 'by rule'}")
     if calibration is not None:
         if calibration:
             cfg["calibration"] = calibration
         else:
             cfg.pop("calibration", None)
         lines.append(f"calibration: {calibration or 'none, the built-in tables decide'}")
-    if codex_home is not None:
-        cfg["codex_home"] = str(codex_home)
-        lines.append(f"Codex home for `codex` cells: {codex_home}")
     return lines
 
 
