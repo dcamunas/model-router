@@ -21,6 +21,8 @@ jobs:
       - run: uv build
       - name: the skill ships inside the wheel
         run: unzip -l dist/*.whl | grep -q 'model_router/claude_code/router/SKILL.md'
+      - name: the read-only agent ships inside the wheel
+        run: unzip -l dist/*.whl | grep -q 'model_router/claude_code/agents/reader.md'
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

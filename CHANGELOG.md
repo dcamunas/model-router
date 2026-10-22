@@ -2,6 +2,40 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.14.0] - 2026-10-22
+
+The router is a Claude Code plugin for Claude models, and its job inside Claude Code is subagents: the model,
+the effort and the agent each one needs, and a measurement of what each one really spent.
+
+### Added
+
+- A read-only agent, `model-router:reader` (Read, Grep, Glob, WebFetch, WebSearch; no edits, no shell, no MCP
+  servers), shipped by the plugin and copied into the profile as `router-reader` by `router install`. The hook
+  sends a general-purpose subagent there when its kind is a reading one (search, review, analysis, summarize,
+  extract, classify, chat) and nothing in its prompt asks to edit, run or reach a service; `access: read` on
+  the first line asks for it, `access: write` keeps the general agent. Measured on the same review of one file,
+  same model and effort: 0.0054 USD on the general agent, 0.0023 USD on the reader, with a quarter of the
+  context written to the cache. `router config --lean off` and `MODEL_ROUTER_LEAN=0` switch it off; `router
+  doctor` says whether it is there.
+- Subagent measurement: on `SubagentStop` the hook reads the subagent's transcript and records its model,
+  turns, tokens (cache reads and writes, once per message id), list-price cost, peak context, tool calls and
+  duration, next to the routing decision (joined by a hash of the prompt). The transcript is read again once
+  it has settled, because the last message is not in it when the event fires. `router stats` shows it per
+  agent and model; `router install` and the plugin register the event.
+
+### Removed
+
+- Every model of another provider from the router: the OpenAI, Gemini, DeepSeek and xAI doors, `router config
+  --external`, `--codex-home` and `--codex-models`, external judges and workers, and their doctor checks. A
+  model list or a judge setting from an older version that names one no longer stops the router or the hook.
+
+### Changed
+
+- Codex is the tribunal's alone: `tribunal config --codex-home`, `--codex-models` and `--declare` set it up.
+  It now always runs with its shell tool off, in an empty directory: with a shell its read-only sandbox read a
+  decoy file outside the repository, and what it reads goes to OpenAI. The tribunal sends both judges the diff
+  and the changed files as they are now; the Claude judge can still read the repository, and nothing outside it.
+
 ## [0.13.0] - 2026-10-22
 
 The tribunal leaves the router and becomes a plugin of its own. The router picks a model and an effort,

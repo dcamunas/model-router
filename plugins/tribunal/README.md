@@ -29,9 +29,9 @@ flowchart LR
 claude plugin marketplace add dcamunas/model-router
 claude plugin install model-router@dcamunas      # the tribunal runs from its environment
 claude plugin install tribunal@dcamunas
-uv tool install git+https://github.com/dcamunas/model-router@v0.13.0   # the `router` and `tribunal` commands
-router config --codex-home ~/.codex-personal     # a Codex home signed in with your ChatGPT account
-router config --codex-models terra               # the Codex model that judges (see what it lists first)
+uv tool install git+https://github.com/dcamunas/model-router@v0.14.0   # the `router` and `tribunal` commands
+tribunal config --codex-home ~/.codex-personal   # a Codex home signed in with your ChatGPT account; lists its models
+tribunal config --codex-models terra             # declare the Codex model that judges
 ```
 
 Without a Codex model the tribunal still runs, with a second Claude model as judge B, and says so.
@@ -39,8 +39,9 @@ Without a Codex model the tribunal still runs, with a second Claude model as jud
 ## In Claude Code: QA of each turn
 
 When a turn changes code in a git repository, the plugin's `Stop` hook judges that change against
-your request before the turn ends. Both judges read the request and the diff inside the repository,
-read-only, so they can open callers and tests. A pass is one line. A fail goes back to Claude with
+your request before the turn ends. Both judges get the request, the diff and the changed files as
+they are now. The Claude judge also reads inside the repository, read-only, so it can open callers
+and tests; the Codex judge reads nothing else (see "What reaches Codex"). A pass is one line. A fail goes back to Claude with
 the findings, and Claude fixes what is right and says why it disagrees with the rest. A turn gets two
 reviews by default; a fail in the last one is reported to you and the turn ends.
 
@@ -107,9 +108,18 @@ no ranking, no chairman.
 - An edit inside a git submodule is not seen; the submodule counts as its committed pointer.
 - Untracked files above 1 MB are left out of the snapshot (databases, logs, builds). Every snapshot
   writes the other files into `.git` as loose objects, which `git gc` removes in time.
-- A diff longer than 50,000 characters reaches the judges as the list of every changed file and the
-  first part of the diff; they open the rest in the repository.
-- The Claude judge reads only inside the repository and loads only your user settings, not the
-  repository's. The Codex judge runs in Codex's read-only sandbox, which can read the whole disk.
-  What the repository says is treated as material to review, never as instructions, but a judge is
+- A diff longer than 30,000 characters reaches the judges as the list of every changed file and the
+  first part of the diff, and the changed files are shown whole up to 25,000 characters in all.
+- What the repository says is treated as material to review, never as instructions, but a judge is
   still a model reading text.
+
+## What reaches Codex
+
+Only what the prompt carries: your request, the diff, and the changed files as they are now. Codex
+runs in an empty directory with its shell tool turned off, so it cannot open any file. This is on
+purpose. With a shell, Codex's read-only sandbox still reads any file your user can read: in a test
+here it read a decoy file outside the repository, and what it reads goes to OpenAI. Without it, the
+same request came back with no way to read anything, by its own tool or by a subagent.
+
+The Claude judge reads inside the repository with Read, Grep and Glob; reading outside it is denied,
+also tested. It loads only your user settings, not the repository's, whose hooks would otherwise run.

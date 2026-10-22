@@ -3,7 +3,9 @@
 A model router for Claude. Give it a task and it picks a model and an effort level, runs the
 task, checks the answer as hard as the risk asks, moves to a stronger model when the answer fails,
 and writes down what every solved task cost. It works from the command line, as a Python library
-and inside Claude Code, where a hook picks model and effort for every subagent launched without one.
+and inside Claude Code, where it is mostly about subagents: a hook gives each one the model, the
+effort and the agent it needs, sends reading work to a read-only agent that carries a fraction of
+the context, and measures what every subagent really spent. Claude models only.
 
 Status: experimental. The capability of each cell is a stated assumption, not a measurement; the
 ledger and `router calibrate` exist to replace those assumptions with real verdicts (see
@@ -72,7 +74,7 @@ router across providers, take one of those; this one picks the effort inside Cla
 Requirements: Python 3.12 or later, [uv](https://docs.astral.sh/uv/), and Claude Code if you want
 the hook or the backend that needs no API key.
 
-### As a Claude Code plugin (hook + skill)
+### As a Claude Code plugin (hooks, skill, read-only agent)
 
 Inside Claude Code, one line (2.1.275 or later):
 
@@ -99,7 +101,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.13.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.14.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -107,10 +109,11 @@ router doctor                               # claude, profile, plugin or hooks, 
 ### With the CLI, where plugins are not an option
 
 Profiles where a policy blocks marketplaces, or one specific repository: `router install` writes
-the same hooks and the same skill into the profile's `settings.json`.
+the same hooks into the profile's `settings.json` and copies the skill and the read-only agent
+(as `router-reader`) into the profile.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.13.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.14.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -235,33 +238,41 @@ or the other.
 
 ## Inside Claude Code
 
-Two pieces, one source of truth (the `model_router` package), delivered the same way by the plugin
-and by `router install`:
+A subagent's bill is mostly its context, read again on every turn: the tools, the MCP servers, the
+skills and the conversation so far. A review subagent on Opus measured in this repository took 36
+turns and read 3.6M cached tokens to write 314 tokens of answer, 1.43 USD at list price. So the
+plugin works on three things, all of them on Claude models:
 
-- Hook `router-hook`: `PreToolUse` on the Agent tool sets `model` and `effort` for every
-  general-purpose subagent Claude launches without choosing a model, from the kind and the risk
-  declared in the description or the prompt (`kind: review`, `risk: high`), else inferred from the
-  text. `SessionStart` tells Claude the hook exists, and to declare both, since only the
-  orchestrator knows what the result is for. It
-  calls no API, takes a few tenths of a second and never blocks: on any error it exits quietly.
-- Skill `router`: what a hook cannot do. Verify with a second subagent, escalate, and send text-only
-  subtasks (classify, extract, summarise, draft) through `router run` instead of a subagent, which
-  drags the whole session context along, and to verify a subagent's result with `router judge`.
+- **Model and effort.** `PreToolUse` on the Agent tool sets `model` and `effort` for every
+  general-purpose subagent launched without a model, from the kind and the risk declared on the first
+  line of the prompt (`kind: review, risk: high`), else inferred from the text, and from the active
+  calibration. A critical review never runs on the model serving the chat.
+- **The agent.** Reading work (search, review, analysis, summaries, extraction, classification) goes
+  to `model-router:reader`, a read-only agent with Read, Grep, Glob, WebFetch and WebSearch: no
+  edits, no shell, no MCP servers. The same review of one file, on the same model and effort, cost
+  0.0054 USD on the general agent and 0.0023 USD on the read-only one, with a quarter of the context
+  written to the cache. The hook keeps the general agent when the prompt asks to edit, run or reach a
+  service; `access: write` on the first line keeps it outright, `access: read` asks for the reader.
+- **Measurement.** `SubagentStop` reads each finished subagent's transcript and records its model,
+  turns, tokens (cache reads and writes included), list-price cost, peak context, tool calls and
+  duration, next to the routing decision. `router stats` shows it per agent and model.
 
-Nobody changes the model of the main session: `settings.json` or `/model` set it. What the hook does
-do for the orchestrator: a review whose risk asks for `full` verification (today only `critical`)
-never runs on the model serving the chat; the hook reads that model from the session transcript and
-jumps to the verifier cell on another model (chat on Opus, critical review on fable/low). It is the
-only verification the orchestrator itself gets. If the transcript cannot be read, or no other model
-is available, the rule does nothing.
+```bash
+router stats                 # ... then "Claude Code subagents, measured from their transcripts"
+router config --lean off     # keep every subagent on the agent Claude chose
+```
 
-What it does not do: it leaves the agents defined in `.claude/agents/*.md` alone (their frontmatter
-rules), and the forks too, and it neither verifies nor escalates by itself.
+`SessionStart` tells Claude the hook exists and what to declare. The skill `router` covers what a
+hook cannot do: verify a subagent's result, escalate, and send text-only subtasks through `router
+run`, which carries no session context at all. The hooks call no API, take a few tenths of a second
+and never block: on any error they exit quietly. Agents defined in `.claude/agents/*.md` and forks are
+left alone; they are still measured.
 
-Environment variables: `MODEL_ROUTER_HOOK=0` turns it off without uninstalling;
-`MODEL_ROUTER_HOOK_QUIET=1` removes the one-line notice in the UI; `MODEL_ROUTER_HOOK_LOG=0` stops
-logging decisions; `MODEL_ROUTER_UV` tells the plugin where `uv` is. Decisions are kept in
-`~/.model-router/hook.jsonl` and `router stats` summarises them.
+Environment variables: `MODEL_ROUTER_HOOK=0` turns the hooks off without uninstalling;
+`MODEL_ROUTER_LEAN=0` keeps subagents off the read-only agent; `MODEL_ROUTER_HOOK_QUIET=1` removes
+the one-line notice; `MODEL_ROUTER_HOOK_LOG=0` stops logging decisions and measurements;
+`MODEL_ROUTER_UV` tells the plugin where `uv` is. Decisions go to `~/.model-router/hook.jsonl` and
+measurements to `~/.model-router/subagents.jsonl`.
 
 ## As a library
 
@@ -277,10 +288,6 @@ result = router.run(Task(
 print(result.status, result.final_cell, f"${result.total_cost_usd:.4f}")
 print(result.answer)
 ```
-
-With models from other providers, register them and wrap the client: `load_external(read_config())`
-(from `model_router.catalog` and `model_router.paths`), then `Router(MultiClient(LiveClient()))` with
-`MultiClient` from `model_router.providers`.
 
 `Task` takes `output_schema` (a pydantic model for structured output), `system`, `budget_usd`,
 `max_attempts` and `verify` to force the mode. `Router` accepts any object with
@@ -349,54 +356,15 @@ Every judge's own verdict goes to the ledger, so `router stats` keeps a scoreboa
 verdicts, pass rate, and how many of its verdicts you contradicted with `router feedback`. Those are
 the numbers to pick a judge with, instead of the error rates the simulation assumes.
 
-## Other providers: judges, and workers when you list them
-
-A model from another provider can be the judge, and a second company errs in different places
-than the first. It also does the work once you list it among the models that may. Five doors: `openai`, `deepseek` and `xai` by API key; `codex` (ChatGPT through the Codex CLI)
-and `gemini` (Google through its CLI) by subscription, as `claude -p` does for Anthropic.
-
-```bash
-router config --codex-home ~/.codex-personal             # a Codex home signed in with your ChatGPT account; never ~/.codex by accident
-router config --codex-models                             # what that account can run, with OpenAI's list price and a default tier
-router config --codex-models sol,luna                    # declare those two; the rest stay out
-router config --external gpt=openai/gpt-5.5@5/30        # by hand: NAME=DOOR/MODEL_ID@$ per M in/$ per M out[/TIER]
-router config --judge sol/high                          # the full judge, now from another company
-router config --models haiku,sonnet,opus,fable,luna      # now luna may take tasks too; without this it only judges
-router doctor                                            # per model: key set, home signed in; --live makes one call each
-```
-
-For a Codex home, the router reads from the home itself which models the account can run, and
-proposes each one with OpenAI's list price on a stated date and a tier by family (Luna 0, Sol and
-Terra 1, Astra 3). Nothing is declared until you name it. Being able to reach a model is not the
-same as wanting to spend it: a small quota shared by a whole workspace is not written anywhere, and
-the router does not try to read quotas. For the other doors the ids and prices are yours to type;
-they change, and a wrong number in the ledger is worse than none. `router doctor` says when a
-declared OpenAI price differs from the list one, and when a Codex home no longer lists a declared
-model. Declare the API list price even when you pay by subscription: the ledger prices
-every call at list price, so strategies stay comparable. A declared model enters the lattice with the
-efforts its door accepts (one cell for Gemini, four for Codex) and the tier you give it (`/TIER`, 0 Haiku
-to 3 Fable; Opus, 2, when omitted): an assumption that says where the ladder escalates to it, until
-`router calibrate` measures what it passes; a start table that names it while it is not listed hands the task to
-the Claude of its tier and says so. The Claude Code hook keeps choosing among Claude models only: the
-Agent tool runs nothing else. Through a CLI, a verdict is asked for with the CLI's own schema option (Codex) or in the prompt (Gemini), is
-validated here, gets one more try when it does not come back as JSON, and otherwise counts as a judge
-error: the router never invents a verdict. Each CLI call runs in an empty directory with read-only
-tools and nothing persisted. Codex runs only on the home you configured (it must exist and be signed
-in); Gemini has no such switch, so that door runs on the machine's own `~/.gemini` sign-in and settings.
-
-API details that are deliberate: `output_config.effort` carries the effort; `thinking` is not sent
-(adaptive by default, and `disabled` returns 400 on the 5.5 family); the models that accept it get
-`fallbacks="default"` so a classifier refusal is retried on the model Anthropic recommends;
-structured output goes through `parse`; above 16K tokens the call streams.
-
 ## What leaves your machine
 
-- The hook calls no API: it classifies by rules, locally. It saves every decision in
-  `~/.model-router/hook.jsonl` with the first 60 characters of the subagent's prompt.
+- The hooks call no API: they classify by rules, locally. Every decision goes to
+  `~/.model-router/hook.jsonl` with the first 60 characters of the subagent's prompt and a hash of
+  it; every measurement goes to `~/.model-router/subagents.jsonl` with numbers and that hash, read
+  from the transcript Claude Code already keeps on your disk.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
-  or your Claude Code account. With a model from another provider declared (`router config --external`),
-  the task and the answer go to that provider too: by its API with your key, or through the Codex or
-  Gemini CLI with your account there. To nobody else.
+  or your Claude Code account, and to nobody else. (The tribunal plugin also sends a reviewed change
+  to Codex; its README says what goes.)
 - The ledger and its SQLite index keep tokens, cost, cell, verdict and the judges' reasons for every
   attempt; they keep neither the prompt nor the answer, only a hash of the task. A reason may quote a
   few words of either.

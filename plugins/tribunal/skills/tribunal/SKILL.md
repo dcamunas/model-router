@@ -6,9 +6,9 @@ description: A Claude judge and a Codex judge, blind to each other, with an arbi
 # Tribunal: QA of code changes
 
 What already happens on its own: when a turn changes code in a git repository, the plugin's `Stop` hook
-judges that change against the user's request before the turn ends. Two judges read the brief and the diff,
-each in its own session, blind to the other, read-only inside the repository: a Claude model other than the
-one serving this chat, and a Codex model (ChatGPT). If they disagree, an arbiter reads both verdicts and
+judges that change against the user's request before the turn ends. Two judges read the brief, the diff and
+the changed files, each in its own session, blind to the other: a Claude model other than the one serving
+this chat, which may also read the repository, and a Codex model (ChatGPT), which reads nothing but that. If they disagree, an arbiter reads both verdicts and
 decides. A pass shows one line. A fail comes back to you as the reason to keep working.
 
 ## When the tribunal fails your change
@@ -42,7 +42,7 @@ Later wins: the machine, the repository, the request.
 
 ```bash
 tribunal config --codex terra/high --rounds 2              # this machine; `default` goes back
-router config --codex-models                               # which Codex models this account can run
+tribunal config --codex-models                             # which Codex models this account can run
 ```
 
 `.claude/tribunal.json` in a repository: `{"mode": "off"}` to leave it out, or any of `mode`, `claude`,
