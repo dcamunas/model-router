@@ -179,8 +179,8 @@ def test_the_router_never_chooses_max_effort_on_its_own():
     plan = Policy(cells=cells, start_table={"write": {"high": "opus/max"}, "unknown": START["unknown"]},
                   calibration=None).plan(Task(prompt="x", kind="write", risk="high"))
     assert plan.start.label == "opus/xhigh" and any("never chooses max" in r for r in plan.rationale)
-    tuned = Policy(cells=cells, calibration=None, tuning={"start": {"write": {"high": {"cell": "haiku/max"}}}})
-    assert tuned.plan(Task(prompt="x", kind="write", risk="high")).start.effort != "max"
+    tuned = Policy(cells=cells, calibration=None, tuning={"start": {"write": {"high": {"cell": "fable/max"}}}})
+    assert tuned.plan(Task(prompt="x", kind="write", risk="high")).start.label == "fable/xhigh"  # applied, capped
     assert parse_cell("opus/max").effort == "max"  # named by hand, it is still a cell
 
 

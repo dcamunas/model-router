@@ -24,12 +24,20 @@ def _run(i: int, agent: str = "curator", *, model: str = "opus", effort: str = "
 def test_a_run_is_repeated_when_another_starts_soon_after_on_an_alike_prompt_in_its_session():
     brief = "curate the migration of the equipment tables, steps four eight and ten, with every check"
     first = {**_run(1, prompt=brief), "session": "s"}
-    again = {**_run(2, agent="general-purpose", prompt=brief, minutes=10, seconds=300), "session": "s"}
+    again = {**_run(2, agent="general-purpose", model="fable", effort="low", prompt=brief, minutes=10, seconds=300),
+             "session": "s"}
     other_session = {**_run(3, prompt=brief, minutes=10, seconds=300), "session": "t"}
     too_late = {**_run(4, prompt=brief, minutes=90), "session": "s"}
     unlike = {**_run(5, prompt="write the weekly report for the data team", minutes=5), "session": "s"}
     assert agents.repeated_ids([first, again, other_session, unlike]) == {"curator-1"}
     assert agents.repeated_ids([first, too_late]) == set()
+
+
+def test_the_same_agent_looping_over_files_with_one_template_is_not_repeated():
+    template = "review the file {} against the rules of the repository and report every finding with its line"
+    loop = [{**_run(i, prompt=template.format(f"src/module_{i}.py"), minutes=3 * i), "session": "s"} for i in range(6)]
+    assert agents.repeated_ids(loop) == set()
+    assert agents.advise(loop, REPO, cells=lattice())[0].action == "keep"  # not "raise to fable"
 
 
 def test_fewer_than_six_runs_are_only_measured():
@@ -48,7 +56,8 @@ def test_repeated_runs_advise_one_step_up_and_price_the_new_model():
     for i in range(6):
         flaky.append({**_run(i, prompt=brief, minutes=i * 60), "session": "s"})
         if i < 2:
-            flaky.append({**_run(100 + i, agent="general-purpose", prompt=brief, minutes=i * 60 + 5), "session": "s"})
+            flaky.append({**_run(100 + i, agent="general-purpose", model="fable", effort="low", prompt=brief,
+                                 minutes=i * 60 + 5), "session": "s"})
     advice = agents.advise(flaky, REPO, cells=lattice())[0]
     assert advice.action == "raise" and advice.repeated == 2 and advice.to is not None
     assert advice.to.model == "claude-fable-5-1" and advice.saving is not None and advice.saving < 0  # costs more
@@ -63,6 +72,17 @@ def test_only_agents_fixed_by_hand_in_this_repository_are_advised():
                _run(4, agent="model-router:reader"), _run(5, agent="Explore"), _run(6, routed="haiku/low"),
                {**_run(7), "project": "/other"}, {**_run(8), "model": "gpt-x"}]
     assert [(a.agent, a.runs) for a in agents.advise(records, REPO, cells=lattice())] == [("curator", 1)]
+
+
+def test_agents_that_inherit_the_model_or_are_built_in_get_no_advice(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".claude" / "agents").mkdir(parents=True)
+    (repo / ".claude" / "agents" / "helper.md").write_text("---\nname: helper\nmodel: inherit\n---\nhelp")
+    (repo / ".claude" / "agents" / "plain.md").write_text("---\nname: plain\n---\nno model")
+    (repo / ".claude" / "agents" / "fixed.md").write_text("---\nname: fixed\nmodel: sonnet\n---\nfixed")
+    records = [{**_run(i, agent=name), "project": str(repo)}
+               for i, name in enumerate(["helper", "plain", "fixed", "claude-code-guide", "statusline-setup", "plugin:x"])]
+    assert sorted(a.agent for a in agents.advise(records, str(repo), cells=lattice())) == ["fixed", "plugin:x"]
 
 
 def test_router_agents_prints_the_advice_and_where_the_agent_lives(tmp_path, monkeypatch, capsys):

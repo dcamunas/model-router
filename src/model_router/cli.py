@@ -134,6 +134,9 @@ def _prompt_from(args: argparse.Namespace) -> str:
 def _task_from(
     args: argparse.Namespace, prompt: str, client: ClaudeClient | None = None
 ) -> tuple[Task, Classification | None]:
+    """Build the task from the arguments and its text, the kind and risk declared or classified, and raised by the
+    repository's floors when there is text to search (not the placeholder of a text-less `router plan`).
+    """
     kind, risk, cls = args.kind, args.risk, None
     if kind is None or risk is None:
         cls = classify_llm(client, prompt) if (args.classify_llm and client is not None) else classify_rules(prompt)
@@ -141,9 +144,13 @@ def _task_from(
         risk = risk or cls.risk
     from .projects import project_of
 
-    risk, floor = floors.apply(risk, floors.head(prompt), floors=floors.load(project_of(str(Path.cwd()))))
-    if floor is not None:
-        print(f"risk raised to {risk} by this repository's floor: {floor.label}", file=sys.stderr)
+    if prompt != DECLARED_ONLY_PROMPT:
+        raised = floors.apply(risk, floors.head(prompt), floors=floors.load(project_of(str(Path.cwd()))))
+        if raised.rule is not None:
+            print(f"risk raised to {raised.risk} by this repository's floor: {raised.rule.label}", file=sys.stderr)
+        for label in raised.unsearched:
+            print(f"floor not searched (too slow, or no timer here): {label}", file=sys.stderr)
+        risk = raised.risk
     checker = None
     if args.check_regex:
         checker = regex_checker(args.check_regex)
@@ -688,13 +695,12 @@ def _print_floors(project: str) -> None:
         return
     hits: dict[str, int] = {}
     for record in _jsonl(home() / "hook.jsonl"):
-        if record.get("project") == project and record.get("floor"):
-            label = str(record["floor"]).split(": ", 1)[-1]
-            hits[label] = hits.get(label, 0) + 1
+        if record.get("project") == project and record.get("floor_match"):
+            hits[str(record["floor_match"])] = hits.get(str(record["floor_match"]), 0) + 1
     print(f"\nrisk floors ({found.path})")
     if found.rules:
         print(table(["at least", "when the brief says", "raised"],
-                    [[rule.risk, rule.label, hits.get(rule.label, 0)] for rule in found.rules]))
+                    [[rule.risk, rule.label, hits.get(rule.match, 0)] for rule in found.rules]))
     for problem in found.problems:
         print(f"  not used: {problem}")
 
@@ -709,7 +715,7 @@ def _team_check(profile: Path) -> tuple[Path | None, tuple[bool, str] | None]:
     if project is None or not team.enabled_in(project):
         return None, None
     settings = team.settings_path(project)
-    if team.installed_in(profile):
+    if team.installed_in(profile, project):
         return settings, (True, f"plugin turned on for the team in {settings} and installed in {profile}")
     return None, (False, f"plugin turned on for the team in {settings} but not installed in {profile}: run "
                          f"`{team.INSTALL_COMMAND}` here once, then start a new session")

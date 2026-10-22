@@ -16,14 +16,23 @@ cheaper than Claude asked for. A rule that cannot be used (a bad pattern, an unk
 `router doctor` lists it; a file that cannot be read gives no floors. The file is read as a regular file, never
 through a link, and only its first MAX_FILE_BYTES.
 
+A pattern comes from a file anyone with commit rights wrote, and a regular expression can take exponential time
+(`(a+)+$`). So each search runs under a timer of RULE_SECONDS (SIGALRM, which interrupts Python's `re`): a rule that
+runs out of time counts as not matching, and the decision says which one. Where no timer can be set (a thread other
+than the main one, or a timer already running) the rules are not searched at all.
+
 The file sits next to `.claude/model-router/`, not inside it: that directory is the opt-in for shared counts
 (`shared.py`), and setting floors must not turn sharing on.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+import signal
+import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +46,8 @@ MAX_RULES = 50
 MAX_PATTERN_CHARS = 200  # a pattern runs on every subagent launch: long ones are where slow ones hide
 HEAD_LINES = 4  # the declaration line and the sentences that say the task
 MAX_HEAD_CHARS = 2000
+RULE_SECONDS = 0.05  # a sane pattern on MAX_HEAD_CHARS takes microseconds; MAX_RULES of these stay far under a hook's
+# timeout
 
 
 @dataclass(frozen=True)
@@ -63,6 +74,17 @@ class Floors:
     problems: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class Raised:
+    """Hold the risk after the floors, the rule that set it (None when none raised it) and the rules not searched:
+    out of time, or no timer to search them under.
+    """
+
+    risk: str
+    rule: FloorRule | None = None
+    unsearched: tuple[str, ...] = ()
+
+
 def floors_path(project: str) -> Path:
     """Return where a repository keeps its floors."""
     return Path(project) / FLOORS_FILE
@@ -75,14 +97,19 @@ def load(project: str | None) -> Floors:
     path = floors_path(project)
     raw = read_regular(path, MAX_FILE_BYTES)
     if raw is None:
-        problem = (f"{path} is not a regular file of at most {MAX_FILE_BYTES // 1024} KB" if path.is_symlink()
-                   or path.exists() else None)
-        return Floors(path if path.exists() else None, problems=(problem,) if problem else ())
+        try:
+            there = path.is_symlink() or path.exists()
+        except OSError:  # a directory on the way that cannot be read
+            there = False
+        if not there:
+            return Floors(None)
+        return Floors(path, problems=(f"{path} is not a regular file of at most {MAX_FILE_BYTES // 1024} KB",))
     try:
         data = json.loads(raw.decode("utf-8"))
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:  # RecursionError: nesting deep enough to exhaust the parser
         return Floors(path, problems=(f"{path} is not valid JSON: {exc}",))
-    if not isinstance(data, dict) or data.get("v") != FORMAT or not isinstance(data.get("floors", []), list):
+    if (not isinstance(data, dict) or type(data.get("v")) is not int or data["v"] != FORMAT
+            or not isinstance(data.get("floors", []), list)):
         return Floors(path, problems=(f'{path}: expected {{"v": {FORMAT}, "floors": [...]}}',))
     return parse(path, data.get("floors", []))
 
@@ -116,7 +143,7 @@ def _rule(entry: object) -> tuple[FloorRule | None, str]:
         return None, "`why` must be text"
     try:
         pattern = re.compile(match, re.IGNORECASE)
-    except re.error as exc:
+    except (re.error, OverflowError, RecursionError, ValueError) as exc:  # `a{99999999999}` overflows, not re.error
         return None, f"`match` is not a valid pattern ({exc})"
     return FloorRule(match, pattern, str(risk), why.strip()), ""
 
@@ -127,10 +154,52 @@ def head(prompt: str, description: str = "") -> str:
     return "\n".join([description, *lines])[:MAX_HEAD_CHARS]
 
 
-def apply(risk: str, text: str, *, floors: Floors) -> tuple[str, FloorRule | None]:
-    """Return the risk after the floors that match `text`, and the rule that set it (None when none raised it)."""
+def apply(risk: str, text: str, *, floors: Floors) -> Raised:
+    """Return the risk after the floors that match `text`: the highest of `risk` and every matching rule's."""
     best: FloorRule | None = None
+    unsearched: list[str] = []
     for rule in floors.rules:
-        if RISKS.index(rule.risk) > RISKS.index(best.risk if best else risk) and rule.pattern.search(text):
+        if RISKS.index(rule.risk) <= RISKS.index(best.risk if best else risk):
+            continue  # it could not raise anything: no need to run it
+        found = _search(rule, text)
+        if found is None:
+            unsearched.append(rule.label)
+        elif found:
             best = rule
-    return (best.risk, best) if best else (risk, None)
+    return Raised(best.risk if best else risk, best, tuple(unsearched))
+
+
+class _OutOfTimeError(Exception):
+    """Raised by the timer inside a search that took longer than RULE_SECONDS."""
+
+
+def _search(rule: FloorRule, text: str) -> bool | None:
+    """Say whether `rule` matches `text`, or None when it ran out of time or no timer could be set."""
+    with _timer(RULE_SECONDS) as armed:
+        if not armed:
+            return None
+        try:
+            return rule.pattern.search(text) is not None
+        except _OutOfTimeError:
+            return None
+
+
+@contextlib.contextmanager
+def _timer(seconds: float) -> Iterator[bool]:
+    """Raise _OutOfTimeError in the main thread after `seconds`; yield False, setting nothing, where that is not
+    possible (another thread, or a timer someone else already runs). The previous handler is put back.
+    """
+    if threading.current_thread() is not threading.main_thread() or signal.getitimer(signal.ITIMER_REAL)[0] > 0:
+        yield False
+        return
+
+    def out_of_time(_signum: int, _frame: object) -> None:
+        raise _OutOfTimeError
+
+    previous = signal.signal(signal.SIGALRM, out_of_time)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield True
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)

@@ -28,6 +28,20 @@ def test_enable_writes_both_keys_and_keeps_everything_else(tmp_path):
     assert team.enable(str(repo)) == [] and team.enabled_in(str(repo))  # a second run changes nothing
 
 
+def test_enable_keeps_the_file_mode_says_what_it_left_and_what_it_turned_back_on(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / ".claude").mkdir()
+    settings = repo / ".claude" / "settings.json"
+    settings.write_text(json.dumps({"enabledPlugins": {team.PLUGIN_ID: False},
+                                    "extraKnownMarketplaces": {"dcamunas": {"source": {"source": "git", "url": "x"}}}}))
+    settings.chmod(0o644)
+    changed = team.enable(str(repo))
+    assert "left as it was" in changed[0] and changed[1].endswith("(it was turned off)")
+    assert settings.stat().st_mode & 0o777 == 0o644
+    data = json.loads(settings.read_text())
+    assert data["extraKnownMarketplaces"]["dcamunas"]["source"]["url"] == "x" and data["enabledPlugins"][team.PLUGIN_ID]
+
+
 def test_enable_creates_the_file_and_refuses_what_it_cannot_change_safely(tmp_path):
     repo = _repo(tmp_path)
     assert team.enable(str(repo)) and team.enabled_in(str(repo))
@@ -59,8 +73,13 @@ def test_router_project_team_and_doctor_say_what_each_person_does(tmp_path, monk
     main(["doctor"])
     out = capsys.readouterr().out
     assert "FAIL   plugin turned on for the team" in out and team.INSTALL_COMMAND in out
-    (profile / "plugins" / "installed_plugins.json").write_text(
-        json.dumps({"version": 2, "plugins": {team.PLUGIN_ID: [{"scope": "project"}]}}))
+    installed = profile / "plugins" / "installed_plugins.json"
+    installed.write_text(json.dumps({"version": 2, "plugins": {team.PLUGIN_ID: [
+        {"scope": "project", "projectPath": str(tmp_path / "another-repo")}]}}))
+    main(["doctor"])
+    assert "FAIL   plugin turned on for the team" in capsys.readouterr().out  # installed for another repository
+    installed.write_text(json.dumps({"version": 2, "plugins": {team.PLUGIN_ID: [
+        {"scope": "project", "projectPath": str(repo)}]}}))
     main(["doctor"])
     out = capsys.readouterr().out
     assert "ok     plugin turned on for the team" in out and "FAIL   hook PreToolUse" not in out

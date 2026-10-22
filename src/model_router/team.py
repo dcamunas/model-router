@@ -63,22 +63,33 @@ def enable(project: str) -> list[str]:
     plugins = data.setdefault("enabledPlugins", {})
     if not isinstance(marketplaces, dict) or not isinstance(plugins, dict):
         raise SettingsError(f"{path}: extraKnownMarketplaces and enabledPlugins must be objects")
+    wanted = {"source": {"source": "github", "repo": MARKETPLACE_REPO}}
     if MARKETPLACE not in marketplaces:
-        marketplaces[MARKETPLACE] = {"source": {"source": "github", "repo": MARKETPLACE_REPO}}
+        marketplaces[MARKETPLACE] = wanted
         changed.append(f"marketplace {MARKETPLACE} ({MARKETPLACE_REPO})")
+    elif marketplaces[MARKETPLACE] != wanted:
+        changed.append(f"marketplace {MARKETPLACE} left as it was, pointing at {json.dumps(marketplaces[MARKETPLACE])}; "
+                       f"the plugin comes from {MARKETPLACE_REPO}")
     if plugins.get(PLUGIN_ID) is not True:
+        changed.append(f"plugin {PLUGIN_ID} enabled" + (" (it was turned off)" if PLUGIN_ID in plugins else ""))
         plugins[PLUGIN_ID] = True
-        changed.append(f"plugin {PLUGIN_ID} enabled")
     if changed:
         _write(path, data)
     return changed
 
 
 def _write(path: Path, data: dict[str, Any]) -> None:
-    """Replace the file in one step, so a teammate's session never reads half of it."""
+    """Replace the file in one step, so a teammate's session never reads half of it, keeping its permissions."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = path.stat().st_mode & 0o777
+    except OSError:  # a new file: what the umask gives an ordinary file
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
     descriptor, tmp = tempfile.mkstemp(dir=path.parent, prefix=".settings-", suffix=".json")
     try:
+        Path(tmp).chmod(mode)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
         Path(tmp).replace(path)
@@ -98,11 +109,29 @@ def enabled_in(project: str | None) -> bool:
     return isinstance(plugins, dict) and plugins.get(PLUGIN_ID) is True
 
 
-def installed_in(profile: Path) -> bool:
-    """Say whether the Claude profile at `profile` has the plugin installed, at any scope."""
+def installed_in(profile: Path, project: str) -> bool:
+    """Say whether the Claude profile at `profile` has the plugin installed for `project`: for the user, or for that
+    repository (`projectPath` of a project or local install; one made in another repository does not count).
+    """
     try:
         data = json.loads((profile / "plugins" / "installed_plugins.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     plugins = data.get("plugins") if isinstance(data, dict) else None
-    return isinstance(plugins, dict) and bool(plugins.get(PLUGIN_ID))
+    entries = plugins.get(PLUGIN_ID) if isinstance(plugins, dict) else None
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("scope") == "user":
+            return True
+        where = entry.get("projectPath")
+        if isinstance(where, str) and _same_dir(where, project):
+            return True
+    return False
+
+
+def _same_dir(a: str, b: str) -> bool:
+    try:
+        return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+    except OSError:
+        return False

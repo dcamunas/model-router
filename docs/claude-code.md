@@ -86,7 +86,9 @@ committed with the code:
   often each fired, and `router doctor` flags a rule it cannot use (a bad pattern, an unknown risk).
 - **Also outside the hook.** `router plan` and `router run` in that repository follow the same floors.
 - **Safe to commit.** The file is read as a regular file, never through a link, with limits on its
-  size, the number of rules and the length of a pattern. It sits next to `.claude/model-router/`, not
+  size, the number of rules and the length of a pattern. Each search has 0.05 seconds: a pattern that
+  takes longer (some regular expressions take exponential time) counts as not matching, and the
+  decision names it. It sits next to `.claude/model-router/`, not
   inside it, so setting floors does not turn sharing on.
 
 ## Agents fixed by hand
@@ -103,7 +105,10 @@ advice per agent and cell in the repository:
 | keep | anything else |
 
 A run counts as repeated when, in the same session and within 30 minutes of its end, another subagent
-starts on an alike prompt: whoever launched it was not satisfied. When the advice changes the model, it
+starts on an alike prompt on a more capable cell: whoever launched it was not satisfied. The same agent
+again on the same cell is not a repeat, since a loop over files with one template brief looks the same.
+Agents whose frontmatter says `model: inherit`, or names no model, and Claude Code's own agents get
+no advice: their model is the session's. When the advice changes the model, it
 prices the measured tokens at both models; a change of effort also changes the tokens, which is not
 estimated. It never edits an agent: the change is yours.
 

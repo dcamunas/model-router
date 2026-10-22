@@ -2,9 +2,10 @@
 
 The hook leaves those agents alone: their frontmatter decides. It still measures every one when it ends
 (`subagents.py`), and that is enough to say, per agent and cell in a repository, whether the cell looks too low,
-too high, or right. The signal is the same one per-project learning uses: a repeat. A finished agent is repeated
-when, in the same session and within RELAUNCH_WINDOW of its end, another subagent (of any type) starts on an
-alike prompt: whoever launched it was not satisfied.
+too high, or right. The signal is the same one per-project learning uses: a relaunch higher. A finished agent is
+repeated when, in the same session and within RELAUNCH_WINDOW of its end, another subagent (of any type) starts on
+an alike prompt on a more capable cell (`projects.higher`): whoever launched it was not satisfied. The same agent
+again on the same cell is not a repeat: a loop over files with one template brief looks exactly like that.
 
     measuring  fewer than MIN_N runs: nothing to say yet
     raise      at least MIN_FAILS repeats and RAISE_RATE of the runs: one step up the ladder (`step_up`)
@@ -20,6 +21,7 @@ difference is the model's price alone.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -28,10 +30,23 @@ from typing import Any  # Any: measured subagent records, decoded JSON
 
 from . import clock
 from .catalog import Cell, Usage, cost_usd, step_down, step_up
-from .projects import ALIKE, DOWN_N, LOWER_SAVING, MIN_FAILS, MIN_N, RAISE_RATE, RELAUNCH_WINDOW, alike, served_cell
+from .projects import (
+    ALIKE,
+    DOWN_N,
+    LOWER_SAVING,
+    MIN_FAILS,
+    MIN_N,
+    RAISE_RATE,
+    RELAUNCH_WINDOW,
+    alike,
+    higher,
+    served_cell,
+)
 
-# Not fixed by hand: the router's own choices, the built-in agents, the read-only agent and workflow agents.
-NOT_FIXED_BY_HAND = frozenset({"", "general-purpose", "claude", "workflow-subagent", "Explore", "Plan"})
+# Not fixed by hand: the router's own choices, Claude Code's built-in agents, the read-only agent, workflow agents.
+NOT_FIXED_BY_HAND = frozenset({"", "general-purpose", "claude", "workflow-subagent", "Explore", "Plan",
+                               "claude-code-guide", "statusline-setup"})
+INHERITS = re.compile(r"^model:\s*(inherit\s*)?$", re.M)  # frontmatter that leaves the model to the session
 LOWER_MAX_LOSS = 0.08  # the capability a lower cell may give up
 
 
@@ -56,27 +71,41 @@ class Advice:
                 "saving_usd": round(self.saving, 4) if self.saving is not None else None}
 
 
-def fixed_by_hand(record: dict[str, Any]) -> bool:
-    """Say whether a measured subagent ran on a cell someone fixed: a named agent the router did not route."""
+def fixed_by_hand(record: dict[str, Any], project: str) -> bool:
+    """Say whether a measured subagent ran on a cell someone fixed: a named agent the router did not route, and,
+    when its definition is in the repository, one whose frontmatter names a model (not `inherit`).
+    """
     agent = str(record.get("agent_type") or "")
-    return not record.get("routed") and agent not in NOT_FIXED_BY_HAND and not agent.endswith("reader")
+    if record.get("routed") or agent in NOT_FIXED_BY_HAND or agent.endswith("reader"):
+        return False
+    path = agent_file(project, agent)
+    if path is None:
+        return True  # a plugin's or the profile's agent: its definition is elsewhere
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    parts = text.split("---", 2)
+    frontmatter = parts[1] if text.startswith("---") and len(parts) == 3 else ""
+    return "model:" in frontmatter and not INHERITS.search(frontmatter)
 
 
 def repeated_ids(records: list[dict[str, Any]]) -> set[str]:
     """Return the agent ids of the finished subagents that another subagent repeated (see the module docstring)."""
     starts = []
     for r in records:
-        end = clock.parse_moment(r.get("at"))
-        if end is not None and r.get("sig"):
-            starts.append((end - timedelta(seconds=float(r.get("seconds") or 0)), r))
+        end, cell = clock.parse_moment(r.get("at")), served_cell(r)
+        if end is not None and cell is not None and r.get("sig") and r.get("session"):
+            starts.append((end - timedelta(seconds=float(r.get("seconds") or 0)), cell, r))
     out: set[str] = set()
     for r in records:
-        end = clock.parse_moment(r.get("at"))
-        if end is None or not r.get("sig") or not r.get("agent_id"):
+        end, cell = clock.parse_moment(r.get("at")), served_cell(r)
+        if end is None or cell is None or not r.get("sig") or not r.get("agent_id") or not r.get("session"):
             continue
-        for start, later in starts:
-            if (later.get("session") == r.get("session") and later.get("agent_id") != r.get("agent_id")
-                    and timedelta(0) <= start - end <= RELAUNCH_WINDOW and alike(r["sig"], later["sig"]) >= ALIKE):
+        for start, later_cell, later in starts:
+            if (later["session"] == r["session"] and later.get("agent_id") != r["agent_id"]
+                    and timedelta(0) <= start - end <= RELAUNCH_WINDOW and higher(cell, later_cell)
+                    and alike(r["sig"], later["sig"]) >= ALIKE):
                 out.add(str(r["agent_id"]))
                 break
     return out
@@ -88,7 +117,7 @@ def advise(records: list[dict[str, Any]], project: str, *, cells: list[Cell]) ->
     groups: dict[tuple[str, Cell], list[dict[str, Any]]] = {}
     for r in _latest(records):
         cell = served_cell(r)
-        if r.get("project") == project and fixed_by_hand(r) and cell is not None:
+        if r.get("project") == project and cell is not None and fixed_by_hand(r, project):
             groups.setdefault((str(r["agent_type"]), cell), []).append(r)
     out = [_advice(agent, cell, rs, cells=cells, repeated=repeated) for (agent, cell), rs in groups.items()]
     return sorted(out, key=lambda a: -a.total_cost)

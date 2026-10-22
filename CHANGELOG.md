@@ -10,10 +10,12 @@ What a repository with a team needs to run the router well.
 
 - Risk floors per repository, in `.claude/model-router.json`: rules of a pattern and a risk, searched in a
   brief's description and first lines. They only raise. The hook, `router plan` and `router run` follow them;
-  `router project` lists them with how often each fired; `router doctor` flags rules it cannot use.
+  `router project` lists them with how often each fired; `router doctor` flags rules it cannot use. Each
+  search runs under a 0.05-second timer, so a pattern with exponential backtracking cannot stall a launch.
 - `router agents`: advice for the agents whose model and effort are fixed by hand, per agent and cell in a
-  repository, from runs and repeats (another subagent starting soon after on an alike prompt). It says
-  measuring, raise, lower or keep, prices a change of model, and never edits an agent.
+  repository, from runs and repeats (another subagent starting soon after on an alike prompt, on a more
+  capable cell). It says measuring, raise, lower or keep, prices a change of model, and never edits an agent.
+  Agents that inherit the session's model, and Claude Code's own, get no advice.
 - `router project --team`: turns the plugin on for everyone in a repository through its `.claude/settings.json`
   (marketplace and plugin, every other key kept), and prints the command each person runs once.
   `router doctor` says when the repository has it on and the profile lacks it.

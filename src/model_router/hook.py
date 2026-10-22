@@ -141,7 +141,8 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
     feedback = FeedbackStore(home() / "feedback.json")
     project = project_of(cwd)
-    risk, floor = floors.apply(cls.risk, floors.head(prompt, description), floors=floors.load(project))
+    raised = floors.apply(cls.risk, floors.head(prompt, description), floors=floors.load(project))
+    risk, floor = raised.risk, raised.rule
     tuning = load_tuning(project)
     try:
         policy = Policy(cells=claude, feedback=feedback, tuning=tuning)
@@ -169,6 +170,9 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
         record["cross"] = cross
     if floor is not None:
         record["floor"] = f"{cls.risk} -> {risk}: {floor.label}"
+        record["floor_match"] = floor.match
+    if raised.unsearched:
+        record["floor_unsearched"] = list(raised.unsearched)
     lean = lean_agent(cwd)
     safe, why = read_only(prompt, description)
     if lean is not None and safe:
