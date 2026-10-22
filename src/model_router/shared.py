@@ -1,22 +1,24 @@
 """Evidence shared through the repository, so a team learns from everyone's subagents, not only its own.
 
-A repository opts in by holding the directory `.claude/model-router/` (`router project --share` creates it; once
-it is committed, every teammate's installation takes part, unless MODEL_ROUTER_SHARE=0). Each installation adds
-there one small file per closed ISO week, `<id>-<year>W<week>.json`, and never changes it afterwards:
+A repository opts in by holding the directory `.claude/model-router/` (`router project --share` creates it; once it
+is committed, every teammate's installation takes part, unless MODEL_ROUTER_SHARE=0). Each installation adds there
+one small file per closed ISO week, `<id>-<year>W<week>.json`, and never changes it afterwards:
 
     {"v":1,"c":{"review|high|opus/medium":[12,1]}}
 
-per kind, risk and start cell, how many subagents the router started there that week and how many were
-relaunched higher. Nothing else: no prompt, signature, path, name, cost or time of day. The id is a keyed hash of
-the repository's path with this installation's secret salt, so it tells nothing and links no two repositories.
+per kind, risk and start cell, how many subagents the router started there that week and how many were relaunched
+higher. Nothing else: no prompt, signature, path, name, cost or time of day. The id is a keyed hash of the
+repository's path with this installation's secret salt, so it tells nothing and links no two repositories.
 
 The counts are the same evidence `projects.evidence` counts on this machine, summed the same way. This
-installation's files (under any id it ever used) are never read back, since its subagents already count from the
-local log. A week is written a day after it closes, so a late relaunch is in it, and only weeks inside the
-evidence window and after the project's last reset or applied change count. One installation weighs at most
-FILE_CAP launches per kind, risk and cell, scaled so its fail rate is kept: nobody's file can drown the rest.
-Files never change once written, so branches and merges never fight over them; a file that leaves the window is
-deleted by its writer.
+installation's files (under any id it ever used for this repository path) are never read back, since its subagents
+already count from the local log. A week is written a day after it closes, so a late relaunch is in it, and only
+weeks inside the evidence window and after the project's last reset or applied change count. One installation weighs
+at most FILE_CAP launches per kind, risk and cell, scaled so its fail rate is kept, so an honest heavy user does not
+drown the rest (anyone can commit files under made-up ids; that is why the team's counts alone never raise a start
+on their own). Files never change once written, so branches and merges never fight over them; any installation
+deletes the files that left the window. Files are read and written without following links, and a shared directory
+that is a link elsewhere is not used.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ import hashlib
 import json
 import os
 import re
+import stat
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -52,8 +56,16 @@ def shared_dir(project: str) -> Path:
 
 
 def sharing(project: str | None) -> bool:
-    """Say whether a repository shares counts (it holds `.claude/model-router/`) and this installation takes part."""
-    return bool(project) and os.environ.get(SHARE_ENV, "1") != "0" and shared_dir(str(project)).is_dir()
+    """Say whether a repository shares counts (it holds `.claude/model-router/`, a real directory inside it, not a
+    link elsewhere) and this installation takes part.
+    """
+    if not project or os.environ.get(SHARE_ENV, "1") == "0":
+        return False
+    folder = shared_dir(project)
+    try:
+        return folder.is_dir() and folder.resolve() == Path(project).resolve() / Path(*SHARED_DIR)
+    except OSError:
+        return False
 
 
 def own_id(project: str, key: bytes) -> str:
@@ -99,23 +111,24 @@ def write_own(project: str, records: list[dict[str, Any]], decision_log: Path,
     if not kept:  # an id that would change on every run: better not to share at all
         return []
     mine = own_id(project, key)
-    old_ids = _remember(mine) - {mine}
+    old_ids = _remember(project, mine) - {mine}
     folder = shared_dir(project)
     first = window_start(now)
     for path in folder.glob("*.json"):
         m = FILE_NAME.match(path.name)
         begins = week_start(f"{m[2]}-W{m[3]}") if m else None
-        if m and (m[1] in old_ids or (m[1] == mine and (begins is None or begins < first))):
-            path.unlink(missing_ok=True)
+        if m and (m[1] in old_ids or begins is None or begins < first):  # an old id of mine, or out of the window
+            path.unlink(missing_ok=True)  # anyone's: an old week counts for nobody, and a deletion merges cleanly
     added = []
     for week, counts in sorted(own_counts(project, records, relaunched_ids(decision_log), now).items()):
         path = folder / f"{mine}-{week.replace('-', '')}.json"
-        if path.exists():
+        if os.path.lexists(path):
             continue  # written once, never changed
         text = json.dumps({"v": FORMAT, "c": counts}, sort_keys=True, separators=(",", ":")) + "\n"
-        tmp = path.with_name(f".{path.name}.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(path)
+        fd, tmp = tempfile.mkstemp(dir=folder, prefix=".", suffix=".tmp")  # a fresh file: no link of anyone's followed
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        Path(tmp).replace(path)
         added.append(path)
     return added
 
@@ -129,7 +142,7 @@ def pooled(project: str, since: str | None = None, now: datetime | None = None) 
         return {}, 0
     start = max(m for m in (_when(since), window_start(now)) if m is not None)
     key, kept = install_key()
-    skip = _known_ids() | ({own_id(project, key)} if kept else set())
+    skip = _known_ids(project) | ({own_id(project, key)} if kept else set())
     per_install: dict[str, Evidence] = {}
     for path in sorted(shared_dir(project).glob("*.json")):
         m = FILE_NAME.match(path.name)
@@ -156,11 +169,24 @@ def pooled(project: str, since: str | None = None, now: datetime | None = None) 
 
 
 def _read(path: Path) -> list[tuple[tuple[str, str, str], int, int]]:
+    """Read one shared file: a regular file, not a link, at most MAX_FILE_BYTES; anything else gives nothing."""
     try:
-        if path.stat().st_size > MAX_FILE_BYTES:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return []
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
             return []
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = os.read(fd, MAX_FILE_BYTES + 1)
+    except OSError:
+        return []
+    finally:
+        os.close(fd)
+    if len(raw) > MAX_FILE_BYTES:
+        return []
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:
         return []
     if not isinstance(data, dict) or data.get("v") != FORMAT or not isinstance(data.get("c"), dict):
         return []
@@ -184,20 +210,37 @@ def _bucket(key: Any, value: Any) -> tuple[tuple[str, str, str], int, int] | Non
     return (parts[0], parts[1], cell), n, fails
 
 
-def _known_ids() -> set[str]:
+def _ids_key(project: str) -> str:
+    return hashlib.sha256(project.encode()).hexdigest()[:16]
+
+
+def _all_ids() -> dict[str, list[str]]:
     try:
         data = json.loads((home() / IDS_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return set()
-    return {i for i in data if isinstance(i, str)} if isinstance(data, list) else set()
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: [i for i in v if isinstance(i, str)] for k, v in data.items() if isinstance(v, list)}
 
 
-def _remember(mine: str) -> set[str]:
-    """Add `mine` to the ids this installation has written under and return them all."""
+def _known_ids(project: str) -> set[str]:
+    """Return the ids this installation wrote under for this repository path: another clone or worktree of the
+    same repository is another path, whose subagents this one's log does not hold, so its files are a teammate's.
+    """
+    return set(_all_ids().get(_ids_key(project), []))
+
+
+def _remember(project: str, mine: str) -> set[str]:
+    """Add `mine` to the ids this installation has written under for this repository path, and return them all."""
     path = home() / IDS_FILE
     with locked(path):
-        ids = _known_ids()
-        if mine not in ids:
-            ids.add(mine)
-            path.write_text(json.dumps(sorted(ids)) + "\n", encoding="utf-8")
-    return ids
+        ids = _all_ids()
+        row = ids.setdefault(_ids_key(project), [])
+        if mine not in row:
+            row.append(mine)
+            fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".shared-ids", suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(ids, sort_keys=True) + "\n")
+            Path(tmp).replace(path)
+        return set(row)

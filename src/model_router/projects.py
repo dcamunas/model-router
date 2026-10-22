@@ -80,8 +80,8 @@ def install_key() -> tuple[bytes, bool]:
             kept = path.read_bytes()
             if len(kept) >= 16:
                 return kept[:32], True
-            path.write_bytes(salt)  # a damaged salt: replace it
-            return salt, True
+            path.rename(path.with_name(SALT_FILE + ".bad"))  # a damaged salt: set it aside, then make one exclusively
+            continue
         except FileNotFoundError:
             pass
         except OSError:

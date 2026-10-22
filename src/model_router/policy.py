@@ -403,8 +403,12 @@ class Policy:
             tuned = self._available(parse_cell(str(entry["cell"])), rationale)
         except ValueError:
             return start
-        if tuned.capability < start.capability:  # its model is gone and what stands in is weaker: keep the start
-            rationale.append(f"tuning for {name} ignored: {entry['cell']} would run as {tuned}, below {start}")
+        if tuned.label != str(entry["cell"]):  # its model is not available here: what would stand in was never weighed
+            rationale.append(f"tuning for {name} ignored: {entry['cell']} would run as {tuned}")
+            return start
+        floor = FLOOR.get(risk)
+        if floor and tuned.capability < self._available(parse_cell(floor), []).capability:
+            rationale.append(f"tuning for {name} ignored: {tuned} is below the {risk} floor")
             return start
         rationale.append(f"tuned for {name}: {start} -> {tuned}")
         return tuned

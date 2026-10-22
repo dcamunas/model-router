@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from model_router import projects, shared
 from model_router.catalog import parse_cell
@@ -30,6 +31,10 @@ def _rec(project, cell, i, at, *, kind="analysis", risk="medium", chose=True):
 
 def _mine(project):
     return shared.own_id(project, projects.install_key()[0])
+
+
+def _used(project, *ids):
+    (shared.home() / shared.IDS_FILE).write_text(json.dumps({shared._ids_key(project): list(ids)}))
 
 
 def _theirs(project, install, week, counts):
@@ -67,7 +72,7 @@ def test_a_week_is_written_a_day_after_it_closes_and_deleted_when_it_leaves_the_
     assert len(shared.write_own(project, records, tmp_path / "none", now=monday + timedelta(days=1, hours=1))) == 1
     old = _theirs(project, _mine(project), projects.week_of(NOW - timedelta(weeks=20)), {})
     gone = _theirs(project, "abcdefabcdef", WEEK, {"analysis|medium|sonnet/low": [5, 5]})
-    (tmp_path / "home" / shared.IDS_FILE).write_text(json.dumps(["abcdefabcdef"]))  # an id this install used before
+    _used(project, "abcdefabcdef")  # an id this install used before for this path
     shared.write_own(project, records, tmp_path / "none")
     assert not old.exists() and not gone.exists()
 
@@ -99,7 +104,7 @@ def test_pooled_counts_skip_this_install_old_weeks_bad_data_and_cap_each_install
     _theirs(project, "aaaaaaaaaaaa", projects.week_of(NOW - timedelta(weeks=20)), {"analysis|medium|sonnet/low": [50, 50]})
     _theirs(project, "bbbbbbbbbbbb", WEEK, {"analysis|medium|sonnet/low": [2, 1]})
     _theirs(project, _mine(project), WEEK, {"analysis|medium|sonnet/low": [100, 100]})  # mine: counted locally
-    (tmp_path / "home" / shared.IDS_FILE).write_text(json.dumps(["cccccccccccc"]))
+    _used(project, "cccccccccccc")
     _theirs(project, "cccccccccccc", WEEK, {"analysis|medium|sonnet/low": [7, 7]})  # mine too, under an older id
     _theirs(project, "dddddddddddd", WEEK, {}).write_text("not json")
     _theirs(project, "eeeeeeeeeeee", WEEK, {}).write_text(json.dumps({"v": 2, "c": {"analysis|medium|sonnet/low": [9, 9]}}))
@@ -161,3 +166,51 @@ def test_a_cross_checked_review_is_no_evidence_about_its_start(tmp_path, monkeyp
                         "prompt": "kind: review, risk: critical\nReview the payment code"},
                        chat_model=parse_cell(start_in_force({})("review", "critical").label).claude_code()["model"])
     assert record.get("cross") and record["router_chose"] is False
+
+
+def test_another_clone_of_the_same_repository_is_a_teammate_and_old_weeks_go_whoever_wrote_them(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    _used(project + "-worktree", "121212121212")  # this machine wrote it from a worktree: other path, other log
+    worktree = _theirs(project, "121212121212", WEEK, {"analysis|medium|sonnet/low": [2, 1]})
+    stale = _theirs(project, "343434343434", projects.week_of(NOW - timedelta(weeks=20)), {})  # someone who left
+    shared.write_own(project, [_rec(project, "sonnet/low", 1, SETTLED)], tmp_path / "none")
+    assert worktree.exists() and not stale.exists()
+    assert shared.pooled(project)[0] == {("analysis", "medium", "sonnet/low"): {"n": 2, "fails": 1}}
+
+
+def test_links_in_the_shared_directory_are_never_followed(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    folder = shared.shared_dir(project)
+    victim = tmp_path / "bashrc"
+    victim.write_text("mine")
+    target = folder / f"{_mine(project)}-{WEEK.replace('-', '')}.json"
+    target.symlink_to(victim)  # a teammate commits a link under my next file name
+    (folder / f"aaaaaaaaaaaa-{WEEK.replace('-', '')}.json").symlink_to("/dev/zero")  # endless if read
+    big = _theirs(project, "bbbbbbbbbbbb", WEEK, {})
+    big.write_text(" " * (shared.MAX_FILE_BYTES + 10) + "{}")
+    shared.write_own(project, [_rec(project, "sonnet/low", 1, SETTLED)], tmp_path / "none")
+    assert victim.read_text() == "mine"
+    assert shared.pooled(project) == ({}, 0)
+
+
+def test_a_shared_directory_that_links_elsewhere_is_not_used(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch, share=False)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (Path(project) / ".claude").mkdir()
+    shared.shared_dir(project).symlink_to(elsewhere)
+    assert not shared.sharing(project)
+    assert shared.write_own(project, [_rec(project, "sonnet/low", 1, SETTLED)], tmp_path / "none") == []
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_an_applied_cheaper_start_is_in_force(tmp_path, monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    table = start_in_force({})("search", "medium")
+    cheaper = projects._cheaper_below(table, projects.lattice())
+    assert cheaper is not None
+    tuning = {"start": {"search": {"medium": {"cell": cheaper.label, "base": table.label}}}}
+    assert start_in_force(tuning)("search", "medium") == cheaper
+    critical = start_in_force({})("review", "critical")
+    below = {"start": {"review": {"critical": {"cell": "haiku/low", "base": critical.label}}}}
+    assert start_in_force(below)("review", "critical") == critical  # never below a floor

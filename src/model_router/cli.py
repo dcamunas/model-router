@@ -968,7 +968,8 @@ def build_parser() -> argparse.ArgumentParser:
     spj = sub.add_parser("project", help="what the hook learned in this project: subagents routed, relaunched higher, the "
                                         "start cells it raised, and cheaper ones it proposes")
     spj.add_argument("path", nargs="?", type=Path, help="a directory in the project (default: the current one)")
-    spj.add_argument("--apply", action="store_true", help="apply the proposed cheaper starts")
+    spj.add_argument("--apply", action="store_true", help="apply the proposed changes (cheaper starts, raises on the "
+                     "team's counts alone)")
     spj.add_argument("--reset", action="store_true", help="remove this project's tuning")
     spj.add_argument("--share", action="store_true", help="share counts through the repository: creates "
                      ".claude/model-router/, to commit; each installation adds one small file per week there")

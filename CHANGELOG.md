@@ -21,18 +21,21 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
   calibration no longer gives that cell. Tunings live in `~/.model-router/projects/`, written under a lock.
 - Shared counts, opt-in per repository: with `.claude/model-router/` committed in the repo, each installation
   adds one file per ISO week, a day after the week closes, and never changes it: launches and relaunches per
-  kind, risk and start cell (no prompts, signatures, paths, names or costs; a salted file name). It deletes
-  its files once they leave the window. Each installation adds the other installations' files to its own
-  evidence: never its own (under any id it used), only weeks after the last reset and inside the window, at
-  most 30 launches per installation and cell at its own fail rate, malformed entries skipped. Counts from
+  kind, risk and start cell (no prompts, signatures, paths, names or costs; a salted file name). Any
+  installation deletes files that left the window. Each installation counts the other installations' files
+  with its own evidence: never its own (under any id it used for that repository path; another clone or
+  worktree is a teammate), only weeks after the last reset and inside the window, at most 30 launches per
+  installation and cell at its own fail rate, malformed entries skipped. Files are read and written without
+  following links, and a shared directory that links outside the repository is not used. Counts from
   elsewhere alone never raise a start: a raise needs a relaunch on this machine too, or is only proposed.
   `MODEL_ROUTER_SHARE=0` keeps an installation out.
 - `router project [PATH] [--apply] [--reset] [--share]`: the subagents routed in a project (with how many
   came from other installations), how many were relaunched, the tuning in force with its last changes, and
   the changes the evidence supports that wait for a hand (cheaper starts, raises on the team's counts
   alone); `--share` turns shared counts on.
-- `Policy(tuning=...)`: a project's start cells, applied after the risk floors and never weaker than the start
-  they replace; `router plan` applies the current repository's tuning, as the hook does.
+- `Policy(tuning=...)`: a project's start cells, applied after the risk floors; a tuned cell below a floor, or
+  whose model is not available, is ignored. `router plan` applies the current repository's tuning, as the hook
+  does.
 
 ## [0.14.0] - 2026-10-22
 

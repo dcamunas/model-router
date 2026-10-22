@@ -286,18 +286,18 @@ works on three things, all of them on Claude models:
 
   That is launches and fails per kind, risk and start cell. The file holds no prompts, signatures,
   paths, names, costs or times. Its name is a salted hash plus the week. Files never change, so
-  branches and merges do not fight over them, and a file older than 13 weeks is deleted by whoever
-  wrote it. Each router adds the others' files to its own log, but never its own files, which would
-  count it twice. The same rules apply: weeks before a reset do not count, and one installation
-  weighs at most 30 launches per cell, at its own fail rate. The team's counts alone never raise a
-  start. A raise happens on its own only with at least one fail on your machine too; otherwise
+  branches and merges do not fight over them, and any router deletes files older than 13 weeks.
+  Each router counts the others' files with its own log, but never its own files, which would count
+  it twice. The same rules apply: weeks before a reset do not count, and one installation weighs at
+  most 30 launches per cell, at its own fail rate. Links in that directory are never followed. The
+  team's counts alone never raise a start. A raise happens on its own only with at least one fail on your machine too; otherwise
   `router project` proposes it. `MODEL_ROUTER_SHARE=0` keeps one installation out. Git still records
   who committed each file, so anyone who looks can see weekly counts per person.
 
 ```bash
 router stats                 # ... then "Claude Code subagents, measured from their transcripts"
 router project               # this repo: routed subagents, relaunches, tuning in force, cheaper starts proposed
-router project --apply       # apply the proposed cheaper starts; --reset removes the project's tuning
+router project --apply       # apply the proposed changes; --reset removes the project's tuning
 router project --share       # pool counts with the team through .claude/model-router/ in the repo
 router config --lean off     # keep every subagent on the agent Claude chose
 ```
