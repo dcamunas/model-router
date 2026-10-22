@@ -117,16 +117,16 @@ def _create_whole(path: Path, content: bytes) -> None:
         FileExistsError: another process created it first.
         OSError: the directory cannot be written.
     """
-    tmp = None
+    temporary_path = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}", suffix=".tmp")
-        with os.fdopen(fd, "wb") as f:
-            f.write(content)
-        os.link(tmp, path)  # whole and exclusive: nobody ever reads it half written
+        descriptor, temporary_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}", suffix=".tmp")
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+        os.link(temporary_path, path)  # whole and exclusive: nobody ever reads it half written
     finally:
-        if tmp:
-            Path(tmp).unlink(missing_ok=True)
+        if temporary_path:
+            Path(temporary_path).unlink(missing_ok=True)
 
 
 def signature(prompt: str) -> list[int]:
@@ -328,9 +328,9 @@ def update_tuning(project: str, change: Callable[[dict[str, Any]], None]) -> Pat
         change(tuning)
         tuning.update(name=Path(project).name, project=project)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=path.name, suffix=".tmp",
-                                         delete=False) as tmp:
-            tmp.write(json.dumps(tuning, indent=1, ensure_ascii=False) + "\n")
-        Path(tmp.name).replace(path)
+                                         delete=False) as temporary:
+            temporary.write(json.dumps(tuning, indent=1, ensure_ascii=False) + "\n")
+        Path(temporary.name).replace(path)
     return path
 
 
@@ -366,7 +366,7 @@ def raise_failing(project: str, counts: Counts, *, current: Callable[[str, str],
     machine's part of `counts`): counts from elsewhere alone never move a start on their own; `team_raises`
     lists those, for a hand to apply.
     """
-    changes = [c for c in raises(counts, current) if _local_fails(local, c)]
+    changes = [change for change in raises(counts, current) if _local_fails(local, change)]
     if changes:
         update_tuning(project, lambda tuning: _write(tuning, changes))
     return changes
@@ -374,7 +374,7 @@ def raise_failing(project: str, counts: Counts, *, current: Callable[[str, str],
 
 def team_raises(counts: Counts, current: Callable[[str, str], Cell], *, local: Counts) -> list[Change]:
     """Return the raises `counts` supports with no relaunch on this machine: proposed, not applied."""
-    return [c for c in raises(counts, current) if not _local_fails(local, c)]
+    return [change for change in raises(counts, current) if not _local_fails(local, change)]
 
 
 def _local_fails(local: Counts, change: Change) -> bool:
@@ -417,23 +417,23 @@ def apply(project: str, changes: list[Change]) -> Path:
 
 def cheaper_below(cell: Cell, cells: list[Cell]) -> Cell | None:
     """Return the most capable cell whose step up is `cell` and that costs at least LOWER_SAVING less, or None."""
-    below = [c for c in cells if c != cell and step_up(c, cells) == cell
-             and c.expected_cost() <= cell.expected_cost() * (1 - LOWER_SAVING)]
-    return max(below, key=lambda c: (c.capability, -c.expected_cost())) if below else None
+    below = [candidate for candidate in cells if candidate != cell and step_up(candidate, cells) == cell
+             and candidate.expected_cost() <= cell.expected_cost() * (1 - LOWER_SAVING)]
+    return max(below, key=lambda candidate: (candidate.capability, -candidate.expected_cost())) if below else None
 
 
 def _write(tuning: dict[str, Any], changes: list[Change]) -> None:
-    for c in changes:
-        row = tuning["start"].setdefault(c["kind"], {})
-        base = row.get(c["risk"], {}).get("base") or c["from"]  # the table's cell the tuning stands in for
-        row[c["risk"]] = {"cell": c["to"], "base": base}
+    for change in changes:
+        row = tuning["start"].setdefault(change["kind"], {})
+        base = row.get(change["risk"], {}).get("base") or change["from"]  # the table's cell the tuning stands in for
+        row[change["risk"]] = {"cell": change["to"], "base": base}
     tuning["changes"].extend(changes)
 
 
 def _raised_from(tuning: dict[str, Any], bucket: Bucket) -> str | None:
     kind, risk, label = bucket
-    last = next((c for c in reversed(tuning.get("changes") or [])
-                 if c.get("kind") == kind and c.get("risk") == risk), None)
+    last = next((change for change in reversed(tuning.get("changes") or [])
+                 if change.get("kind") == kind and change.get("risk") == risk), None)
     if last and last.get("what") == "raised" and last.get("to") == label and _valid(last.get("from")):
         return str(last["from"])
     return None

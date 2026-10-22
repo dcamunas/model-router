@@ -532,7 +532,7 @@ def _cmd_project(args: argparse.Namespace) -> int:
     evidence = _project_evidence(project, records, since=tuning.get("since"))
     _print_evidence(project, evidence, since=tuning.get("since"))
     _print_tuning(project, tuning)
-    proposals = _proposals(project, tuning, evidence)
+    proposals = _proposals(project, tuning, evidence=evidence)
     _print_proposals(proposals)
     if proposals and args.apply:
         print(f"applied: {projects.apply(project, proposals)}")
@@ -609,12 +609,12 @@ def _print_tuning(project: str, tuning: dict[str, Any]) -> None:
         return
     print(f"\ntuning in force ({projects.tuning_path(project)})")
     print(table(["kind", "risk", "starts on", "instead of"], tuned))
-    for change in [c for c in tuning.get("changes", []) if c.get("kind")][-5:]:
+    for change in [change for change in tuning.get("changes", []) if change.get("kind")][-5:]:
         print(f"  {change['at'][:16]} {change['what']} {change['kind']} ({change['risk']}) from {change['from']} "
               f"to {change['to']}, {change['relaunched']} of {change['n']} relaunched")
 
 
-def _proposals(project: str, tuning: dict[str, Any], evidence: _Evidence) -> list[Change]:
+def _proposals(project: str, tuning: dict[str, Any], *, evidence: _Evidence) -> list[Change]:
     """Return the changes the evidence supports that wait for a hand: raises on other installations' counts alone,
     and cheaper starts.
     """

@@ -150,13 +150,14 @@ def write_own(project: str, records: list[dict[str, Any]], *, decision_log: Path
         if os.path.lexists(path):
             continue
         text = json.dumps({"v": FORMAT, "c": counts}, sort_keys=True, separators=(",", ":")) + "\n"
-        fd, tmp = tempfile.mkstemp(dir=folder, prefix=".", suffix=".tmp")  # a fresh file: no link of anyone's followed
+        # a fresh file under a random name: no link anyone planted is followed
+        descriptor, temporary_path = tempfile.mkstemp(dir=folder, prefix=".", suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(text)
-            Path(tmp).replace(path)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            Path(temporary_path).replace(path)
         finally:
-            Path(tmp).unlink(missing_ok=True)  # gone after the replace; left only by a failed write
+            Path(temporary_path).unlink(missing_ok=True)  # gone after the replace; left only by a failed write
         added.append(path)
     return added
 
@@ -213,10 +214,10 @@ def remember(project: str, install_id: str) -> set[str]:
         row = ids.setdefault(_ids_key(project), [])
         if install_id not in row:
             row.append(install_id)
-            fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".shared-ids", suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(json.dumps(ids, sort_keys=True) + "\n")
-            Path(tmp).replace(path)
+            descriptor, temporary_path = tempfile.mkstemp(dir=path.parent, prefix=".shared-ids", suffix=".tmp")
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(ids, sort_keys=True) + "\n")
+            Path(temporary_path).replace(path)
         return set(row)
 
 
@@ -232,17 +233,17 @@ def _plain(path: Path) -> bool:
 def _read(path: Path) -> list[tuple[Bucket, int, int]]:
     """Read one shared file: a regular file, not a link, at most MAX_FILE_BYTES; anything else gives nothing."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return []
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return []
-        raw = os.read(fd, MAX_FILE_BYTES + 1)
+        raw = os.read(descriptor, MAX_FILE_BYTES + 1)
     except OSError:
         return []
     finally:
-        os.close(fd)
+        os.close(descriptor)
     if len(raw) > MAX_FILE_BYTES:
         return []
     try:
