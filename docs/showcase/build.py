@@ -37,7 +37,7 @@ TRIAL_FRAME_MS, TRIAL_LAST_MS = 2400, 3600  # two-line captions take longer to r
 
 LIGHT, LIGHT2, DARK = "#f6f5f1", "#eceae4", "#1d2733"
 TEXT, SECONDARY, ACCENT, ACCENT2, LINE = "#1f2328", "#5b6670", "#2b64a8", "#a35a1f", "#7d858e"
-MODEL_COLOUR = {"opus": DARK, "fable": ACCENT, "sonnet": "#5a7fa8", "haiku": "#8a9bb0", "terra": "#2f7a57"}
+MODEL_COLOUR = {"opus": DARK, "fable": ACCENT, "sonnet": "#7b5ea7", "haiku": "#8a9bb0", "terra": "#2f7a57"}
 TITLE_FONT = "Georgia, 'Times New Roman', serif"
 BODY_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif"
 MONO_FONT = "Menlo, 'SF Mono', Consolas, monospace"
@@ -94,15 +94,15 @@ EDGES = {
     "arbiter-ledger": [(1420, 528), (1420, 590)],
     "you-ledger": [(1075, 672), (1210, 672)],
 }
-DEFAULT_CELLS = {"worker": "opus/medium", "a": "fable/medium", "b": "terra/high", "arbiter": "sonnet/high",
+DEFAULT_CELLS = {"worker": "opus · chat", "a": "fable/medium", "b": "terra/high", "arbiter": "sonnet/high",
                  "you": "router feedback --ko"}
 
 # Every word on the canvas, so a translation for a carousel elsewhere is one dict, not a copy of the code.
 EN = {
     "title": "A change on trial",
     "subtitle": "tribunal · an example case · Claude and Codex judge, blind to each other",
-    "legend": [("opus", DARK), ("fable", ACCENT), ("sonnet", MODEL_COLOUR["sonnet"]), ("codex", MODEL_COLOUR["terra"]),
-               ("you", ACCENT2)],
+    "legend": [("Claude opus", DARK), ("Claude fable", ACCENT), ("Claude sonnet", MODEL_COLOUR["sonnet"]),
+               ("Codex terra", MODEL_COLOUR["terra"]), ("you", ACCENT2)],
     "roles": {"worker": "author", "a": "judge A", "b": "judge B", "arbiter": "arbiter", "you": "you"},
     "blind": "blind",
     "labels": {"task": "the request · code", "answer": "the change", "ledger": "ledger · scoreboard"},
@@ -120,11 +120,11 @@ EN = {
         "serving the chat, writes it.",
         "The turn ends with a change in the repository. Before it closes, the tribunal takes the diff and the "
         "request.",
-        "Two judges, each in its own session: judge A on Claude, not the model that wrote it, reads the repository "
-        "read-only; judge B on Codex sees only what it is sent. Neither knows the other exists.",
+        "Two blind judges, each in its own session. Judge A is Claude, but not Opus, which wrote it: Fable, reading "
+        "the repository. Judge B is Codex: Terra, seeing only what it is sent.",
         "They split. Judge A passes it. Judge B fails it: average([]) divides by zero.",
-        "On a split, the arbiter reads the request, the change and both reasoned verdicts, with no names on them. "
-        "One extra call, only on a split.",
+        "On a split, the arbiter decides: Claude Sonnet, on neither judge's model and not the chat's. It reads the "
+        "request, the change and both verdicts, with no names on them.",
         "Verdict: fail, siding with judge B. The findings go back to Claude, which fixes them in the same turn.",
         "Second round: the same judges read the fixed change. Both pass. The turn ends.",
         "Every verdict and its cost go to the ledger. The scoreboard says which judge was right. router feedback "
@@ -176,7 +176,7 @@ TRIAL = [
 
 
 def _model_colour(cell: str) -> str:
-    return MODEL_COLOUR.get(cell.split("/")[0], SECONDARY)
+    return MODEL_COLOUR.get(cell.split("/")[0].split(" ")[0], SECONDARY)  # "opus · chat" is opus too
 
 
 def _figure_svg(seat: Seat, cell: str, lit: bool) -> str:
