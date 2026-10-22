@@ -95,6 +95,7 @@ if TYPE_CHECKING:
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
 MIN_REASON_CHARS = 16
+DECLARED_ONLY_PROMPT = "(kind and risk declared, no text)"  # what `router plan` plans when it is given no text
 PLUGIN_ID = "model-router@dcamunas"  # the plugin id Claude Code uses once installed from the marketplace
 
 
@@ -147,7 +148,9 @@ def _task_from(
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
-    prompt = _prompt_from(args)
+    # With the kind and the risk declared there is nothing to classify: no text needed (and stdin is not read).
+    declared_only = args.kind is not None and args.risk is not None and not args.file and not args.prompt
+    prompt = DECLARED_ONLY_PROMPT if declared_only else _prompt_from(args)
     task, cls = _task_from(args, prompt)
     from .projects import load_tuning, project_of
 
@@ -157,6 +160,10 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     if args.claude_code:
         cc = plan.start.claude_code()
         print(f"model: {cc['model']}\neffort: {cc['effort']}")
+        return 0
+    if args.workflow:
+        cc = plan.start.claude_code()
+        print(f"{{model: '{cc['model']}', effort: '{cc['effort']}'}}")
         return 0
     if cls is not None:
         print(f"classification: {cls.kind} / {cls.risk}  ({cls.reason})")
@@ -927,7 +934,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("plan", help="what the router would do with this task (no API call)")
     _add_task_args(sp)
-    sp.add_argument("--claude-code", action="store_true", help="print only model/effort, for a Claude Code agent")
+    shape = sp.add_mutually_exclusive_group()
+    shape.add_argument("--claude-code", action="store_true", help="print only model/effort, for a Claude Code agent")
+    shape.add_argument("--workflow", action="store_true",
+                       help="print only the options of a workflow agent() call, e.g. {model: 'opus', effort: 'medium'}")
     sp.set_defaults(func=_cmd_plan)
 
     sr = sub.add_parser("run", help="run the task through the router (real calls)")

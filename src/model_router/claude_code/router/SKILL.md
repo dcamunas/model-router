@@ -38,6 +38,16 @@ starts with none of this conversation. Do the work yourself when:
 Delegate what makes you read a lot (sweeps, logs, long files) and returns a conclusion, and work that
 runs while you do something else.
 
+## Workflows
+
+The hook does not see the agents a workflow script spawns: they run on the session's model and effort
+unless the script names them. Measured, they show in `router stats` all the same. Give every `agent()`
+call its own options from the router, by the kind and risk of that stage:
+
+```bash
+router plan --kind search --risk low --workflow     # {model: 'haiku', effort: 'medium'}
+```
+
 ## Plain text: `router run`, not a subagent
 
 A Claude Code subagent drags the whole session prompt along (tools, MCP, skills: about 100K tokens).

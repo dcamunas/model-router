@@ -1,3 +1,4 @@
+import io
 import json
 import re
 import stat
@@ -32,6 +33,14 @@ def test_plan_at_critical_risk_prints_one_judge_on_another_model(capsys):
 def test_plan_claude_code_prints_frontmatter_values(capsys):
     main(["plan", "summarise this text", "--kind", "summarize", "--risk", "low", "--claude-code"])
     assert capsys.readouterr().out == "model: haiku\neffort: medium\n"
+
+
+def test_plan_for_a_workflow_needs_no_text_when_kind_and_risk_are_declared(capsys, monkeypatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO("never read"))
+    assert main(["plan", "--kind", "summarize", "--risk", "low", "--workflow"]) == 0
+    assert capsys.readouterr().out == "{model: 'haiku', effort: 'medium'}\n"
+    with pytest.raises(SystemExit):
+        main(["plan", "--kind", "code", "--workflow", "--claude-code"])  # one shape at a time
 
 
 def test_bench_without_a_file_runs_the_simulation_and_prints_the_table(capsys):
