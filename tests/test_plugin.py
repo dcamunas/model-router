@@ -81,3 +81,12 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     (data / "installed-version").write_text("0.0.0")
     proc = run_hook(data, {"hook_event_name": "SessionStart"}, "--bootstrap")
     assert proc.returncode == 0 and (data / "installed-version").read_text() == VERSION  # rebuilt on a version change
+    (data / "installed-version").write_text("999.0.0")  # a newer session installed a newer version
+    proc = run_hook(data, event)
+    assert proc.returncode == 0 and "updatedInput" in proc.stdout and "a new session uses it" in proc.stderr
+    venv_mtime = (data / "venv" / "bin" / "router-hook").stat().st_mtime
+    proc = run_hook(data, {"hook_event_name": "SessionStart", "source": "compact"}, "--bootstrap")
+    assert proc.returncode == 0 and "Model router active" in proc.stdout  # the old session still gets its context
+    assert (data / "installed-version").read_text() == "999.0.0"  # and never puts its older version back
+    assert (data / "venv" / "bin" / "router-hook").stat().st_mtime == venv_mtime
+

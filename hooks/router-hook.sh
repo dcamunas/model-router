@@ -22,7 +22,23 @@ stamp="$data/installed-version"
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/pyproject.toml" | head -n 1)
 installed=$(cat "$stamp" 2>/dev/null || true)
 
-if [ ! -x "$hook" ] || [ "$installed" != "$version" ]; then
+# Exit 0 when version $1 is newer than $2, compared number by number; an empty $2 is older than anything.
+newer() {
+    awk -v a="$1" -v b="$2" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
+        for (i = 1; i <= n; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+        exit 1 }'
+}
+
+# A session opened before the plugin was updated keeps the old plugin root, while the environment already holds
+# the newer version a later session installed. Going quiet would leave that session unrouted, and building would
+# put the old version back under every newer session: route with the environment as it is.
+stale=""
+if [ -x "$hook" ] && [ -n "$installed" ] && [ "$installed" != "$version" ] && ! newer "$version" "$installed"; then
+    stale=1
+    echo "router-hook: this session runs plugin $version, the environment has $installed; a new session uses it" >&2
+fi
+
+if [ -z "$stale" ] && { [ ! -x "$hook" ] || [ "$installed" != "$version" ]; }; then
     if [ "${1:-}" != "--bootstrap" ]; then
         echo "router-hook: the plugin environment is not ready yet; it is built when a session starts" >&2
         exit 0
