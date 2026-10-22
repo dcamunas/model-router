@@ -250,8 +250,6 @@ def test_a_week_just_out_of_the_window_is_kept_a_little_longer(tmp_path, monkeyp
 
 
 def test_share_refuses_a_claude_directory_that_is_a_link(tmp_path, monkeypatch):
-    import pytest
-
     from model_router.cli import main
 
     project = _repo(tmp_path, monkeypatch, share=False)
@@ -271,3 +269,32 @@ def test_a_raise_whose_model_is_gone_keeps_a_stronger_stand_in(monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_MODELS", ",".join(others))
     start = Policy(calibration=None, tuning=tuning).plan(Task(prompt="x", kind="analysis", risk="medium")).start
     assert start.capability >= plain.capability
+
+
+def test_a_time_without_a_zone_is_read_as_utc():
+    from model_router import clock
+
+    assert clock.parse_moment("2026-10-22T12:00:00") == NOW
+    assert clock.parse_moment("2026-10-22T12:00:00Z") == NOW and clock.parse_moment("not a time") is None
+
+
+def test_shared_counts_are_written_even_when_tuning_fails(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    (tmp_path / "home" / "subagents.jsonl").write_text(json.dumps(_rec(project, "sonnet/low", 1, SETTLED)) + "\n")
+
+    def broken(tuning):
+        raise RuntimeError("tuning broke")
+
+    monkeypatch.setattr("model_router.hook.start_in_force", broken)
+    out = handle({"hook_event_name": "SessionStart", "session_id": "s", "cwd": project})
+    assert out is not None and "systemMessage" not in out
+    assert (shared.shared_dir(project) / f"{_mine(project)}-{WEEK.replace('-', '')}.json").exists()
+
+
+def test_share_says_what_to_do_when_this_installation_is_kept_out(tmp_path, monkeypatch):
+    from model_router.cli import main
+
+    project = _repo(tmp_path, monkeypatch, share=False)
+    monkeypatch.setenv("MODEL_ROUTER_SHARE", "0")
+    with pytest.raises(SystemExit, match="Unset it and run"):
+        main(["project", project, "--share"])

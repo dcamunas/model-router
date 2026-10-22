@@ -6,17 +6,26 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 
 ### Changed
 
-- The 0.15.0 code brought to the repository's own rules, with no change in what it decides: keyword-only
-  arguments from the third one on, named constants instead of bare numbers, full names instead of
-  abbreviations, no private helpers shared across modules, no `assert` in library code, and functions split so
-  each does one thing (`shared.prune` apart from `shared.write_own`, the parts of `router project` apart).
-  `projects.raise_failing` now requires the local evidence, so the check that keeps the team's counts from
-  raising a start on their own cannot be skipped by accident.
-- One clock for the learning code and the tribunal hook (`model_router.clock`): the tests freeze it instead of
-  reading the real time, and three copies of the same timestamp parser became one.
+- The 0.15.0 code brought to the repository's own rules. What the router decides does not change:
+  - keyword-only arguments from the third one on, named constants instead of bare numbers, full names
+    instead of abbreviations, no private helpers shared across modules, no `assert` in library code;
+  - functions split so each does one thing: `shared.prune` apart from `shared.write_own`, the hook's sharing
+    apart from its tuning, and `router project` computing in one place and printing in others;
+  - a start-cell change is a typed record (`projects.Change`), not a loose dict;
+  - `projects.raise_failing` requires the local evidence, so the check that keeps the team's counts from
+    raising a start on their own cannot be skipped by a forgotten argument.
+- One clock for the learning code and the tribunal hook (`model_router.clock`). The tests freeze it instead of
+  reading the real time, and three timestamp parsers became one.
 - Every module that uses `Any` says why next to the import; ruff now checks blind `except Exception` (BLE).
-- `router project` prints changes as "from X to Y", and its errors say what to do next.
 - The hook's module docstring describes all three events and what SessionStart now does.
+
+Small changes in behaviour that come with it:
+
+- At session start, shared counts are written even when tuning fails; before, a tuning error skipped them.
+- A measured subagent's time is stored in UTC, not in local time with its offset. Both read the same.
+- A transcript time without a zone is read as UTC, as everywhere else. Claude Code writes them with one.
+- `router plan` says "tuned for <repo>: starts on X instead of Y", and `router project` prints changes as
+  "from X to Y". Its errors now say what to do.
 
 ### Fixed
 

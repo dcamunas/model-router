@@ -261,7 +261,7 @@ def test_router_plan_starts_where_the_hook_would_in_this_repository(tmp_path, mo
     tuned = projects.step_up(table, projects.lattice())
     assert tuned is not None
     projects.apply(str(repo.resolve()), [{"kind": "search", "risk": "low", "from": table.label, "to": tuned.label,
-                                          "what": "raised", "n": 6, "relaunched": 2}])
+                                          "what": "raised", "n": 6, "relaunched": 2, "at": NOW.isoformat()}])
     monkeypatch.chdir(repo)
     assert main(["plan", "find where the config is loaded", "--kind", "search", "--risk", "low"]) == 0
     out = capsys.readouterr().out

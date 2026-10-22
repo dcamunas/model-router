@@ -31,7 +31,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any  # Any: decoded JSON (subagent records, tunings, the decision log)
+from typing import Any, TypedDict  # Any: decoded JSON (subagent records, tunings, the decision log)
 
 from . import clock
 from .catalog import Cell, UnknownModelError, lattice, parse_cell, step_up
@@ -56,7 +56,9 @@ SALT_ATTEMPTS = 3  # enough for one lost race with another hook and one damaged 
 
 Bucket = tuple[str, str, str]  # (kind, risk, start cell)
 Counts = dict[Bucket, dict[str, int]]  # per bucket, {"n": launches, "fails": relaunched higher}
-Change = dict[str, Any]
+# one move of a start cell, as `router project` shows it and the tuning file keeps it
+Change = TypedDict("Change", {"at": str, "what": str, "kind": str, "risk": str, "from": str, "to": str, "n": int,
+                              "relaunched": int})
 
 
 # ---- projects and signatures -----------------------------------------------------------------------------------
@@ -98,15 +100,22 @@ def install_key() -> tuple[bytes, bool]:
             pass
         except OSError:
             return salt, False
-        if _create_whole(path, salt):
-            return salt, True
+        try:
+            _create_whole(path, salt)
+        except FileExistsError:
+            continue  # another process made it first: read theirs
+        except OSError:
+            return salt, False
+        return salt, True
     return salt, False
 
 
-def _create_whole(path: Path, content: bytes) -> bool:
-    """Create `path` holding `content`, whole and only if it does not exist yet; say whether this call created it.
+def _create_whole(path: Path, content: bytes) -> None:
+    """Create `path` holding `content`, whole and only if it does not exist yet.
 
-    Raises nothing: a directory that cannot be written leaves the file uncreated, as when another process won.
+    Raises:
+        FileExistsError: another process created it first.
+        OSError: the directory cannot be written.
     """
     tmp = None
     try:
@@ -115,12 +124,9 @@ def _create_whole(path: Path, content: bytes) -> bool:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
         os.link(tmp, path)  # whole and exclusive: nobody ever reads it half written
-    except OSError:  # FileExistsError included: another process made it first
-        return False
     finally:
         if tmp:
             Path(tmp).unlink(missing_ok=True)
-    return True
 
 
 def signature(prompt: str) -> list[int]:
@@ -313,7 +319,7 @@ def load_tuning(project: str | None) -> dict[str, Any]:
     return out
 
 
-def update_tuning(project: str, change: Callable[[dict[str, Any]], Any]) -> Path:
+def update_tuning(project: str, change: Callable[[dict[str, Any]], None]) -> Path:
     """Load a project's tuning, let `change` modify it, and save it, all under the projects lock."""
     path = tuning_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)

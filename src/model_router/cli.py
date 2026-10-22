@@ -16,7 +16,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
@@ -89,7 +89,7 @@ from .task import (
 from .version import router_version
 
 if TYPE_CHECKING:
-    from .projects import Counts
+    from .projects import Change, Counts
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
@@ -529,9 +529,11 @@ def _cmd_project(args: argparse.Namespace) -> int:
     if args.share:
         _turn_on_sharing(project, records)
     tuning = projects.load_tuning(project)
-    mine, counts = _show_evidence(project, records, tuning)
-    _show_tuning(project, tuning)
-    proposals = _proposals(project, tuning, counts=counts, mine=mine)
+    evidence = _project_evidence(project, records, since=tuning.get("since"))
+    _print_evidence(project, evidence, since=tuning.get("since"))
+    _print_tuning(project, tuning)
+    proposals = _proposals(project, tuning, evidence)
+    _print_proposals(proposals)
     if proposals and args.apply:
         print(f"applied: {projects.apply(project, proposals)}")
     elif proposals:
@@ -539,8 +541,20 @@ def _cmd_project(args: argparse.Namespace) -> int:
     return 0
 
 
+@dataclass(frozen=True)
+class _Evidence:
+    """A project's evidence: this machine's, the other installations', both together, and how many of those gave
+    some.
+    """
+
+    mine: Counts
+    others: Counts
+    both: Counts
+    installs: int
+
+
 def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
-    """Create the repository's shared-counts directory and add this installation's settled weeks to it."""
+    """Create the repository's shared-counts directory, prune it, and add this installation's settled weeks."""
     from . import shared
 
     folder = shared.shared_dir(project)
@@ -552,37 +566,40 @@ def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
     if not shared.sharing(project):
         raise SystemExit(f"{folder} cannot be used for shared counts because {shared.SHARE_ENV}=0 keeps this "
                          "installation out. Unset it and run `router project --share` again")
+    shared.prune(project)
     written = shared.write_own(project, records, decision_log=home() / "hook.jsonl")
     print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
           + (f" (added {len(written)} week file(s))" if written else
              " (a week is added a day after it closes, if the router routed subagents in it)"))
 
 
-def _show_evidence(project: str, records: list[dict[str, Any]],
-                   tuning: dict[str, Any]) -> tuple[Counts, Counts]:
-    """Print the evidence a project has (this machine's and, when shared, the team's) and return (this machine's,
-    both together).
-    """
+def _project_evidence(project: str, records: list[dict[str, Any]], *, since: str | None) -> _Evidence:
+    """Return a project's evidence since `since`: this machine's and, when the repository shares, the team's."""
     from . import projects, shared
 
-    since = tuning.get("since")
     mine = projects.evidence(project, records, relaunched=projects.relaunched_ids(home() / "hook.jsonl"), since=since)
     others, installs = shared.pooled(project, since=since)
-    counts = projects.combine(mine, others)
+    return _Evidence(mine=mine, others=others, both=projects.combine(mine, others), installs=installs)
+
+
+def _print_evidence(project: str, evidence: _Evidence, *, since: str | None) -> None:
+    """Print where a project's evidence comes from and its counts per kind, risk and start cell."""
+    from . import shared
+
     print(f"project {project}" + (f" (evidence since {since[:16]})" if since else ""))
     if shared.sharing(project):
-        print(f"shared counts: on, {installs} other installation(s) with evidence in {shared.shared_dir(project)}")
-    if not counts:
+        print(f"shared counts: on, {evidence.installs} other installation(s) with evidence in "
+              f"{shared.shared_dir(project)}")
+    if not evidence.both:
         print("no subagent routed here yet with model and effort both chosen by the router")
-        return mine, counts
-    rows = [[kind, risk, cell, tally["n"], tally["fails"], others.get((kind, risk, cell), {}).get("n", 0)]
-            for (kind, risk, cell), tally in sorted(counts.items())]
+        return
+    rows = [[kind, risk, cell, tally["n"], tally["fails"], evidence.others.get((kind, risk, cell), {}).get("n", 0)]
+            for (kind, risk, cell), tally in sorted(evidence.both.items())]
     print("\nsubagents the router routed here (relaunched = launched again higher, same kind and risk: a fail)")
     print(table(["kind", "risk", "start cell", "n", "relaunched", "n from others"], rows))
-    return mine, counts
 
 
-def _show_tuning(project: str, tuning: dict[str, Any]) -> None:
+def _print_tuning(project: str, tuning: dict[str, Any]) -> None:
     """Print a project's tuning in force and its last changes."""
     from . import projects
 
@@ -597,24 +614,29 @@ def _show_tuning(project: str, tuning: dict[str, Any]) -> None:
               f"to {change['to']}, {change['relaunched']} of {change['n']} relaunched")
 
 
-def _proposals(project: str, tuning: dict[str, Any], *, counts: Counts,
-               mine: Counts) -> list[dict[str, Any]]:
-    """Print and return the changes the evidence supports that wait for a hand: raises on other installations'
-    counts alone, and cheaper starts.
+def _proposals(project: str, tuning: dict[str, Any], evidence: _Evidence) -> list[Change]:
+    """Return the changes the evidence supports that wait for a hand: raises on other installations' counts alone,
+    and cheaper starts.
     """
     from . import projects
     from .hook import start_in_force
 
     current = start_in_force(tuning)
-    proposals = (projects.team_raises(counts, current, local=mine)
-                 + projects.propose_lower(project, counts, floors=FLOOR, current=current))
-    if proposals:
-        print("\nchanges the evidence supports, not applied (raises from other installations' counts alone, "
-              f"cheaper starts after {projects.DOWN_N}+ launches with none relaunched):")
-        for change in proposals:
-            print(f"  {change['what']} {change['kind']} ({change['risk']}) from {change['from']} to {change['to']}, "
-                  f"{change['relaunched']} of {change['n']} relaunched")
-    return proposals
+    return (projects.team_raises(evidence.both, current, local=evidence.mine)
+            + projects.propose_lower(project, evidence.both, floors=FLOOR, current=current))
+
+
+def _print_proposals(proposals: list[Change]) -> None:
+    """Print the changes that wait for a hand, if there are any."""
+    from . import projects
+
+    if not proposals:
+        return
+    print("\nchanges the evidence supports, not applied (raises from other installations' counts alone, "
+          f"cheaper starts after {projects.DOWN_N}+ launches with none relaunched):")
+    for change in proposals:
+        print(f"  {change['what']} {change['kind']} ({change['risk']}) from {change['from']} to {change['to']}, "
+              f"{change['relaunched']} of {change['n']} relaunched")
 
 
 def _cmd_db(args: argparse.Namespace) -> int:
