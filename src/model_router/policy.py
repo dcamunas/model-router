@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol  # Any: a tuning file's decoded JSON (`projects.load_tuning`)
 
 from .calibration import ACTIVE, Calibration, active_calibration_name, load_calibration
 from .catalog import (
@@ -309,7 +309,7 @@ class Policy:
         judge: Cell | None = None,
         arbiter: Cell | None = None,
         calibration: Calibration | str | None = ACTIVE,
-        tuning: dict[str, Any] | None = None,
+        tuning: dict[str, Any] | None = None,  # Any: a tuning file's decoded JSON (`projects.load_tuning`)
     ) -> None:
         self.cells = cells or lattice()
         self.tuning = tuning or {}  # a project's own start cells (`projects.py`), on top of the table
@@ -377,7 +377,7 @@ class Policy:
             if start.capability < floor_cell.capability:
                 rationale.append(f"risk floor {risk}: {start} -> {floor_cell}")
                 start = floor_cell
-        start = self._tuned(kind, risk, start, rationale)
+        start = self._tuned(kind, risk, start=start, rationale=rationale)
         max_attempts = task.max_attempts if task.max_attempts is not None else MAX_ATTEMPTS_BY_RISK[risk]
         cells = ladder(start, self.cells, max_attempts, min_gain=self.min_gain)
         first_attempt = start.expected_cost(est_input, out_tokens)
@@ -387,7 +387,7 @@ class Policy:
         rationale.append(f"verification {verify} (risk {risk}); budget ${budget:.2f}; max {max_attempts} attempts")
         return Plan(cells, verify, budget, max_attempts, rationale)
 
-    def _tuned(self, kind: str, risk: str, start: Cell, rationale: list[str]) -> Cell:
+    def _tuned(self, kind: str, risk: str, *, start: Cell, rationale: list[str]) -> Cell:
         """Apply the project's tuning (`projects.py`) to the start the table and the floors gave: its cell stands in
         for `start` only while `start` is still the cell it replaced; a tuning whose base no longer comes out (the
         table, the calibration or the models changed) is ignored and said so.
@@ -413,7 +413,7 @@ class Policy:
         if floor and tuned.capability < self._available(parse_cell(floor), []).capability:
             rationale.append(f"tuning for {name} ignored: {tuned} is below the {risk} floor")
             return start
-        rationale.append(f"tuned for {name}: {start} -> {tuned}")
+        rationale.append(f"tuned for {name}: starts on {tuned} instead of {start}")
         return tuned
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:

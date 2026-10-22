@@ -28,10 +28,11 @@ import json
 import os
 import sys
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: hook events and the hook's state are decoded JSON
 
+from . import clock
 from .catalog import load_external
 from .hook import main_model
 from .paths import home, read_config
@@ -186,7 +187,7 @@ def _edited_since(transcript: str, since: str) -> bool:
         lines = Path(transcript).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return True
-    start = _when(since)
+    start = clock.parse_moment(since)
     for line in lines:
         try:
             entry = json.loads(line)
@@ -194,7 +195,7 @@ def _edited_since(transcript: str, since: str) -> bool:
             continue
         message = entry.get("message") if isinstance(entry, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
-        when = _when(str(entry.get("timestamp", ""))) if isinstance(entry, dict) else None
+        when = clock.parse_moment(str(entry.get("timestamp", ""))) if isinstance(entry, dict) else None
         if when is None or start is None or when < start or not isinstance(content, list):
             continue
         if any(isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name") in EDIT_TOOLS for c in content):
@@ -202,18 +203,9 @@ def _edited_since(transcript: str, since: str) -> bool:
     return False
 
 
-def _when(text: str) -> datetime | None:
-    """Parse an ISO timestamp (a transcript's `...Z` or this hook's `+00:00`) as an aware datetime, or None."""
-    try:
-        moment = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
-
-
 def _stale(at: str) -> bool:
-    moment = _when(at)
-    return moment is None or datetime.now(UTC) - moment > STALE_TURN
+    moment = clock.parse_moment(at)
+    return moment is None or clock.now() - moment > STALE_TURN
 
 
 def handle(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -231,7 +223,7 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return clock.now().isoformat(timespec="seconds")
 
 
 def main() -> None:

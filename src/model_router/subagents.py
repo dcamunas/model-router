@@ -23,12 +23,12 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
-import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: transcript entries and records are decoded JSON
 
+from . import clock
 from ._fmt import money
 from .catalog import MODELS, Usage, cost_usd
 from .classify import classify_rules
@@ -83,7 +83,7 @@ def read_transcript(path: Path) -> SubagentUsage:
     messages: dict[str, tuple[str, dict[str, Any]]] = {}
     moments: list[datetime] = []
     for entry in _entries(path):
-        moment = _when(entry.get("timestamp"))
+        moment = clock.parse_moment(entry.get("timestamp"))
         if moment is not None:
             moments.append(moment)
         message = entry.get("message")
@@ -143,7 +143,7 @@ def record(event: dict[str, Any], usage: SubagentUsage, decision: dict[str, Any]
     spec = MODELS.get(usage.model)
     effort = event.get("effort")
     return {
-        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "at": clock.now().isoformat(timespec="seconds"),
         "session": event.get("session_id"),
         "agent_id": event.get("agent_id"),
         "agent_type": event.get("agent_type"),
@@ -187,7 +187,7 @@ def finalize(log: Path, *, settled: float = SETTLED_SECONDS, now: float | None =
         return 0
     with locked(log):
         records = load(log)
-        moment = time.time() if now is None else now
+        moment = clock.now().timestamp() if now is None else now
         changed = sum(_settle(r, moment, settled) for r in records)
         if changed:
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=log.parent, prefix=log.name, suffix=".tmp",
@@ -289,13 +289,6 @@ def _text(content: Any) -> str:
     if isinstance(content, list):
         return "\n".join(str(c.get("text") or "") for c in content if isinstance(c, dict) and c.get("type") == "text")
     return ""
-
-
-def _when(text: Any) -> datetime | None:
-    try:
-        return datetime.fromisoformat(str(text))
-    except ValueError:
-        return None
 
 
 def summary_rows(records: list[dict[str, Any]]) -> list[list[object]]:

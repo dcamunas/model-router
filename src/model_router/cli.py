@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
 from ._fmt import money, table
 from .calibration import (
@@ -87,6 +87,9 @@ from .task import (
     regex_checker,
 )
 from .version import router_version
+
+if TYPE_CHECKING:
+    from .projects import Counts
 
 ESCALATION_COST_FACTOR = 1.6  # a strategy that may escalate spends about this much more than its first attempt
 REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
@@ -509,11 +512,13 @@ def _cmd_stats(args: argparse.Namespace) -> int:
 
 
 def _cmd_project(args: argparse.Namespace) -> int:
-    from . import projects, shared
+    from . import projects
 
-    project = projects.project_of(str((args.path or Path.cwd()).expanduser()))
+    where = args.path or Path.cwd()
+    project = projects.project_of(str(where.expanduser()))
     if project is None:
-        raise SystemExit(f"not inside a git repository: {args.path or Path.cwd()} (the router learns per repository)")
+        raise SystemExit(f"not inside a git repository: {where}. The router learns per repository: run it inside "
+                         "one, or pass a path inside one")
     if args.reset:
         projects.reset(project)
         print(f"tuning of {project} removed; evidence counts from now on, so nothing comes back on its own")
@@ -522,64 +527,94 @@ def _cmd_project(args: argparse.Namespace) -> int:
         finalize_subagents(home() / SUBAGENT_LOG)
     records = load_subagents(home() / SUBAGENT_LOG)
     if args.share:
-        folder = shared.shared_dir(project)
-        if folder.parent.is_symlink() or folder.is_symlink():
-            raise SystemExit(f"{folder} is reached through a link: shared counts need a plain directory in the repository")
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / ".gitkeep").touch()  # git keeps no empty directory, and the directory is the opt-in
-        if not shared.sharing(project):
-            raise SystemExit(f"{folder} cannot be used for shared counts: it must be a directory inside the "
-                             f"repository, not reached through a link, and {shared.SHARE_ENV} must not be 0")
-        written = shared.write_own(project, records, home() / "hook.jsonl")
-        print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
-              + (f" (added {len(written)} week file(s))" if written else
-                 " (a week is added a day after it closes, if the router routed subagents in it)"))
+        _turn_on_sharing(project, records)
     tuning = projects.load_tuning(project)
-    mine = projects.evidence(project, records, projects.relaunched_ids(home() / "hook.jsonl"), tuning.get("since"))
-    others, files = shared.pooled(project, tuning.get("since"))
-    ev = projects.combine(mine, others)
-    print(f"project {project}" + (f" (evidence since {tuning['since'][:16]})" if tuning.get("since") else ""))
-    if shared.sharing(project):
-        print(f"shared counts: on, {files} other installation(s) with evidence in {shared.shared_dir(project)}")
-    if not ev:
-        print("no subagent routed here yet with model and effort both chosen by the router")
-    else:
-        rows = [[kind, risk, cell, e["n"], e["fails"], others.get((kind, risk, cell), {}).get("n", 0)]
-                for (kind, risk, cell), e in sorted(ev.items())]
-        print("\nsubagents the router routed here (relaunched = launched again higher, same kind and risk: a fail)")
-        print(table(["kind", "risk", "start cell", "n", "relaunched", "n from others"], rows))
-    _show_tuning(project, tuning, ev, mine, apply=args.apply)
+    mine, counts = _show_evidence(project, records, tuning)
+    _show_tuning(project, tuning)
+    proposals = _proposals(project, tuning, counts=counts, mine=mine)
+    if proposals and args.apply:
+        print(f"applied: {projects.apply(project, proposals)}")
+    elif proposals:
+        print("`router project --apply` applies them; a start that fails here too is raised on its own at session start")
     return 0
 
 
-def _show_tuning(project: str, tuning: dict[str, Any], ev: dict[tuple[str, str, str], dict[str, int]],
-                 mine: dict[tuple[str, str, str], dict[str, int]], *, apply: bool) -> None:
-    """Print a project's tuning in force, its last changes, and the changes the evidence supports but that wait for
-    a hand: cheaper starts, and raises on other installations' counts alone.
+def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
+    """Create the repository's shared-counts directory and add this installation's settled weeks to it."""
+    from . import shared
+
+    folder = shared.shared_dir(project)
+    if folder.parent.is_symlink() or folder.is_symlink():
+        raise SystemExit(f"{folder} is reached through a link: shared counts need a plain directory in the "
+                         "repository. Replace the link with a directory and run `router project --share` again")
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / ".gitkeep").touch()  # git keeps no empty directory, and the directory is the opt-in
+    if not shared.sharing(project):
+        raise SystemExit(f"{folder} cannot be used for shared counts because {shared.SHARE_ENV}=0 keeps this "
+                         "installation out. Unset it and run `router project --share` again")
+    written = shared.write_own(project, records, decision_log=home() / "hook.jsonl")
+    print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
+          + (f" (added {len(written)} week file(s))" if written else
+             " (a week is added a day after it closes, if the router routed subagents in it)"))
+
+
+def _show_evidence(project: str, records: list[dict[str, Any]],
+                   tuning: dict[str, Any]) -> tuple[Counts, Counts]:
+    """Print the evidence a project has (this machine's and, when shared, the team's) and return (this machine's,
+    both together).
+    """
+    from . import projects, shared
+
+    since = tuning.get("since")
+    mine = projects.evidence(project, records, relaunched=projects.relaunched_ids(home() / "hook.jsonl"), since=since)
+    others, installs = shared.pooled(project, since=since)
+    counts = projects.combine(mine, others)
+    print(f"project {project}" + (f" (evidence since {since[:16]})" if since else ""))
+    if shared.sharing(project):
+        print(f"shared counts: on, {installs} other installation(s) with evidence in {shared.shared_dir(project)}")
+    if not counts:
+        print("no subagent routed here yet with model and effort both chosen by the router")
+        return mine, counts
+    rows = [[kind, risk, cell, tally["n"], tally["fails"], others.get((kind, risk, cell), {}).get("n", 0)]
+            for (kind, risk, cell), tally in sorted(counts.items())]
+    print("\nsubagents the router routed here (relaunched = launched again higher, same kind and risk: a fail)")
+    print(table(["kind", "risk", "start cell", "n", "relaunched", "n from others"], rows))
+    return mine, counts
+
+
+def _show_tuning(project: str, tuning: dict[str, Any]) -> None:
+    """Print a project's tuning in force and its last changes."""
+    from . import projects
+
+    tuned = [[kind, risk, entry["cell"], entry["base"]] for kind, row in sorted(tuning.get("start", {}).items())
+             for risk, entry in sorted(row.items())]
+    if not tuned:
+        return
+    print(f"\ntuning in force ({projects.tuning_path(project)})")
+    print(table(["kind", "risk", "starts on", "instead of"], tuned))
+    for change in [c for c in tuning.get("changes", []) if c.get("kind")][-5:]:
+        print(f"  {change['at'][:16]} {change['what']} {change['kind']} ({change['risk']}) from {change['from']} "
+              f"to {change['to']}, {change['relaunched']} of {change['n']} relaunched")
+
+
+def _proposals(project: str, tuning: dict[str, Any], *, counts: Counts,
+               mine: Counts) -> list[dict[str, Any]]:
+    """Print and return the changes the evidence supports that wait for a hand: raises on other installations'
+    counts alone, and cheaper starts.
     """
     from . import projects
     from .hook import start_in_force
 
-    tuned = [[kind, risk, e["cell"], e["base"]] for kind, row in sorted(tuning.get("start", {}).items())
-             for risk, e in sorted(row.items())]
-    if tuned:
-        print(f"\ntuning in force ({projects.tuning_path(project)})")
-        print(table(["kind", "risk", "starts on", "instead of"], tuned))
-        for c in [c for c in tuning.get("changes", []) if c.get("kind")][-5:]:
-            print(f"  {c['at'][:16]} {c['what']} {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, "
-                  f"{c['relaunched']} of {c['n']} relaunched")
     current = start_in_force(tuning)
-    proposals = projects.team_raises(ev, current, mine) + projects.propose_lower(project, ev, FLOOR, current)
+    proposals = (projects.team_raises(counts, current, local=mine)
+                 + projects.propose_lower(project, counts, floors=FLOOR, current=current))
     if proposals:
         print("\nchanges the evidence supports, not applied (raises from other installations' counts alone, "
               f"cheaper starts after {projects.DOWN_N}+ launches with none relaunched):")
-        for c in proposals:
-            print(f"  {c['what']} {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, "
-                  f"{c['relaunched']} of {c['n']} relaunched")
-        if apply:
-            print(f"applied: {projects.apply(project, proposals)}")
-        else:
-            print("`router project --apply` applies them; a start that fails here too is raised on its own at session start")
+        for change in proposals:
+            print(f"  {change['what']} {change['kind']} ({change['risk']}) from {change['from']} to {change['to']}, "
+                  f"{change['relaunched']} of {change['n']} relaunched")
+    return proposals
 
 
 def _cmd_db(args: argparse.Namespace) -> int:

@@ -292,14 +292,16 @@ def test_a_turn_that_cannot_start_is_never_judged_against_the_last_one(hooked, t
     assert tribunal_hook.handle(event("Stop")) is None and not client.calls
 
 
-def test_only_a_session_that_edited_during_the_turn_turns_a_block_into_a_note(hooked, tmp_path):
+def test_only_a_session_that_edited_during_the_turn_turns_a_block_into_a_note(hooked, tmp_path, freeze_clock):
     from datetime import UTC, datetime, timedelta
 
+    now = datetime(2026, 10, 22, 12, tzinfo=UTC)
+    freeze_clock(now)
     repo, client, event = hooked
 
     def transcript(name, tools, minutes):
         path = tmp_path / f"{name}.jsonl"
-        at = (datetime.now(UTC) + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+        at = (now + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
         lines = [{"timestamp": at, "message": {"role": "assistant", "content": [{"type": "tool_use", "name": t}]}}
                  for t in tools]
         path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")

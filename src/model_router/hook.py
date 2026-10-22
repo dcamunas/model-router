@@ -1,12 +1,20 @@
-"""Claude Code hook: the router decides model and effort for subagents nobody configured.
+"""Claude Code hook: the router decides model and effort for subagents nobody configured, measures what they
+spent, and learns per repository where each kind of task should start.
 
 Events handled (one entry point, dispatch on `hook_event_name`):
 
 * PreToolUse, matcher Agent: when Claude launches a general-purpose subagent without choosing a
   `model`, the hook takes kind and risk from a declaration in the description or the prompt
   (`risk: high`, `kind: review`), else infers them from the text, asks the Policy for the start
-  cell and returns `hookSpecificOutput.updatedInput` with `model` (and `effort` when unset).
-* SessionStart: one line of context so Claude knows the hook exists and does not fight it.
+  cell (with the repository's tuning) and returns `hookSpecificOutput.updatedInput` with `model`
+  (and `effort` when unset). A launch that repeats a finished subagent's task higher is logged as
+  its relaunch, the quality signal the learning uses.
+* SubagentStop: reads the finished subagent's transcript and records what it spent, next to the
+  decision that routed it (`subagents.py`).
+* SessionStart: finishes the last session's measurements, raises the repository's start cells that
+  keep failing (`projects.py`), writes and prunes this installation's shared counts when the
+  repository shares them (`shared.py`), and gives Claude the context it needs to declare kind,
+  risk and access. A raise comes with a one-line notice.
 
 Cross-check rule: a review subagent whose risk calls for full verification (see VERIFY_BY_RISK)
 never runs on the model that serves the main chat. The chat's model is read from the last
@@ -19,7 +27,8 @@ Rules: explicit beats automatic. A `model` chosen by Claude is kept. Custom agen
 tool ignores model and effort for them). The hook never blocks: on any error it exits 0 silently.
 
 Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the decisions log
-(~/.model-router/hook.jsonl); MODEL_ROUTER_HOOK_QUIET=1 hides the one-line notice in the UI.
+(~/.model-router/hook.jsonl), the measurements and with them all learning; MODEL_ROUTER_HOOK_QUIET=1
+hides the one-line notices in the UI; MODEL_ROUTER_SHARE=0 keeps this installation out of shared counts.
 """
 
 from __future__ import annotations
@@ -29,10 +38,10 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any  # Any: hook events and log records are decoded JSON
 
+from . import clock
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
@@ -48,7 +57,7 @@ from .projects import (
     relaunched_ids,
     signature,
 )
-from .shared import pooled, write_own
+from .shared import pooled, prune, write_own
 from .subagents import LOG_FILE as SUBAGENT_LOG
 from .subagents import append as append_subagent
 from .subagents import finalize as finalize_subagents
@@ -110,7 +119,7 @@ def main_model(transcript_path: str | None) -> str | None:
     return None
 
 
-def decide(tool_input: dict[str, Any], chat_model: str | None = None,
+def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
            cwd: str | None = None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Compute what the hook would change for one Agent call: (updated input or None, decision record).
     `chat_model` is the short name of the model serving the main chat, for the cross-check rule.
@@ -191,7 +200,7 @@ def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
         return
     path = home() / "hook.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = {"at": datetime.now(UTC).isoformat(timespec="seconds"), "session_id": event.get("session_id"),
+    line = {"at": clock.now().isoformat(timespec="seconds"), "session_id": event.get("session_id"),
             "cwd": event.get("cwd"), **record}
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -211,7 +220,7 @@ def _measure(event: dict[str, Any]) -> None:
         sys.stderr.write(f"router-hook: subagent not measured: {exc}\n")
 
 
-def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], updated: dict[str, Any] | None,
+def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], *, updated: dict[str, Any] | None,
                  record: dict[str, Any]) -> str | None:
     """Return the agent id of the finished subagent this launch repeats higher (see `projects.find_relaunch`), or
     None. The new launch's cell is the model and effort it will really run on: the hook's, or Claude's own.
@@ -231,35 +240,43 @@ def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], updated: dic
     if not kind or not risk:  # a launch the hook left alone: its kind and risk as the hook would read them
         cls = classify_rules(f"{prompt}\n{tool_input.get('description') or ''}")
         kind, risk = cls.kind, cls.risk
-    found = find_relaunch(load_recent(home() / SUBAGENT_LOG), event.get("session_id"), signature(prompt), cell,
-                          kind, risk)
+    found = find_relaunch(load_recent(home() / SUBAGENT_LOG), event.get("session_id"),
+                          prompt_signature=signature(prompt), cell=cell, kind=kind, risk=risk)
     return str(found["agent_id"]) if found and found.get("agent_id") else None
 
 
 def _tune(event: dict[str, Any]) -> list[str]:
     """Raise the start cells in force that keep failing in the session's project (`projects.raise_failing`), on
     the evidence since the project's last reset or applied change (this machine's, plus the other installations'
-    counts when the repository shares them), write this installation's shared counts, and return one line per
-    change; nothing is ever lowered here.
+    counts when the repository shares them), and return one line per change; nothing is ever lowered here.
     """
     project = project_of(str(event.get("cwd") or "") or None)
     if not project or os.environ.get(HOOK_LOG_ENV, "1") == "0":
         return []
     try:
         tuning = load_tuning(project)
-        records = load_subagents(home() / SUBAGENT_LOG)
-        mine = evidence(project, records, relaunched_ids(home() / "hook.jsonl"), tuning.get("since"))
-        changes = raise_failing(project, combine(mine, pooled(project, tuning.get("since"))[0]),
-                                start_in_force(tuning), local=mine)
+        since = tuning.get("since")
+        mine = evidence(project, load_subagents(home() / SUBAGENT_LOG), relaunched=relaunched_ids(home() / "hook.jsonl"),
+                        since=since)
+        changes = raise_failing(project, combine(mine, pooled(project, since=since)[0]),
+                                current=start_in_force(tuning), local=mine)
     except Exception as exc:  # noqa: BLE001 - tuning is a side task: it must never cost the session its context
         sys.stderr.write(f"router-hook: tuning skipped: {type(exc).__name__}: {exc}\n")
         return []
-    try:
-        write_own(project, records, home() / "hook.jsonl")  # only in a repository that shares, settled weeks only
-    except Exception as exc:  # noqa: BLE001 - sharing is a side task too, and must not hide the raises above
-        sys.stderr.write(f"router-hook: shared counts not written: {type(exc).__name__}: {exc}\n")
     return [f"{c['kind']} ({c['risk']}) in {Path(project).name} now starts on {c['to']}, not {c['from']}: "
             f"{c['relaunched']} of {c['n']} relaunched higher" for c in changes]
+
+
+def _share(event: dict[str, Any]) -> None:
+    """Prune the repository's shared counts and add this installation's settled weeks, when it shares them."""
+    project = project_of(str(event.get("cwd") or "") or None)
+    if not project or os.environ.get(HOOK_LOG_ENV, "1") == "0":
+        return
+    try:
+        prune(project)
+        write_own(project, load_subagents(home() / SUBAGENT_LOG), decision_log=home() / "hook.jsonl")
+    except Exception as exc:  # noqa: BLE001 - sharing is a side task: it must not cost the session nor hide a raise
+        sys.stderr.write(f"router-hook: shared counts not written: {type(exc).__name__}: {exc}\n")
 
 
 def start_in_force(tuning: dict[str, Any]) -> Callable[[str, str], Cell]:
@@ -282,11 +299,14 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _session_start(event: dict[str, Any]) -> dict[str, Any]:
-    """Finish the last measurements, raise the project's failing starts, and give Claude the session context."""
+    """Finish the last measurements, raise the project's failing starts, update the shared counts, and give Claude
+    the session context.
+    """
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)  # the last session's subagents, now that their transcripts settled
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
     raised = _tune(event)
+    _share(event)
     if raised and os.environ.get(HOOK_QUIET_ENV) != "1":
         out["systemMessage"] = "router: " + "; ".join(raised) + " (`router project` shows why; `--reset` undoes it)"
     return out
@@ -295,9 +315,10 @@ def _session_start(event: dict[str, Any]) -> dict[str, Any]:
 def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
     """Route one Agent launch, note whether it relaunches an earlier subagent higher, and log the decision."""
     tool_input = event.get("tool_input") or {}
-    updated, record = decide(tool_input, main_model(event.get("transcript_path")), str(event.get("cwd") or "") or None)
+    updated, record = decide(tool_input, main_model(event.get("transcript_path")),
+                             cwd=str(event.get("cwd") or "") or None)
     try:
-        relaunch = _relaunch_of(event, tool_input, updated, record)
+        relaunch = _relaunch_of(event, tool_input, updated=updated, record=record)
     except OSError:  # learning is a side task: it never costs the routing
         relaunch = None
     if relaunch is not None:
