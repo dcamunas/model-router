@@ -1,6 +1,6 @@
 """`router` on the command line: plan (no API), run (live), judge (verify an answer written elsewhere),
 bench (simulated or a file of real tasks), stats, feedback, db (the SQLite index of the ledger), doctor,
-cells, config, install and uninstall. The README documents each command.
+cells, config, install and uninstall. docs/cli.md documents each command.
 """
 
 from __future__ import annotations
