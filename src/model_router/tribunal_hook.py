@@ -41,6 +41,7 @@ from .qa import (
     changed_files,
     chat_cell,
     diff_text,
+    files_now,
     only_docs,
     raw_settings,
     repo_root,
@@ -136,7 +137,8 @@ def _judge_turn(event: dict[str, Any], turn: dict[str, Any], others: dict[str, d
     files = changed_files(repo, turn["base"], current)
     if not files or only_docs(files) or current == turn.get("judged") or turn["rounds"] >= s.rounds:
         return None  # nothing new to judge, or the last review's fail was already reported
-    result = run_qa(repo, turn.get("brief", ""), diff_text(repo, turn["base"], current), s, author=chat_cell(chat))
+    result = run_qa(repo, turn.get("brief", ""), diff_text(repo, turn["base"], current), s, author=chat_cell(chat),
+                    current_files=files_now(repo, current, files))
     rounds = turn["rounds"] + 1
     with _state() as state:
         if state.get(session, {}).get("base") == turn["base"]:  # not a turn that started while this one was judged

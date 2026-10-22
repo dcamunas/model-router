@@ -128,52 +128,6 @@ def test_feedback_override_moves_a_count_only_when_the_verdict_changes(home, mon
     assert "chat" not in json.loads((home / "feedback.json").read_text())  # nothing was ever counted for it
 
 
-def test_config_declares_external_judges_and_doctor_checks_their_keys(home, monkeypatch, capsys):
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    try:
-        assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19", "--judge", "deepseek/high"]) == 0
-        cfg = json.loads((home / "config.json").read_text())
-        assert cfg["external"] == {"deepseek": {"provider": "deepseek", "id": "deepseek-reasoner", "input": 0.55,
-                                                "output": 2.19, "tier": 2}}
-        assert cfg["judge"] == "deepseek/high"
-        main(["config"])
-        assert "models from other providers: deepseek=deepseek/deepseek-reasoner@0.55/2.19" in capsys.readouterr().out
-        main(["cells"])
-        out = capsys.readouterr().out
-        assert "models from other providers" in out and "  no" in out
-        assert re.search(r"deepseek\s+deepseek\s+deepseek-reasoner\s+2\s+medium", out)
-        main(["doctor"])
-        assert "deepseek (judges): deepseek deepseek-reasoner, DEEPSEEK_API_KEY missing" in capsys.readouterr().out
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
-        main(["doctor"])
-        assert "DEEPSEEK_API_KEY set" in capsys.readouterr().out
-        main(["plan", "Assess the migration", "--kind", "analysis", "--risk", "critical"])
-        out = capsys.readouterr().out
-        # deepseek's door has one effort, medium: the judge runs there
-        assert "verifier (full): deepseek/medium" in out
-        with pytest.raises(SystemExit, match="invalid value"):
-            main(["config", "--external", "gpt=openai/x"])
-        assert main(["config", "--external", "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1"]) == 0
-        assert json.loads((home / "config.json").read_text())["external"]["deepseek"]["tier"] == 1
-        main(["config"])
-        assert "deepseek=deepseek/deepseek-reasoner@0.55/2.19/1" in capsys.readouterr().out
-        assert main(["config", "--models", "sonnet,opus,deepseek"]) == 0
-        from model_router.tribunal_cli import main as tribunal
-
-        assert tribunal(["config", "--arbiter", "deepseek/high"]) == 0
-        capsys.readouterr()
-        assert main(["config", "--external", "deepseek="]) == 0
-        assert "deepseek was also removed from: models, judge, qa" in capsys.readouterr().out
-        cfg = json.loads((home / "config.json").read_text())
-        assert cfg["models"] == ["sonnet", "opus"] and "judge" not in cfg and "arbiter" not in cfg.get("qa", {})
-        assert main(["plan", "classify this"]) == 0  # nothing dangling: every command still runs
-        assert json.loads((home / "config.json").read_text())["external"] == {}
-    finally:
-        from model_router.catalog import load_external
-
-        load_external({})
-
-
 def test_attempts_table_fits_the_terminal_width(monkeypatch):
     from model_router.runner import Router
     from model_router.task import Task, contains_checker
@@ -215,21 +169,6 @@ def _verdict(passed: bool):
     from model_router.verify import Verdict
 
     return Verdict(passed=passed, confidence=0.9, reason="because")
-
-
-def test_run_reaches_a_judge_from_another_provider(home, monkeypatch, capsys):
-    from model_router.catalog import load_external
-
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    (home / "config.json").write_text(json.dumps({
-        "judge": "gpt/high", "external": {"gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}))
-    monkeypatch.setattr(cli, "_live_client", lambda args: FakeClient(script={"*": [Reply("draft")]}))
-    try:
-        assert main(["run", "write it", "--kind", "write", "--risk", "high", "--verify", "full", "--max-attempts", "1"]) == 1
-        out = capsys.readouterr().out
-        assert "judge-error" in out and "OPENAI_API_KEY is not set" in out  # the provider client was reached
-    finally:
-        load_external({})
 
 
 def test_a_missing_task_or_system_file_is_a_one_line_error(home):
@@ -578,95 +517,6 @@ def test_calibrate_classifier_compares_rules_and_haiku_with_the_eval_labels(home
     assert main(["calibrate", "--classifier", str(spec), "--llm"]) == 0
     out = capsys.readouterr().out
     assert "haiku: kind right on 3/3, risk right on 3/3; 0 misses" in out and "cost of the Haiku calls" in out
-
-
-def test_config_declares_a_codex_door_and_doctor_says_whether_it_opens(home, monkeypatch, capsys):
-    from model_router.catalog import load_external
-
-    monkeypatch.delenv("MODEL_ROUTER_CODEX_HOME", raising=False)
-    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
-    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/opt/bin/{name}")  # the CI runner has no codex binary
-    try:
-        assert main(["config", "--external", "luna=codex/gpt-5.5@5/30"]) == 0
-        assert "models from other providers: luna" in capsys.readouterr().out
-        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "luna"))
-        assert not ok and "luna (judges): codex gpt-5.5" in line and "Codex home not set" in line
-        codex_home = home / "codex-personal"
-        codex_home.mkdir()
-        assert main(["config", "--codex-home", str(codex_home)]) == 0
-        assert "Codex home for `codex` cells" in capsys.readouterr().out
-        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "luna"))
-        assert not ok and "not signed in" in line and "codex login" in line
-        (codex_home / "auth.json").write_text("{}")
-        assert main(["config", "--models", "haiku,sonnet,opus,fable,luna"]) == 0
-        capsys.readouterr()
-        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "luna"))
-        assert ok and line.startswith("luna (works and judges): codex gpt-5.5, home ") and "signed in" in line
-        assert main(["cells"]) == 0
-        out = capsys.readouterr().out
-        assert "luna/xhigh" in out and "low/medium/high/xhigh" in out and "works" in out
-        assert main(["config"]) == 0
-        out = capsys.readouterr().out
-        assert "models from other providers: luna=codex/gpt-5.5@5/30" in out
-        assert f"Codex home for `codex` cells: {codex_home}" in out
-    finally:
-        load_external({})
-
-
-def test_config_lists_what_a_codex_home_can_run_and_declares_only_what_is_named(home, monkeypatch, capsys):
-    import json
-
-    from model_router.catalog import load_external
-
-    monkeypatch.delenv("MODEL_ROUTER_CODEX_HOME", raising=False)
-    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
-    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/opt/bin/{name}")
-    codex_home = home / "codex-work"
-    codex_home.mkdir()
-    (codex_home / "auth.json").write_text("{}")
-    try:
-        assert main(["config", "--codex-home", str(codex_home)]) == 0
-        assert "no model list in" in capsys.readouterr().out  # Codex has not run with this home yet
-        models = [{"slug": s, "visibility": "list"} for s in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")]
-        (codex_home / "models_cache.json").write_text(json.dumps({"models": models}))
-        assert main(["config", "--codex-models"]) == 0
-        out = capsys.readouterr().out
-        assert "--external sol=codex/gpt-6-sol@2/10/1" in out and "astra=codex/gpt-6-astra@10/50/3" in out
-        assert "stay out until you name them" in out and not cli.external_models()
-        assert main(["config", "--codex-models", "sol,luna", "--models", "haiku,sonnet,opus,sol", "--judge", "luna/high"]) == 0
-        capsys.readouterr()  # declared first, so --models and --judge in the same command may name them
-        assert sorted(s.short for s in cli.external_models()) == ["luna", "sol"]  # astra stays out: it was not named
-        assert json.loads((home / "config.json").read_text())["judge"] == "luna/high"
-        assert main(["config", "--models", "all", "--judge", "opus/xhigh"]) == 0
-        assert main(["config", "--codex-models"]) == 0
-        assert "declared as sol, through this Codex home" in capsys.readouterr().out
-        with pytest.raises(SystemExit, match="not in this home's list: nova"):
-            main(["config", "--codex-models", "nova"])
-        models.append({"slug": "gpt-7-nova", "visibility": "list"})
-        (codex_home / "models_cache.json").write_text(json.dumps({"models": models}))
-        with pytest.raises(SystemExit, match="nothing was declared"):
-            main(["config", "--codex-models", "astra,nova"])  # nova has no list price: astra is not written either
-        assert "astra" not in {s.short for s in cli.external_models()}
-        assert main(["config", "--external", "gpt=openai/gpt-6-astra@10/50/3"]) == 0
-        assert main(["config", "--codex-models"]) == 0
-        assert "declared as gpt, through the openai door, not this Codex home" in capsys.readouterr().out
-        assert main(["config", "--external", "gpt="]) == 0
-        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "sol"))
-        assert ok and "signed in" in line and "OpenAI lists" not in line
-        assert main(["config", "--external", "sol=codex/gpt-6-sol@5/30/1"]) == 0
-        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "sol"))
-        assert ok and "declared at 5/30, OpenAI lists 2/10" in line  # a price typed by hand that is not the list one
-        assert main(["config", "--external", "old=codex/gpt-6.1-sol@2/10/1"]) == 0
-        ok, line = cli._external_check(next(s for s in cli.external_models() if s.short == "old"))
-        assert not ok and "gpt-6.1-sol is not among the models it knows" in line
-        other = home / "codex-other"
-        other.mkdir()
-        monkeypatch.setenv("MODEL_ROUTER_CODEX_HOME", str(home / "elsewhere"))
-        assert main(["config", "--codex-home", str(other)]) == 0
-        out = capsys.readouterr().out
-        assert f"no model list in {other}" in out and "MODEL_ROUTER_CODEX_HOME is set" in out  # the home just given
-    finally:
-        load_external({})
 
 
 def test_every_subcommand_prints_its_help(capsys):

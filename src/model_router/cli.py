@@ -39,31 +39,23 @@ from .catalog import (
     MODELS_ENV,
     PRICES_AS_OF,
     SHORT_TO_ID,
-    ModelSpec,
     UnknownModelError,
     available_models,
-    external_models,
     lattice,
-    load_external,
     parse_cell,
-    parse_external,
 )
 from .classify import Classification, classify_llm, classify_rules
 from .client import ClaudeClient, ClientUnavailableError, Completion
-from .codex_models import Proposal
 from .feedback import FeedbackStore
 from .ledger import Ledger, summarize
 from .paths import (
     CALIBRATION_ENV,
-    CODEX_HOME_ENV,
     CONFIG_DIR_ENV,
     JUDGE_ENV,
     MAIN_LEDGER,
     config_path,
     home,
     read_config,
-    save_config,
-    write_config,
 )
 from .policy import (
     DEFAULT_JUDGE,
@@ -228,18 +220,9 @@ def _live_client(args: argparse.Namespace) -> ClaudeClient:
     return CliClient(config_dir=config_dir)
 
 
-def _with_providers(client: ClaudeClient) -> ClaudeClient:
-    """Wrap the Anthropic backend so cells of other providers reach theirs; nothing changes without externals."""
-    if not external_models():
-        return client
-    from .providers import MultiClient
-
-    return MultiClient(client)
-
-
 def _cmd_run(args: argparse.Namespace) -> int:
     prompt = _prompt_from(args)
-    client = _with_providers(_live_client(args))
+    client = _live_client(args)
     task, cls = _task_from(args, prompt, client)
     feedback = FeedbackStore(home() / "feedback.json")
     store = _store()
@@ -267,7 +250,7 @@ def _cmd_judge(args: argparse.Namespace) -> int:
     answer = sys.stdin.read() if args.answer == "-" else Path(args.answer).read_text(encoding="utf-8")
     if not answer.strip():
         raise SystemExit("the answer is empty")
-    client = _with_providers(_live_client(args))
+    client = _live_client(args)
     task, cls = _task_from(args, prompt, client)
     policy = Policy(feedback=FeedbackStore(home() / "feedback.json"))
     store = _store()
@@ -419,7 +402,7 @@ def _run_bench(
     """Run every strategy over `tasks` (`repeat` times each), one bench ledger per strategy; stop between
     strategies once `--max-usd` is spent.
     """
-    client = _with_providers(_live_client(args))
+    client = _live_client(args)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     jobs = [(replace(t, id=f"{t.id}.r{k}") if repeat > 1 else t, k) for k in range(1, repeat + 1) for t in tasks]
     store = _store()
@@ -450,7 +433,7 @@ def _run_bench(
 def _cmd_calibrate(args: argparse.Namespace) -> int:
     if args.classifier:
         specs = _load_specs(Path(args.classifier))
-        client = _with_providers(_live_client(args)) if args.llm else None
+        client = _live_client(args) if args.llm else None
         print(classifier_report(specs, start=lambda t: Policy().plan(t).start, client=client))
         return 0
     store = _store()
@@ -635,7 +618,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     except ValueError as exc:  # UnknownModelError is one too
         checks.append((False, f"judge for full verification: {exc} (check {JUDGE_ENV} or `router config --judge`)"))
     checks.append(_calibration_check())
-    checks += [_external_check(spec) for spec in external_models()]
     if profile is not None and profile.is_dir():
         checks += _profile_checks(profile)
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
@@ -644,13 +626,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     if args.live and claude and profile is not None:
         checks.append(_live_check("claude", lambda: CliClient(config_dir=profile).complete(
             parse_cell("haiku/low"), prompt="Answer only OK.", system="Answer only what is asked.")))
-    if args.live:
-        from .providers import PROVIDERS, build_client
-
-        for spec in external_models():
-            if PROVIDERS[spec.provider].transport != "api":  # the CLIs: one cheap call each, on the account configured
-                checks.append(_live_check(spec.short, lambda spec=spec: build_client(PROVIDERS[spec.provider]).complete(
-                    parse_cell(spec.short), prompt="Answer only OK.", system="Answer only what is asked.")))
     for ok_, text in checks:
         print(("ok     " if ok_ else "FAIL   ") + text)
     return 0 if all(ok_ for ok_, _ in checks) else 1
@@ -677,51 +652,6 @@ def _live_check(name: str, call: Callable[[], Completion]) -> tuple[bool, str]:
     except ClientUnavailableError as exc:
         return False, f"live call ({name}): {exc}"
     return True, f"live call ({name}): {c.model} answered {c.text.strip()[:20]!r} in {c.seconds:.1f}s, {c.usage.total} tokens"
-
-
-def _external_check(spec: ModelSpec) -> tuple[bool, str]:
-    """Return the doctor's line for one declared model: its role here, and whether its door can open (key set,
-    Codex home configured and signed in, Gemini CLI installed).
-    """
-    from .providers import PROVIDERS, resolve_codex_home
-
-    provider = PROVIDERS[spec.provider]
-    try:
-        role = "works and judges" if spec.id in available_models() else "judges"
-    except ValueError:  # a model list that cannot be read; the available-models check reports it
-        role = "judges"
-    head = f"{spec.short} ({role}): {spec.provider} {spec.id}, "
-    if provider.transport == "api":
-        has_key = bool(os.environ.get(provider.key_env))
-        return has_key, head + (f"{provider.key_env} set" if has_key else f"{provider.key_env} missing (export it)") \
-            + _price_suffix(spec)
-    binary = shutil.which(spec.provider)
-    if binary is None:
-        return False, head + f"the `{spec.provider}` executable is not on the PATH"
-    if provider.transport == "gemini":
-        signed = "GEMINI_API_KEY set" if os.environ.get(provider.key_env) else "sign-in not checked (`--live` makes one call)"
-        return True, head + f"{binary}, {signed}"
-    try:
-        home_dir, source = resolve_codex_home()
-    except ClientUnavailableError as exc:
-        return False, head + str(exc)
-    from .codex_models import listed_models
-
-    signed = (home_dir / "auth.json").exists()
-    state = "signed in" if signed else f"not signed in: run `CODEX_HOME={home_dir} codex login`"
-    known = listed_models(home_dir, include_hidden=True)
-    if signed and known is not None and spec.id not in known:
-        return False, head + f"home {home_dir} (via {source}), signed in, but {spec.id} is not among the models it " \
-                             f"knows (Codex refreshes that list when it runs; `router config --codex-models` shows it)"
-    return signed, head + f"home {home_dir} (via {source}), {state}" + _price_suffix(spec)
-
-
-def _price_suffix(spec: ModelSpec) -> str:
-    """Return `; <note>` when a declared OpenAI model's price differs from the list price, else nothing."""
-    from .codex_models import price_note
-
-    note = price_note(spec.id, spec.input, spec.output) if spec.provider in ("codex", "openai") else None
-    return f"; {note}" if note else ""
 
 
 def _cmd_feedback(args: argparse.Namespace) -> int:
@@ -776,12 +706,6 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
     off = [spec.short for m, spec in MODELS.items() if spec.provider == "anthropic" and m not in available_models()]
     if off:
         print(f"not in this installation: {', '.join(off)} ({MODELS_ENV} or `router config --models`)")
-    if external_models():
-        rows = [[spec.short, spec.provider, spec.id, spec.tier, "/".join(spec.efforts), spec.input, spec.output,
-                 "yes" if spec.id in available_models() else "no"] for spec in external_models()]
-        print("\nmodels from other providers (they judge; they work when `router config --models` lists them; "
-              "tier and prices as you declared them; `router doctor` says whether each door opens)")
-        print(table(["name", "door", "model id", "tier", "efforts", "$/M in", "$/M out", "works"], rows))
     return 0
 
 
@@ -798,59 +722,17 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     return uninstall(args.settings, skills_dir=args.skills_dir, no_skill=args.no_skill)
 
 
-def _forget_external(name: str) -> None:
-    """Drop a removed declared model from `models`, `judge`, `arbiter` and the tribunal's settings, saying so: a reference
-    left behind would stop every command with an unknown model.
-    """
-    cfg = read_config()
-    changes: dict[str, Any] = {}
-    listed = cfg.get("models")
-    if isinstance(listed, list) and name in listed:
-        changes["models"] = [m for m in listed if m != name]
-    for key in ("judge", "arbiter"):
-        if str(cfg.get(key) or "").partition("/")[0] == name:
-            changes[key] = None
-    raw = cfg.get("qa")
-    tribunal: dict[str, Any] = raw if isinstance(raw, dict) else {}
-    kept = {k: v for k, v in tribunal.items() if str(v).partition("/")[0] != name}
-    if kept != tribunal:
-        changes["qa"] = kept  # the tribunal's judge or arbiter
-    if not changes:
-        return
-    for key, value in changes.items():
-        if value is None:
-            cfg.pop(key, None)
-        else:
-            cfg[key] = value
-    save_config(cfg)
-    print(f"{name} was also removed from: {', '.join(changes)}")
-
-
 def _cmd_config(args: argparse.Namespace) -> int:
     from .install import model_names, remember
 
-    if (args.models is None and args.profile_dir is None and args.judge is None
-            and args.calibration is None and args.codex_home is None and not args.external
-            and args.codex_models is None):
+    if args.models is None and args.profile_dir is None and args.judge is None and args.calibration is None:
         cfg = read_config()
         print(f"profile for `router run`: {cfg.get('claude_config_dir') or 'not set'}")
-        anthropic = [m.short for m in MODELS.values() if m.provider == "anthropic"]
-        print(f"available models: {', '.join(cfg.get('models') or anthropic)}")
+        print(f"available models: {', '.join(MODELS[m].short for m in available_models())}")
         print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
         print(f"calibration: {cfg.get('calibration') or 'none (the built-in tables decide)'}")
-        shown = ", ".join(f"{s.short}={s.provider}/{s.id}@{s.input:g}/{s.output:g}/{s.tier}"
-                          for s in external_models()) or "none"
-        print(f"models from other providers: {shown}")
-        print(f"Codex home for `codex` cells: {cfg.get('codex_home') or 'not set'}")
         print(f"(in {config_path()})")
         return 0
-    for text in args.external or []:
-        _declare_external(text)
-    codex_home = args.codex_home.expanduser().resolve() if args.codex_home is not None else None
-    if codex_home is not None:
-        remember(None, None, codex_home=codex_home)  # saved now: a later bad --models must not lose it
-    if codex_home is not None or args.codex_models is not None:
-        _codex_models(args.codex_models or "", codex_home)  # before --models and --judge, which may name them
     names = model_names(args.models) if args.models is not None else None
     profile = args.profile_dir.expanduser().resolve() if args.profile_dir is not None else None
     judge = parse_cell(args.judge).label if args.judge is not None else None
@@ -862,89 +744,6 @@ def _cmd_config(args: argparse.Namespace) -> int:
     remember(profile, names, reset_models=args.models is not None and names is None, judge=judge,
              calibration=calibration)
     return 0
-
-
-def _declare_external(text: str) -> None:
-    """Apply one `--external` value to config.json (declare, replace or, with `NAME=`, remove) and say so."""
-    name, spec = parse_external(text)
-    external = dict(read_config().get("external") or {})
-    if spec is None:
-        external.pop(name, None)
-        _forget_external(name)
-    else:
-        external[name] = {"provider": spec.provider, "id": spec.id, "input": spec.input, "output": spec.output,
-                          "tier": spec.tier}
-    path = write_config(external=external)
-    print(f"models from other providers: {', '.join(external) or 'none'} (in {path})")
-    load_external(read_config())
-
-
-def _declare_proposals(proposals: list[Proposal], names: list[str]) -> None:
-    """Declare the proposals named in `names`, all or none: a name the home does not list, or a model with no
-    known price, stops the command before anything is written.
-    """
-    by_name = {p.name: p for p in proposals}
-    unknown = [n for n in names if n not in by_name]
-    if unknown:
-        raise SystemExit(f"not in this home's list: {', '.join(unknown)}; it has {', '.join(by_name)}")
-    unpriced = [n for n in names if by_name[n].declared_as is None and by_name[n].declaration is None]
-    if unpriced:
-        raise SystemExit(f"no list price known here for {', '.join(unpriced)}; declare it by hand with --external "
-                         "(nothing was declared)")
-    for n in dict.fromkeys(names):
-        proposal = by_name[n]
-        if proposal.declared_as is not None:
-            print(f"{n}: already declared ({_door_note(proposal)})")
-        elif proposal.declaration is not None:
-            _declare_external(proposal.declaration)
-
-
-def _door_note(proposal: Proposal) -> str:
-    """Say through which door a declared model runs: through the Codex home, or another door that blocks it."""
-    if proposal.declared_door == "codex":
-        return "through this Codex home"
-    return f"through the {proposal.declared_door} door, not this Codex home; `--external {proposal.declared_as}=` frees it"
-
-
-def _codex_models(wanted: str, home_dir: Path | None = None) -> None:
-    """Print what the Codex home can run, as ready declarations; with `wanted` (comma-separated names from that
-    list), declare those. `home_dir` is the home just given; otherwise the one `codex` cells use. Nothing is
-    declared that was not named.
-    """
-    from .codex_models import OPENAI_PRICES_DATE, listed_models, propose
-    from .providers import resolve_codex_home
-
-    if home_dir is None:
-        try:
-            home_dir, _ = resolve_codex_home()
-        except ClientUnavailableError as exc:
-            raise SystemExit(str(exc)) from exc
-    elif os.environ.get(CODEX_HOME_ENV):
-        print(f"note: {CODEX_HOME_ENV} is set, so `codex` cells run on {os.environ[CODEX_HOME_ENV]}, not on {home_dir}")
-    ids = listed_models(home_dir)
-    if ids is None:
-        print(f"no model list in {home_dir} yet: run `CODEX_HOME={home_dir} codex` once and ask again "
-              "(or declare by hand with --external)")
-        return
-    proposals = propose(ids, {s.id: (s.short, s.provider) for s in external_models()})
-    names = [n.strip() for n in wanted.split(",") if n.strip()]
-    if names:
-        _declare_proposals(proposals, names)
-        return
-    print(f"models this Codex home can run ({home_dir}):")
-    for proposal in proposals:
-        if proposal.declared_as is not None:
-            what = f"declared as {proposal.declared_as}, {_door_note(proposal)}"
-        elif proposal.declaration is not None:
-            what = f"--external {proposal.declaration}"
-        else:
-            what = "no list price known here: declare it by hand with --external"
-        print(f"  {proposal.name:<10} {proposal.model_id:<16} {what}")
-    print(f"prices: OpenAI's list as of {OPENAI_PRICES_DATE}; tiers (after the last /): an assumption, "
-          "`router calibrate` measures them")
-    if any(p.declared_as is None for p in proposals):
-        print("the ones not declared stay out until you name them: `router config --codex-models NAME,NAME`; "
-              "they judge, and work once --models lists them")
 
 
 def _add_profile_args(p: argparse.ArgumentParser) -> None:
@@ -1045,7 +844,7 @@ def build_parser() -> argparse.ArgumentParser:
     sf.add_argument("--note", help="why, for the ledger")
     sf.set_defaults(func=_cmd_feedback)
 
-    sd = sub.add_parser("doctor", help="check claude, profile, hooks, skill, declared models and state; --live calls them")
+    sd = sub.add_parser("doctor", help="check claude, profile, hooks, skill and state; --live makes one call")
     sd.add_argument("--live", action="store_true",
                     help="also make one real cheap call on Claude and on each model declared through a CLI")
     sd.set_defaults(func=_cmd_doctor)
@@ -1071,19 +870,9 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--profile-dir", type=Path, help="Claude profile `router run` will use")
     sg.add_argument("--models", help="models that may do the work, e.g. haiku,sonnet,opus, plus any declared external "
                                      "name; all = every Anthropic model")
-    sg.add_argument("--codex-home", type=Path, help="Codex home signed in with the ChatGPT account `codex` cells may use, "
-                                                    "e.g. ~/.codex-personal (never the ambient ~/.codex)")
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--calibration", help="the calibration that decides: an id from `router calibrate --apply`, or a "
                                           "file; `none` goes back to the built-in tables")
-    sg.add_argument("--external", action="append", metavar="NAME=PROVIDER/MODEL_ID@IN/OUT[/TIER]",
-                    help="declare a model of another provider with its API list prices in USD per million tokens and, "
-                         "after them, the tier you take it to be, 0 Haiku to 3 Fable (2 when omitted), e.g. "
-                         "gpt=openai/gpt-5.5@5/30 or luna=codex/gpt-5.5@5/30/1 (doors: openai, codex, deepseek, xai, "
-                         "gemini); it judges, and works once --models lists it; NAME= removes it")
-    sg.add_argument("--codex-models", nargs="?", const="", metavar="NAME,NAME",
-                    help="list the models the Codex home can run, with OpenAI's list prices and a default tier; "
-                         "with names, declare those")
     sg.set_defaults(func=_cmd_config)
 
     return p
@@ -1095,7 +884,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     try:
-        load_external(read_config())
         return int(args.func(args) or 0)
     except UnknownModelError as exc:
         raise SystemExit(f"unknown model {exc.name!r}; valid: {', '.join(exc.known)} "

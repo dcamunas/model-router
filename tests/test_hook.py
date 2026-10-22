@@ -143,18 +143,13 @@ def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp
     assert updated["model"] == "opus" and updated["effort"] == "medium" and "cross" not in record
 
 
-def test_an_external_judge_never_becomes_a_subagents_model(tmp_path, monkeypatch):
-    from model_router.catalog import load_external
-
+def test_a_judge_setting_the_router_cannot_resolve_never_stops_the_routing(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    (tmp_path / "config.json").write_text(json.dumps({
-        "judge": "gpt/high", "external": {"gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}}))
-    try:
-        load_external(json.loads((tmp_path / "config.json").read_text()))
-        updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
-        assert updated["model"] == "opus" and "cross" not in record
-    finally:
-        load_external({})
+    (tmp_path / "config.json").write_text(json.dumps({  # an older version's config: a ChatGPT judge and model list
+        "judge": "luna/high", "models": ["haiku", "sonnet", "opus", "fable", "luna"],
+        "external": {"luna": {"provider": "codex", "id": "gpt-6-luna", "input": 0.1, "output": 0.5}}}))
+    updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
+    assert updated["model"] in ("opus", "fable") and record["cell"].split("/")[0] in ("opus", "fable")
 
 
 def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch):
@@ -167,24 +162,10 @@ def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch)
 
 
 def test_the_hook_never_names_a_model_claude_code_cannot_run(monkeypatch, tmp_path):
-    from model_router.calibration import measure
-    from model_router.catalog import load_external
     from model_router.hook import decide
-    from model_router.paths import write_config
-    from model_router.policy import FLOOR, START
 
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    load_external({"external": {"luna": {"provider": "codex", "id": "gpt-5.5", "input": 5, "output": 30}}})
-    try:
-        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,luna")
-        cal = measure([], current=START, floors=FLOOR)
-        cal.start["write"]["medium"] = "luna/medium"  # a calibration (or a table) that sends writing to ChatGPT
-        cal.save(tmp_path / "calibrations")
-        write_config(calibration=cal.id)
-        updated, record = decide({"subagent_type": "general-purpose", "prompt": "Write the release notes for 2.0"})
-        assert updated is not None and updated["model"] == "opus" and record["cell"] == "opus/medium"
-        monkeypatch.setenv("MODEL_ROUTER_MODELS", "luna")  # only a declared model may work: the hook still picks Claude
-        updated, record = decide({"subagent_type": "general-purpose", "prompt": "Write the release notes for 2.0"})
-        assert updated is not None and updated["model"] == "opus" and record["cell"] == "opus/medium"
-    finally:
-        load_external({})
+    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable")
+    for prompt in ("Write the release notes for 2.0", "risk: critical. Analyse the outage", "classify these tickets"):
+        updated, record = decide({"subagent_type": "general-purpose", "prompt": prompt})
+        assert updated is not None and updated["model"] in ("haiku", "sonnet", "opus", "fable"), prompt

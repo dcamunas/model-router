@@ -31,11 +31,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .catalog import MODELS, lattice, load_external, worker_cell
+from .catalog import MODELS, lattice, parse_cell, worker_cell
 from .classify import classify_rules
 from .feedback import FeedbackStore
-from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home, read_config
-from .policy import VERIFY_BY_RISK, Policy
+from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home
+from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
 from .task import Task
 
 ROUTED_SUBAGENTS = frozenset({"", "general-purpose", "claude"})
@@ -106,10 +106,12 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
         return None, {"skipped": "empty prompt"}
     description = str(tool_input.get("description") or "")
     cls = classify_rules(f"{description}\n{prompt}")
-    claude = [c for c in lattice() if c.spec.provider == "anthropic"]  # the Agent tool runs Claude models only
-    if not claude:  # `--models` lists declared models only: the hook still has every Claude model to choose from
-        claude = lattice([m for m, spec in MODELS.items() if spec.provider == "anthropic"])
-    policy = Policy(cells=claude, feedback=FeedbackStore(home() / "feedback.json"))
+    claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
+    feedback = FeedbackStore(home() / "feedback.json")
+    try:
+        policy = Policy(cells=claude, feedback=feedback)
+    except ValueError:  # a judge setting this router cannot resolve: route anyway, `router doctor` reports it
+        policy = Policy(cells=claude, feedback=feedback, judge=parse_cell(DEFAULT_JUDGE))
     plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=cls.risk))
     cell, cross = worker_cell(plan.start, [c.model for c in claude]), None
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
@@ -171,7 +173,6 @@ def main() -> int:
     if os.environ.get(HOOK_ENV, "1") == "0":
         return 0
     try:
-        load_external(read_config())  # a configured external judge must resolve, or Policy() would not build
         event = json.load(sys.stdin)
         out = handle(event)
         if out is not None:

@@ -1,12 +1,11 @@
-"""Models of other providers: judges, and workers when `router config --models` lists them. Three doors:
-the chat-completions API (OpenAI, DeepSeek and xAI serve the same one, so one small client covers them,
-the key from the provider's environment variable), the Codex CLI (`codex exec`, ChatGPT by subscription,
-on a Codex home the router is given explicitly) and the Gemini CLI (`gemini -p`, Google by its own
-sign-in or GEMINI_API_KEY). A structured verdict is asked for as a JSON object and validated here; a CLI
-answer that was meant to be JSON and is not gets one more try, then the verifier sees a judge error.
-`MultiClient` sends every Anthropic cell to the usual backend and every other cell to its door, built on
-first use, so the router, the policy and the ledger never know the difference. No SDK: a POST or a
-subprocess with the standard library.
+"""The tribunal's door to Codex: ChatGPT through `codex exec`, by subscription, on a Codex home given explicitly.
+The router itself works with Claude models only; this door exists for the tribunal plugin's second judge.
+
+Every call runs in an empty directory, read-only, with nothing persisted and Codex's shell tool turned off:
+with a shell, the read-only sandbox still reads any file the user can read, and what it reads goes to OpenAI.
+Without it Codex has no way to open a file, so it sees only what the prompt carries. A structured verdict is
+asked for with `--output-schema`, validated here, and tried once more when it does not come back as JSON.
+`MultiClient` sends Anthropic cells to the usual backend and Codex cells to this door.
 """
 
 from __future__ import annotations
@@ -17,8 +16,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,13 +46,8 @@ class Provider:
 
 
 PROVIDERS: dict[str, Provider] = {
-    "openai": Provider("openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "max_completion_tokens",
-                       "reasoning_effort", PROVIDER_EFFORTS["openai"]),
     "codex": Provider("codex", "", "", "max_completion_tokens", "model_reasoning_effort", PROVIDER_EFFORTS["codex"],
                       transport="codex"),
-    "deepseek": Provider("deepseek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY", "max_tokens", None, ()),
-    "xai": Provider("xai", "https://api.x.ai/v1", "XAI_API_KEY", "max_tokens", "reasoning_effort", PROVIDER_EFFORTS["xai"]),
-    "gemini": Provider("gemini", "", "GEMINI_API_KEY", "max_tokens", None, (), transport="gemini"),
 }
 EFFORT_TO_REASONING: dict[str, str] = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
 FINISH_TO_STOP: dict[str, str] = {"stop": "end_turn", "length": "max_tokens", "content_filter": "refusal"}
@@ -82,78 +74,6 @@ def reasoning_effort(effort: str, accepted: tuple[str, ...]) -> str | None:
         if candidate in accepted:
             return candidate
     return accepted[0]
-
-
-class OpenAICompatibleClient:
-    """Completions through a provider's chat-completions endpoint. Satisfies `client.ClaudeClient`."""
-
-    def __init__(
-        self, provider: Provider, *, api_key: str | None = None, base_url: str | None = None,
-        timeout: float = TIMEOUT_SECONDS, opener: Opener = urllib.request.urlopen,
-    ) -> None:
-        self.provider = provider
-        self.api_key = api_key
-        self.base_url = (base_url or provider.base_url).rstrip("/")
-        self.timeout = timeout
-        self.opener = opener
-
-    def complete(
-        self, cell: Cell, *, prompt: str, system: str | None = None, max_tokens: int = NON_STREAMING_MAX_TOKENS,
-        output_format: type[BaseModel] | None = None,
-    ) -> Completion:
-        key = self.api_key or os.environ.get(self.provider.key_env)
-        if not key:
-            raise ClientUnavailableError(f"{self.provider.key_env} is not set: a {self.provider.name} cell needs it")
-        instructions = system or DEFAULT_SYSTEM
-        body: dict[str, Any] = {"model": cell.spec.id, self.provider.max_tokens_field: max_tokens}
-        if output_format is not None:
-            body["response_format"] = {"type": "json_object"}
-            instructions += SCHEMA_NOTE + json.dumps(output_format.model_json_schema())
-        body["messages"] = [{"role": "system", "content": instructions}, {"role": "user", "content": prompt}]
-        effort = reasoning_effort(cell.effort, self.provider.efforts)
-        if self.provider.reasoning_field and effort:
-            body[self.provider.reasoning_field] = effort
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions", data=json.dumps(body).encode("utf-8"), method="POST",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        )
-        t0 = time.monotonic()
-        try:
-            with self.opener(request, timeout=self.timeout) as response:
-                raw = response.read()
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:ERROR_DETAIL_CHARS]
-            raise ClientUnavailableError(f"{self.provider.name} answered HTTP {exc.code}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise ClientUnavailableError(f"{self.provider.name} unreachable: {exc}") from exc
-        seconds = time.monotonic() - t0
-        try:
-            data = json.loads(raw)
-        except ValueError as exc:
-            raise ClientUnavailableError(f"{self.provider.name} answered no JSON: {raw[:ERROR_DETAIL_CHARS]!r}") from exc
-        return self.to_completion(data, cell, output_format, seconds)
-
-    def to_completion(self, data: Any, cell: Cell, output_format: type[BaseModel] | None, seconds: float) -> Completion:
-        """Turn a chat-completions response into a Completion; a structured answer that does not validate
-        leaves `parsed` None, which the verifier reports as a judge error.
-        """
-        choices = data.get("choices") if isinstance(data, dict) else None
-        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise ClientUnavailableError(f"{self.provider.name} answered without choices: {str(data)[:ERROR_DETAIL_CHARS]}")
-        choice = choices[0]
-        message = _dict(choice.get("message"))
-        text = str(message.get("content") or "")
-        finish = str(choice.get("finish_reason") or "stop")
-        stop = FINISH_TO_STOP.get(finish, finish)
-        u = _dict(data.get("usage"))
-        details = _dict(u.get("prompt_tokens_details"))
-        cached = int(details.get("cached_tokens") or 0)
-        usage = Usage(input_tokens=max(0, int(u.get("prompt_tokens") or 0) - cached),
-                      output_tokens=int(u.get("completion_tokens") or 0), cache_read_tokens=cached)
-        parsed = _structured(text, output_format)
-        refused = stop == "refusal"
-        return Completion(text=text, usage=usage, stop_reason=stop, model=str(data.get("model") or cell.model),
-                          parsed=None if refused else parsed, request_id=data.get("id"), refused=refused, seconds=seconds)
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -240,12 +160,12 @@ class CodexClient:
     """Completions through `codex exec`: ChatGPT by subscription. Satisfies `client.ClaudeClient`. The prompt goes
     on stdin with the instructions in front (the CLI has no system prompt); a structured answer is asked for with
     `--output-schema` and validated here; `-o` gives the final message and the `turn.completed` event the usage.
-    Each call runs in an empty directory, read-only sandbox, ephemeral session, user config ignored, on the Codex
+    Each call runs in an empty directory, read-only sandbox, no shell, ephemeral session, user config ignored, on the Codex
     home the router was given.
     """
 
     def __init__(self, home: Path, *, binary: str = "codex", timeout: float = CLI_TIMEOUT_SECONDS,
-                 run: Run = subprocess.run, workdir: Path | None = None) -> None:
+                 run: Run = subprocess.run) -> None:
         self.binary = _find(binary, "install the Codex CLI")
         home = home.expanduser().resolve()  # the child runs elsewhere: a relative home would point somewhere else there
         if not home.is_dir():  # a typo must not make codex start a fresh home there
@@ -254,7 +174,6 @@ class CodexClient:
         self.home = home
         self.timeout = timeout
         self.run = run
-        self.workdir = workdir.resolve() if workdir is not None else None  # read-only inside it; an empty directory when None
 
     def complete(
         self, cell: Cell, *, prompt: str, system: str | None = None,
@@ -274,7 +193,7 @@ class CodexClient:
         with tempfile.TemporaryDirectory(prefix="router-codex-") as scratch:
             last = Path(scratch) / "last-message.md"
             args = [self.binary, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
-                    "--color", "never", "-s", "read-only", "-C", str(self.workdir or scratch), "-m", cell.spec.id,
+                    "--color", "never", "-s", "read-only", "--disable", "shell_tool", "-C", scratch, "-m", cell.spec.id,
                     "-c", f'model_reasoning_effort="{effort}"', "-o", str(last)]
             if output_format is not None:
                 schema = Path(scratch) / "schema.json"
@@ -287,7 +206,7 @@ class CodexClient:
             t0 = time.monotonic()
             try:
                 proc = self.run(args, input=f"{system or DEFAULT_SYSTEM}\n\n{prompt}", capture_output=True, text=True,
-                                env=env, cwd=str(self.workdir or scratch), timeout=self.timeout, check=False)
+                                env=env, cwd=scratch, timeout=self.timeout, check=False)
             except subprocess.TimeoutExpired as exc:
                 raise ClientUnavailableError(f"codex exec exceeded {self.timeout:.0f}s") from exc
             except OSError as exc:
@@ -340,84 +259,9 @@ def _codex_usage(events: list[dict[str, Any]]) -> Usage:
     return usage
 
 
-class GeminiClient:
-    """Completions through `gemini -p`: Google by the CLI's own sign-in or GEMINI_API_KEY, on the machine's own
-    Gemini settings (the CLI has no home variable to isolate, so unlike Codex this door runs on whatever
-    `~/.gemini` holds). Satisfies `client.ClaudeClient`. The instructions and the prompt go on stdin, `-p`
-    only asks for the answer, so nothing long sits in the command line; `-o json` gives the response and the
-    token counts; `--approval-mode plan` keeps the tools read-only. Each call runs in an empty directory.
-    """
-
-    def __init__(self, *, binary: str = "gemini", timeout: float = CLI_TIMEOUT_SECONDS, run: Run = subprocess.run) -> None:
-        self.binary = _find(binary, "install the Gemini CLI")
-        self.timeout = timeout
-        self.run = run
-
-    def complete(
-        self, cell: Cell, *, prompt: str, system: str | None = None,
-        max_tokens: int = NON_STREAMING_MAX_TOKENS,  # noqa: ARG002 - the CLI manages output length itself
-        output_format: type[BaseModel] | None = None,
-    ) -> Completion:
-        text, usage, seconds, served = self._exec(cell, prompt, system, output_format)
-        parsed = _structured(text, output_format)
-        if output_format is not None and parsed is None:
-            text, more, extra, served = self._exec(cell, prompt, system, output_format)
-            usage, seconds, parsed = usage + more, seconds + extra, _structured(text, output_format)
-        return Completion(text=text, usage=usage, stop_reason="end_turn", model=served or cell.model, parsed=parsed,
-                          seconds=seconds)
-
-    def _exec(self, cell: Cell, prompt: str, system: str | None, output_format: type[BaseModel] | None,
-              ) -> tuple[str, Usage, float, str | None]:
-        instructions = system or DEFAULT_SYSTEM
-        if output_format is not None:
-            instructions += SCHEMA_NOTE + json.dumps(output_format.model_json_schema())
-        with tempfile.TemporaryDirectory(prefix="router-gemini-") as scratch:
-            args = [self.binary, "-p", "Answer the task above.", "-m", cell.spec.id, "-o", "json", "--approval-mode", "plan"]
-            t0 = time.monotonic()
-            try:
-                proc = self.run(args, input=f"{instructions}\n\n{prompt}", capture_output=True, text=True, cwd=scratch,
-                                timeout=self.timeout, check=False)
-            except subprocess.TimeoutExpired as exc:
-                raise ClientUnavailableError(f"gemini exceeded {self.timeout:.0f}s") from exc
-            except OSError as exc:
-                raise ClientUnavailableError(f"gemini could not start: {exc}") from exc
-        seconds = time.monotonic() - t0
-        try:
-            data = json.loads(proc.stdout or "")
-        except ValueError:
-            data = None
-        if not isinstance(data, dict):  # stderr only: stdout may be the answer, and this text ends in the ledger
-            detail = (proc.stderr or "").strip()[:ERROR_DETAIL_CHARS] or "nothing on stderr"
-            raise ClientUnavailableError(f"gemini exited with code {proc.returncode} and no JSON object: {detail}")
-        if data.get("error") or proc.returncode != 0:
-            error = _dict(data.get("error"))
-            detail = str(error.get("message") or error or "no error message")[:ERROR_DETAIL_CHARS]
-            raise ClientUnavailableError(f"gemini exited with code {proc.returncode}: {detail}")
-        usage, served = _gemini_usage(_dict(_dict(data.get("stats")).get("models")))
-        return str(data.get("response") or ""), usage, seconds, served
-
-
-def _gemini_usage(models: dict[str, Any]) -> tuple[Usage, str | None]:
-    """Sum the token counts `gemini -o json` reports per model; the model with the most output is the one served."""
-    usage, served, most = Usage(), None, -1
-    for name, entry in models.items():
-        tokens = _dict(_dict(entry).get("tokens"))
-        cached = int(tokens.get("cached") or 0)
-        out = int(tokens.get("candidates") or 0)
-        usage = usage + Usage(input_tokens=max(0, int(tokens.get("prompt") or 0) - cached), output_tokens=out,
-                              cache_read_tokens=cached)
-        if out > most:
-            served, most = str(name), out
-    return usage, served
-
-
-def build_client(provider: Provider) -> ClaudeClient:
-    """Return the client for `provider`'s door: the Codex CLI on the configured home, the Gemini CLI, or the API."""
-    if provider.transport == "codex":
-        return CodexClient(resolve_codex_home()[0])
-    if provider.transport == "gemini":
-        return GeminiClient()
-    return OpenAICompatibleClient(provider)
+def build_client(provider: Provider) -> ClaudeClient:  # noqa: ARG001 - one door today; the table names it
+    """Return the client for a non-Anthropic door: the Codex CLI on the configured home."""
+    return CodexClient(resolve_codex_home()[0])
 
 
 class MultiClient:

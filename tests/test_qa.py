@@ -435,3 +435,39 @@ def test_the_tribunal_command_judges_texts_reviews_repositories_and_sets_its_jud
     assert "calc.py" in capsys.readouterr().out
     assert tribunal_cli.main(["qa", "--repo", str(repo), "--base", "no-such-branch"]) == 2
     assert "cannot measure the change from 'no-such-branch'" in capsys.readouterr().err
+
+
+def test_tribunal_config_lists_what_a_codex_home_can_run_and_declares_only_what_is_named(tmp_path, monkeypatch, capsys):
+    from model_router import tribunal_cli
+    from model_router.catalog import external_models
+    from model_router.paths import home
+
+    monkeypatch.delenv("MODEL_ROUTER_CODEX_HOME", raising=False)
+    monkeypatch.setattr(tribunal_cli.shutil, "which", lambda name: f"/opt/bin/{name}")
+    codex_home = tmp_path / "codex-work"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text("{}")
+    try:
+        assert tribunal_cli.main(["config", "--codex-home", str(codex_home)]) == 0
+        assert "no model list in" in capsys.readouterr().out  # Codex has not run with this home yet
+        models = [{"slug": s, "visibility": "list"} for s in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")]
+        (codex_home / "models_cache.json").write_text(json.dumps({"models": models}))
+        assert tribunal_cli.main(["config", "--codex-models"]) == 0
+        out = capsys.readouterr().out
+        assert "--declare sol=codex/gpt-6-sol@2/10/1" in out and "astra=codex/gpt-6-astra@10/50/3" in out
+        assert "stay out until you name them" in out and not external_models()
+        assert tribunal_cli.main(["config", "--codex-models", "sol,luna", "--codex", "sol/high"]) == 0
+        out = capsys.readouterr().out  # declared first, so --codex in the same command may name one of them
+        assert sorted(s.short for s in external_models()) == ["luna", "sol"]  # astra stays out: it was not named
+        assert "judges opus/high + sol/high" in out and "ok    sol: codex gpt-6-sol" in out
+        with pytest.raises(SystemExit, match="not in this home's list: nova"):
+            tribunal_cli.main(["config", "--codex-models", "nova"])
+        assert tribunal_cli.main(["config", "--declare", "sol=codex/gpt-6-sol@5/30/1"]) == 0
+        assert "declared at 5/30, OpenAI lists 2/10" in capsys.readouterr().out  # a price typed by hand, not the list one
+        assert tribunal_cli.main(["config", "--declare", "old=codex/gpt-6.1-sol@2/10/1"]) == 0
+        assert "FAIL  old: codex gpt-6.1-sol" in capsys.readouterr().out  # not in this home's list
+        assert tribunal_cli.main(["config", "--declare", "sol="]) == 0
+        assert "sol was also removed from: qa" in capsys.readouterr().out  # the judge that named it goes too
+        assert json.loads((home() / "config.json").read_text())["qa"] == {}
+    finally:
+        load_external({})

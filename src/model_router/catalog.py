@@ -15,17 +15,12 @@ with real verdicts:
   and effort fine-tunes within the tier, following Anthropic's published guidance that a frontier
   model at low effort often beats a lower tier at high effort.
 
-Models of other providers are not shipped here: their ids and prices change and a wrong number is
-worse than none. The user declares them in config.json with `router config --external
-NAME=PROVIDER/MODEL_ID@INPUT/OUTPUT` and `load_external` registers them at start-up. PROVIDER is the
-door: `openai`, `deepseek` and `xai` by API key, `codex` (ChatGPT through the Codex CLI) and `gemini`
-(Google through its CLI) by subscription; PROVIDER_FAMILY says which doors lead to the same company, so
-a judge and an arbiter can be kept on different ones. A declared model judges and arbitrates; it does
-the work too once `router config --models` lists it. Its tier is the one declared (`/TIER`, 0 Haiku to 3
-Fable; EXTERNAL_TIER when omitted): an assumption that says where the ladder places it, until a
-calibration measures where it should start. Its efforts are the ones its door accepts (PROVIDER_EFFORTS),
-and its cached tokens are priced at the input rate. Declare the API list price even when you pay by
-subscription: the ledger prices every call at list price, so strategies stay comparable.
+The router works with Claude models only. One other door exists, for the tribunal plugin's second judge:
+`codex` (ChatGPT through the Codex CLI). Its models are declared in config.json by `tribunal config
+--codex-models` (or `NAME=codex/MODEL_ID@INPUT/OUTPUT[/TIER]` by hand) and `load_external` registers them
+when the tribunal starts; the router never loads them, so its lattice, its plans and its hook stay on
+Claude. A declared model's cached tokens are priced at the input rate, and its list price is declared even
+on a subscription, so the ledger prices every call the same way.
 """
 
 from __future__ import annotations
@@ -39,19 +34,14 @@ from typing import Any
 from .paths import MODELS_ENV, read_config
 
 PRICES_AS_OF = "2026-10-06"
-KNOWN_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "codex", "deepseek", "xai", "gemini")
-PROVIDER_FAMILY: dict[str, str] = {"anthropic": "anthropic", "openai": "openai", "codex": "openai", "deepseek": "deepseek",
-                                   "xai": "xai", "gemini": "google"}  # which doors lead to the same company
+KNOWN_PROVIDERS: tuple[str, ...] = ("anthropic", "codex")
+PROVIDER_FAMILY: dict[str, str] = {"anthropic": "anthropic", "codex": "openai"}  # the company behind each door
 EXTERNAL_TIER = 2  # the tier of a declared model whose declaration gives none: as capable as Opus
 TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}
 EXTERNAL_SYNTAX = re.compile(r"^([a-z][a-z0-9-]*)=(?:([a-z]+)/([^@\s]+)@([0-9.]+)/([0-9.]+)(?:/([0-3]))?)?$")
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
-# The efforts each door accepts: one cell per effort in the lattice, so a door without an effort setting gets one cell.
-PROVIDER_EFFORTS: dict[str, tuple[str, ...]] = {
-    "openai": ("low", "medium", "high"), "codex": ("low", "medium", "high", "xhigh"), "xai": ("low", "high"),
-    "deepseek": ("medium",), "gemini": ("medium",),
-}
+PROVIDER_EFFORTS: dict[str, tuple[str, ...]] = {"codex": ("low", "medium", "high", "xhigh")}  # what Codex accepts
 EFFORT_OUTPUT_MULT: dict[str, float] = {"low": 0.5, "medium": 0.75, "high": 1.0, "xhigh": 1.6, "max": 2.5}
 CAPABILITY_TIER: dict[str, float] = {"haiku": 0.40, "sonnet": 0.60, "opus": 0.75, "fable": 0.90}
 CAPABILITY_EFFORT: dict[str, float] = {"low": -0.06, "medium": -0.03, "high": 0.0, "xhigh": 0.03, "max": 0.05}
@@ -245,18 +235,19 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
 
 
 def available_models() -> list[str]:
-    """Return the models this installation may route work to, in catalogue order. The MODEL_ROUTER_MODELS
-    variable wins, then `models` in config.json (`router config --models`): whatever they list, declared models
-    of other providers included; with neither, every Anthropic model in the catalogue and nothing else. Use it
-    when a plan or an account lacks a model (no Fable, say), or to let a ChatGPT model take tasks.
+    """Return the Claude models this installation may route work to, in catalogue order. The MODEL_ROUTER_MODELS
+    variable wins, then `models` in config.json (`router config --models`); with neither, every Claude model in
+    the catalogue. Use it when a plan or an account lacks a model (no Fable, say). A name of another provider's
+    model in the list is ignored: the router routes to Claude only.
     """
-    raw = os.environ.get(MODELS_ENV)
-    if raw:
-        return parse_models(raw)
-    configured = read_config().get("models")
-    if configured:
-        return parse_models(configured)
-    return [m for m, spec in MODELS.items() if spec.provider == "anthropic"]
+    cfg = read_config()
+    configured = os.environ.get(MODELS_ENV) or cfg.get("models")
+    if not configured:
+        return [m for m, spec in MODELS.items() if spec.provider == "anthropic"]
+    names = [n.strip() for n in configured.split(",")] if isinstance(configured, str) else [str(n) for n in configured]
+    declared = set(cfg.get("external") or {})  # the tribunal's Codex models, listed by an older version: not the router's
+    ids = parse_models([n for n in names if n and n not in declared])
+    return [m for m in ids if MODELS[m].provider == "anthropic"]
 
 
 @dataclass(frozen=True)

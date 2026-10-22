@@ -82,65 +82,33 @@ def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
     assert nearest_available(parse_cell("opus/high"), ["opus"]).label == "opus/high"
 
 
-def test_declared_models_get_their_doors_efforts_and_family_and_work_only_when_listed(monkeypatch, tmp_path):
+def test_codex_models_are_the_tribunal_s_and_never_enter_the_router_s_lattice(monkeypatch, tmp_path):
     from model_router.catalog import (
         MODELS,
         available_models,
         external_models,
         lattice,
         load_external,
-        nearest_available,
         nearest_effort,
         parse_external,
-        worker_cell,
     )
 
-    name, luna = parse_external("luna=codex/gpt-5.5@5/30")
-    assert name == "luna" and luna is not None and (luna.provider, luna.family) == ("codex", "openai")
+    name, luna = parse_external("luna=codex/gpt-6-luna@0.1/0.5/0")
+    assert name == "luna" and luna is not None and (luna.provider, luna.family, luna.tier) == ("codex", "openai", 0)
     assert luna.efforts == ("low", "medium", "high", "xhigh") and luna.default_effort == "medium"
-    assert luna.tier == 2  # Opus-class until the declaration says otherwise
-    _, weak = parse_external("weak=codex/gpt-6-luna@2.5/12.5/0")
-    assert weak is not None and weak.tier == 0
     with pytest.raises(ValueError, match="one declaration per model id"):
         parse_external("x=codex/claude-opus-5-5@1/1")  # a Claude id through another door would replace Opus
-    with pytest.raises(ValueError, match=r"\[/TIER\]"):
-        parse_external("weak=codex/gpt-6-luna@2.5/12.5/4")
-    _, gem = parse_external("gem=gemini/gemini-3-pro@2/12")
-    assert gem is not None and (gem.family, gem.efforts, gem.default_effort) == ("google", ("medium",), "medium")
-    _, grok = parse_external("grok=xai/grok-4.7@2/6")
-    assert grok is not None and grok.default_effort == "low"  # xAI knows low and high only
-    with pytest.raises(ValueError, match="known: openai, codex, deepseek, xai, gemini"):
-        parse_external("x=mistral/m@1/1")
+    for gone in ("gpt=openai/gpt-5.5@5/30", "gem=gemini/g@1/1", "ds=deepseek/d@1/1", "grok=xai/g@1/1"):
+        with pytest.raises(ValueError, match="known: codex"):
+            parse_external(gone)  # the router is Claude only; Codex is the tribunal's one other door
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
-    load_external({"external": {"luna": {"provider": "codex", "id": "gpt-5.5", "input": 5, "output": 30},
-                                "gem": {"provider": "gemini", "id": "gemini-3-pro", "input": 2, "output": 12}}})
+    load_external({"external": {"luna": {"provider": "codex", "id": "gpt-6-luna", "input": 0.1, "output": 0.5}}})
     try:
         anthropic = [m for m, s in MODELS.items() if s.provider == "anthropic"]
-        assert available_models() == anthropic and len(lattice()) == 20  # declared, not listed: judges only
-        assert [s.short for s in external_models()] == ["luna", "gem"]
-        with pytest.raises(ValueError, match="one declaration per model id"):
-            parse_external("gpt=openai/gpt-5.5@5/30")  # gpt-5.5 is already `luna`: the catalogue is keyed by id
-        assert parse_external("luna=codex/gpt-5.5@6/30")[1] is not None  # the same name may be declared again
-        twice = {"luna": {"provider": "codex", "id": "gpt-5.5", "input": 5, "output": 30},
-                 "gpt": {"provider": "openai", "id": "gpt-5.5", "input": 5, "output": 30}}
-        assert load_external({"external": twice}) == ["luna"]  # the second declaration of an id is skipped
-        load_external({"external": {"luna": twice["luna"],
-                                    "gem": {"provider": "gemini", "id": "gemini-3-pro", "input": 2, "output": 12}}})
-        cell = parse_cell("luna/high")
-        assert nearest_available(cell, anthropic) == cell  # a judge is always available
-        assert worker_cell(cell, anthropic).label == "opus/high"  # a worker is not: the Claude of its tier takes over
-        assert worker_cell(parse_cell("gem"), ["haiku", "sonnet"]).label == "sonnet/medium"
-        assert worker_cell(parse_cell("opus/xhigh"), ["gem", "haiku"]).label == "gem/medium"  # gem's only effort
-        assert worker_cell(parse_cell("opus/xhigh"), ["gem", "opus"]).label == "opus/xhigh"  # Claude first at a tier
-        assert worker_cell(parse_cell("opus/xhigh"), []) == parse_cell("opus/xhigh")  # nothing to choose from
+        assert [s.short for s in external_models()] == ["luna"]
+        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,luna")  # an older version's list
+        assert available_models() == anthropic and len(lattice()) == 20  # luna is declared, listed, and still out
         assert nearest_effort("max", ("low", "high")) == "high" and nearest_effort("low", ("medium",)) == "medium"
-        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,luna,gem")
-        assert available_models()[-2:] == ["gpt-5.5", "gemini-3-pro"]
-        cells = lattice()
-        assert len(cells) == 25 and sum(c.spec.short == "luna" for c in cells) == 4
-        assert sum(c.spec.short == "gem" for c in cells) == 1
-        assert worker_cell(cell).label == "luna/high"
     finally:
         load_external({})
 

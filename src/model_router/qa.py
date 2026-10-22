@@ -34,7 +34,7 @@ from .cli_client import CliClient
 from .client import ClaudeClient, ClientUnavailableError
 from .ledger import TRIBUNAL_CALIBRATION, Ledger
 from .paths import MAIN_LEDGER, TRIBUNAL_ENV, home, read_config
-from .providers import CodexClient, MultiClient, Provider, build_client, resolve_codex_home
+from .providers import CodexClient, MultiClient, Provider, resolve_codex_home
 from .runner import EXTERNAL_STOP, Attempt, TaskResult
 from .store import Store
 from .task import Task
@@ -53,7 +53,9 @@ MAX_UNTRACKED_BYTES = 1_000_000  # an untracked file above this is left out of t
 JUDGE_TIMEOUT = 450.0  # per judge call; Codex may retry once, and two judges plus an arbiter stay inside the Stop hook's 2400 s
 CHILD_ENV = TRIBUNAL_ENV  # 0 in the judges' own sessions (and every `claude -p` the router starts): the hooks skip them
 GIT_TIMEOUT = 120
-MAX_DIFF_CHARS = 50_000  # the judges see the diff up to here (and the list of every changed file); they can open the rest
+MAX_DIFF_CHARS = 30_000  # the judges see the diff up to here (and the list of every changed file)
+MAX_FILES_CHARS = 25_000  # then the changed files as they are now, up to here in all
+MAX_FILE_CHARS = 12_000  # and each one up to here
 DECLARED_QA = re.compile(r"(?:^|[\s,;(\[])qa\s*[:=]\s*(off|final|parallel)(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
 
 QA_JUDGE_SYSTEM = (
@@ -324,34 +326,57 @@ class _QaPolicy:
 
 
 def repo_client(repo: Path) -> ClaudeClient:
-    """Return the client the QA judges use: Claude through `claude -p` with the read tools, Codex through
-    `codex exec` read-only, both running inside `repo`. The Claude judge loads only the user's settings (not the
-    repository's, whose hooks would run unasked) and may read inside the repository without asking; anything
-    outside it is denied, since nothing grants it. Both clients start their processes with CHILD_ENV=0.
+    """Return the client the QA judges use. Claude runs through `claude -p` inside `repo` with the read tools: it
+    loads only the user's settings (not the repository's, whose hooks would run unasked) and may read inside
+    the repository without asking; anything outside it is denied, since nothing grants it. Codex runs through
+    `codex exec` in an empty directory without a shell, so it reads nothing: it judges the material in the
+    prompt, which carries the diff and the changed files as they are now. Both start their processes with
+    CHILD_ENV=0.
     """
 
-    def factory(provider: Provider) -> ClaudeClient:
-        if provider.transport == "codex":
-            return CodexClient(resolve_codex_home()[0], workdir=repo, timeout=JUDGE_TIMEOUT)
-        return build_client(provider)
+    def factory(provider: Provider) -> ClaudeClient:  # noqa: ARG001 - Codex is the only other door
+        return CodexClient(resolve_codex_home()[0], timeout=JUDGE_TIMEOUT)  # no shell, no repository: the prompt only
 
     claude = CliClient(tools=READ_TOOLS, cwd=repo, timeout=JUDGE_TIMEOUT, extra_args=["--setting-sources", "user"])
     return MultiClient(claude, factory=factory)
 
 
 def run_qa(repo: Path, brief: str, diff: str, s: QaSettings, *, client: ClaudeClient | None = None,
-           ledger: Ledger | None = None, author: Cell | None = None) -> TaskResult:
-    """Judge `diff` against `brief` with the tribunal `s` describes, the judges reading `repo`; record it in the
-    ledger and return it. `author` is the cell that wrote the change (the chat's model, when known); it is
-    recorded, not judged as a worker: the record carries no worker cost and `router calibrate` skips it.
+           ledger: Ledger | None = None, author: Cell | None = None, current_files: str = "") -> TaskResult:
+    """Judge `diff` (with `current_files`, the changed files as they are now, from `files_now`) against `brief`
+    with the tribunal `s` describes; record it in the ledger and return it. `author` is the cell that wrote the
+    change (the chat's model, when known); it is recorded, not judged as a worker: the record carries no worker
+    cost and `router calibrate` skips it.
     """
     task = Task(prompt=brief.strip()[:MAX_BRIEF_CHARS] or "(no brief: judge the change on its own: correct, "
                 "complete, and nothing that worked is broken)", kind="code", risk="critical")
     verifier = Verifier(client or repo_client(repo), _QaPolicy(s), judge_system=QA_JUDGE_SYSTEM,
                         arbiter_system=QA_ARBITER_SYSTEM, parallel=True, min_confidence=0.0)
     tag = f"change-{secrets.token_hex(6)}"  # a diff that writes a closing tag cannot leave the material
-    return _judge(task, f"<{tag}>\n{fit_diff(diff)}\n</{tag}>", verifier, author or parse_cell("opus/medium"),
+    material = fit_diff(diff) + (f"\n\n{current_files}" if current_files else "")
+    return _judge(task, f"<{tag}>\n{material}\n</{tag}>", verifier, author or parse_cell("opus/medium"),
                   f"tribunal QA of a code change in {repo.name}: {s.describe()}", s, ledger)
+
+
+def files_now(repo: Path, tree: str, files: list[str], limit: int = MAX_FILES_CHARS) -> str:
+    """Return the changed `files` as they are in `tree`, whole, so a judge that cannot open the repository sees
+    the code around each change: text files only, each up to MAX_FILE_CHARS, all of them up to `limit`, and a
+    note for what is left out. Deleted files are not shown (the diff has them).
+    """
+    parts, used, left_out = [], 0, []
+    for path in files:
+        try:
+            text = _git(repo, "show", f"{tree}:{path}")
+        except RuntimeError:  # deleted in this change, or a submodule
+            continue
+        if "\0" in text or len(text) > MAX_FILE_CHARS or used + len(text) > limit:
+            left_out.append(path)
+            continue
+        parts.append(f"--- {path} (as it is now)\n{text}")
+        used += len(text)
+    if left_out:
+        parts.append("Not shown here (binary, too long, or over the limit): " + ", ".join(left_out))
+    return "\n\n".join(parts)
 
 
 def fit_diff(diff: str, limit: int = MAX_DIFF_CHARS) -> str:
