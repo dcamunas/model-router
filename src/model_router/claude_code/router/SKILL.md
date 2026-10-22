@@ -20,7 +20,10 @@ prompt: `access: read` for work that only reads, `access: write` for anything th
 commands or uses MCP tools. Only `access: read` on the first line, a line of declarations only, sends a
 subagent to the read-only agent; the hook never guesses it from the wording, which is not safe.
 If the read-only agent answers that it cannot do the task, relaunch with `access: write`. What every
-subagent spent is measured when it ends: `router stats`.
+subagent spent is measured when it ends: `router stats`. When a subagent's result is not good enough,
+relaunch the same task higher (set `model`, or more effort) rather than rephrasing it: the router reads
+that as a fail of its first choice and, after a few in the same project, starts that kind of task
+higher there (`router project` shows it).
 What this skill adds is the rest of the loop: verify by risk and escalate on failure.
 
 ## Plain text: `router run`, not a subagent

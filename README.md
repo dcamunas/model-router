@@ -101,7 +101,7 @@ If your plan or your account lacks a model (no Fable, say), or you want `router 
 CLI too and tell it once:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.14.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.15.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
@@ -113,7 +113,7 @@ the same hooks into the profile's `settings.json` and copies the skill and the r
 (as `router-reader`) into the profile.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.14.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.15.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor
@@ -263,10 +263,23 @@ works on three things, all of them on Claude models:
   tokens are a lower bound (a transcript keeps the usage taken when each message began), so the cost
   shown is a floor, and almost all of it is context anyway.
 
+- **Learning per project.** Each measurement carries its project (the git root) and a signature of
+  its prompt: sixteen numbers, no text. When Claude launches a task like one that finished a little
+  before, higher (a bigger model, more effort, or the general agent after the reader), the first one
+  is counted as a fail. A start cell relaunched higher in 2 of 6 launches or more (30 % at least)
+  starts one step up in that project, on its own, at the next session start, and Claude Code says so.
+  A cheaper start is only proposed, after 10 launches with no relaunch, and you apply it. The risk
+  floors hold, and the tuning lives in `~/.model-router/projects/`, never in the repository.
+
 ```bash
 router stats                 # ... then "Claude Code subagents, measured from their transcripts"
+router project               # this repo: routed subagents, relaunches, tuning in force, cheaper starts proposed
+router project --apply       # apply the proposed cheaper starts; --reset removes the project's tuning
 router config --lean off     # keep every subagent on the agent Claude chose
 ```
+
+With personal use the numbers grow slowly: six launches of one kind on one start cell in one project
+before anything moves. That is on purpose; a tuning built on two runs would be noise.
 
 `SessionStart` tells Claude the hook exists and what to declare. The skill `router` covers what a
 hook cannot do: verify a subagent's result, escalate, and send text-only subtasks through `router
@@ -366,8 +379,9 @@ the numbers to pick a judge with, instead of the error rates the simulation assu
 
 - The hooks call no API: they classify by rules, locally. Every decision goes to
   `~/.model-router/hook.jsonl` with the first 60 characters of the subagent's prompt and a hash of
-  it; every measurement goes to `~/.model-router/subagents.jsonl` with numbers and that hash, read
-  from the transcript Claude Code already keeps on your disk.
+  it; every measurement goes to `~/.model-router/subagents.jsonl` with numbers, that hash, a
+  signature of sixteen numbers (no text) and the project's path, read from the transcript Claude Code
+  already keeps on your disk. A project's tuning goes to `~/.model-router/projects/`.
 - `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
   or your Claude Code account, and to nobody else. (The tribunal plugin also sends a reviewed change
   to Codex; its README says what goes.)

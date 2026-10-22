@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .calibration import ACTIVE, Calibration, active_calibration_name, load_calibration
 from .catalog import (
@@ -309,8 +309,10 @@ class Policy:
         judge: Cell | None = None,
         arbiter: Cell | None = None,
         calibration: Calibration | str | None = ACTIVE,
+        tuning: dict[str, Any] | None = None,
     ) -> None:
         self.cells = cells or lattice()
+        self.tuning = tuning or {}  # a project's own start cells (`projects.py`), on top of the table
         self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
         self.calibration, self.calibration_missing = _resolve_calibration(calibration)
         if self.calibration is not None:
@@ -355,6 +357,10 @@ class Policy:
         risk = task.risk
         start = parse_cell(self.start_table[kind][risk])
         rationale = [f"table {kind} x {risk} -> {start}" + (f" (calibration {self.calibration_id})" if self.calibration else "")]
+        tuned = (self.tuning.get("start") or {}).get(kind, {}).get(risk)
+        if tuned:
+            rationale.append(f"tuned for {self.tuning.get('name', 'this project')}: {start} -> {tuned}")
+            start = parse_cell(str(tuned))
         if self.calibration_missing:
             rationale.append(f"calibration {self.calibration_missing} cannot be loaded: the built-in tables decide")
         start = self._available(start, rationale)

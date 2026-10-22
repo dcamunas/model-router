@@ -2,6 +2,24 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.15.0] - 2026-10-22
+
+### Added
+
+- Learning per project. Each measured subagent carries its project (the git root of the session) and a
+  signature of its prompt (a MinHash of sixteen numbers; no text), and the hook's decisions carry the
+  project too. When Claude launches a task alike to one that finished in the last 30 minutes of the same
+  session, higher (a more capable model, more effort, or the general agent after the read-only one), the
+  first one is recorded as relaunched: the quality signal a subagent otherwise lacks. A start cell relaunched
+  in 2 of 6 launches or more, and at least 30 %, starts one step up the ladder in that project, applied on
+  its own at the next session start, with a line in Claude Code saying what moved and why. A cheaper start is
+  only proposed, after 10 launches with none relaunched, one step down the same ladder and never below a risk
+  floor. Each project's tuning and its history live in `~/.model-router/projects/`, never in the repository.
+- `router project [PATH] [--apply] [--reset]`: the subagents routed in a project, how many were relaunched,
+  the tuning in force with its last changes, and the cheaper starts the evidence supports.
+- `Policy(tuning=...)`: a project's start cells on top of the table or the calibration, before availability
+  and the risk floors.
+
 ## [0.14.0] - 2026-10-22
 
 The router is a Claude Code plugin for Claude models, and its job inside Claude Code is subagents: the model,

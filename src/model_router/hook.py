@@ -32,15 +32,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .catalog import MODELS, lattice, parse_cell, worker_cell
+from .catalog import MODELS, SHORT_TO_ID, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
+from .projects import evidence, find_relaunch, load_tuning, project_of, raise_failing, relaunched_ids, signature
 from .subagents import LOG_FILE as SUBAGENT_LOG
 from .subagents import append as append_subagent
 from .subagents import finalize as finalize_subagents
 from .subagents import find_decision, prompt_hash, read_transcript
+from .subagents import load as load_subagents
 from .subagents import record as subagent_record
 from .task import Task
 
@@ -114,10 +116,12 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None,
     cls = classify_rules(f"{prompt}\n{description}")
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
     feedback = FeedbackStore(home() / "feedback.json")
+    project = project_of(cwd)
+    tuning = load_tuning(project)
     try:
-        policy = Policy(cells=claude, feedback=feedback)
+        policy = Policy(cells=claude, feedback=feedback, tuning=tuning)
     except ValueError:  # a judge setting this router cannot resolve: route anyway, `router doctor` reports it
-        policy = Policy(cells=claude, feedback=feedback, judge=parse_cell(DEFAULT_JUDGE))
+        policy = Policy(cells=claude, feedback=feedback, judge=parse_cell(DEFAULT_JUDGE), tuning=tuning)
     plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=cls.risk))
     cell, cross = worker_cell(plan.start, [c.model for c in claude]), None
     if cls.kind == "review" and VERIFY_BY_RISK[cls.risk] == "full" and cell.claude_code()["model"] == chat_model:
@@ -136,7 +140,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None,
     record = {
         "kind": cls.kind, "risk": cls.risk, "cell": cell.label, "set": fields, "why": cls.reason,
         "subagent": subagent or "general-purpose", "prompt_head": prompt.strip()[:PROMPT_HEAD_CHARS],
-        "prompt_hash": prompt_hash(prompt),
+        "prompt_hash": prompt_hash(prompt), "project": project,
     }
     if cross:
         record["cross"] = cross
@@ -193,20 +197,69 @@ def _measure(event: dict[str, Any]) -> None:
         sys.stderr.write(f"router-hook: subagent not measured: {exc}\n")
 
 
+def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], updated: dict[str, Any] | None,
+                 record: dict[str, Any]) -> str | None:
+    """Return the agent id of the finished subagent this launch repeats higher (see `projects.find_relaunch`), or
+    None. The new launch's cell is the hook's choice, else the model and effort Claude set itself.
+    """
+    prompt = str(tool_input.get("prompt") or "")
+    if not prompt.strip() or os.environ.get(HOOK_LOG_ENV, "1") == "0":
+        return None
+    final = updated or tool_input
+    cell = None
+    with contextlib.suppress(ValueError):
+        if record.get("cell"):
+            cell = parse_cell(str(record["cell"]))
+        elif final.get("model"):
+            model = str(final["model"])
+            spec = MODELS.get(SHORT_TO_ID.get(model, model))  # an alias Claude Code knows and the catalogue does not: no cell
+            if spec is not None:
+                cell = parse_cell(f"{spec.short}/{final.get('effort') or spec.default_effort}")
+    agent = str(final.get("subagent_type") or "general-purpose")
+    found = find_relaunch(load_subagents(home() / SUBAGENT_LOG), event.get("session_id"), signature(prompt), cell, agent)
+    return str(found["agent_id"]) if found and found.get("agent_id") else None
+
+
+def _tune(event: dict[str, Any]) -> list[str]:
+    """Raise the start cells that keep failing in the session's project (`projects.raise_failing`) and return one
+    line per change; nothing is ever lowered here.
+    """
+    project = project_of(str(event.get("cwd") or "") or None)
+    if not project or os.environ.get(HOOK_LOG_ENV, "1") == "0":
+        return []
+    try:
+        records = load_subagents(home() / SUBAGENT_LOG)
+        changes = raise_failing(project, evidence(project, records, relaunched_ids(home() / "hook.jsonl")))
+    except (OSError, ValueError):
+        return []
+    return [f"{c['kind']} ({c['risk']}) in {Path(project).name} now starts on {c['to']}, not {c['from']}: "
+            f"{c['relaunched']} of {c['n']} relaunched higher" for c in changes]
+
+
 def handle(event: dict[str, Any]) -> dict[str, Any] | None:
     """Return the JSON the hook prints for this event, or None for silence."""
     name = event.get("hook_event_name")
     if name == "SessionStart":
         with contextlib.suppress(OSError):
             finalize_subagents(home() / SUBAGENT_LOG)  # the last session's subagents, now that their transcripts settled
-        return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
+        out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
+        raised = _tune(event)
+        if raised and os.environ.get(HOOK_QUIET_ENV) != "1":
+            out["systemMessage"] = "router: " + "; ".join(raised) + " (`router project` shows why; `--reset` undoes it)"
+        return out
     if name == "SubagentStop":
         _measure(event)
         return None
     if name != "PreToolUse" or event.get("tool_name") != "Agent":
         return None
-    updated, record = decide(event.get("tool_input") or {}, main_model(event.get("transcript_path")),
-                             str(event.get("cwd") or "") or None)
+    tool_input = event.get("tool_input") or {}
+    updated, record = decide(tool_input, main_model(event.get("transcript_path")), str(event.get("cwd") or "") or None)
+    relaunch = _relaunch_of(event, tool_input, updated, record)
+    if relaunch is not None:
+        record["relaunch_of"] = relaunch
+        if updated is None:  # an explicit model, say: not routed, but the relaunch is the first one's verdict
+            with contextlib.suppress(OSError):
+                _log(event, {**record, "prompt_hash": prompt_hash(str(tool_input.get("prompt") or ""))})
     if updated is None:
         return None
     try:

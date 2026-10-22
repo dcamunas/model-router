@@ -35,6 +35,7 @@ from typing import Any
 from ._fmt import money
 from .catalog import MODELS, Usage, cost_usd
 from .classify import classify_rules
+from .projects import project_of, signature
 
 LOG_FILE = "subagents.jsonl"
 PROMPT_HASH_CHARS = 16
@@ -154,6 +155,8 @@ def record(event: dict[str, Any], usage: SubagentUsage, decision: dict[str, Any]
         "kind": (decision or {}).get("kind") or (cls.kind if cls else None),
         "risk": (decision or {}).get("risk") or (cls.risk if cls else None),
         "prompt_hash": prompt_hash(usage.prompt) if usage.prompt else None,
+        "sig": signature(usage.prompt) if usage.prompt else None,
+        "project": project_of(str(event.get("cwd") or "") or None),
         **{k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")},
         "tokens": usage.tokens,
         "cost_usd": round(cost, 6) if cost is not None else None,

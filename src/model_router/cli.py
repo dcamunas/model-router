@@ -505,6 +505,48 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_project(args: argparse.Namespace) -> int:
+    from . import projects
+
+    project = projects.project_of(str((args.path or Path.cwd()).expanduser().resolve()))
+    if project is None:
+        raise SystemExit("no project")
+    path = projects.tuning_path(project)
+    if args.reset:
+        path.unlink(missing_ok=True)
+        print(f"tuning of {project} removed: the table and the calibration decide again")
+        return 0
+    with contextlib.suppress(OSError):
+        finalize_subagents(home() / SUBAGENT_LOG)
+    ev = projects.evidence(project, load_subagents(home() / SUBAGENT_LOG), projects.relaunched_ids(home() / "hook.jsonl"))
+    print(f"project {project}")
+    if not ev:
+        print("no routed subagent measured here yet")
+    else:
+        rows = [[kind, cell, e["n"], e["fails"], ", ".join(sorted(e["risks"]))] for (kind, cell), e in sorted(ev.items())]
+        print("\nsubagents the hook routed here (relaunched = launched again higher soon after: taken as a fail)")
+        print(table(["kind", "start cell", "n", "relaunched", "risks"], rows))
+    tuning = projects.load_tuning(project)
+    start = tuning.get("start") or {}
+    tuned = [[kind, risk, cell] for kind, row in sorted(start.items()) for risk, cell in sorted(row.items())]
+    if tuned:
+        print(f"\ntuning in force ({path})")
+        print(table(["kind", "risk", "starts on"], tuned))
+        for c in (tuning.get("changes") or [])[-5:]:
+            print(f"  {c['at'][:16]} {c['what']} {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, "
+                  f"{c['relaunched']} of {c['n']} relaunched")
+    proposals = projects.propose_lower(ev, FLOOR)
+    if proposals:
+        print(f"\ncheaper starts the evidence supports ({projects.DOWN_N}+ launches, none relaunched); not applied:")
+        for c in proposals:
+            print(f"  {c['kind']} ({c['risk']}): {c['from']} -> {c['to']}, {c['n']} launches")
+        if args.apply:
+            print(f"applied: {projects.apply(project, proposals)}")
+        else:
+            print("`router project --apply` applies them; raising a failing start happens on its own at session start")
+    return 0
+
+
 def _cmd_db(args: argparse.Namespace) -> int:
     store = _store()
     if args.action == "rebuild":
@@ -892,6 +934,13 @@ def build_parser() -> argparse.ArgumentParser:
     su = sub.add_parser("uninstall", help="remove the hooks and the skill from the profile")
     _add_profile_args(su)
     su.set_defaults(func=_cmd_uninstall)
+
+    spj = sub.add_parser("project", help="what the hook learned in this project: subagents routed, relaunched higher, the "
+                                        "start cells it raised, and cheaper ones it proposes")
+    spj.add_argument("path", nargs="?", type=Path, help="a directory in the project (default: the current one)")
+    spj.add_argument("--apply", action="store_true", help="apply the proposed cheaper starts")
+    spj.add_argument("--reset", action="store_true", help="remove this project's tuning")
+    spj.set_defaults(func=_cmd_project)
 
     sg = sub.add_parser("config", help="show or set the profile for `router run`, the available models, the judge "
                                        "and the calibration (hooks untouched)")

@@ -1,7 +1,7 @@
 {
   "name": "tribunal",
   "displayName": "Tribunal",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Final QA of the code each turn changes: a Claude judge and a Codex judge, blind to each other and read-only in the repository, an arbiter on a split; a fail goes back to Claude with the findings. Needs the model-router plugin.",
   "author": {
     "name": "David Camuñas",
