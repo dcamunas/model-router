@@ -18,8 +18,20 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from .calibration import ACTIVE, Calibration, active_calibration_name, load_calibration
-from .catalog import EFFORTS, MODELS, Cell, ladder, lattice, nearest_available, nearest_effort, parse_cell, step_up, worker_cell
-from .paths import ARBITER_ENV, JUDGE_ENV, read_config
+from .catalog import (
+    EFFORTS,
+    MODELS,
+    SHORT_TO_ID,
+    Cell,
+    ladder,
+    lattice,
+    nearest_available,
+    nearest_effort,
+    parse_cell,
+    step_up,
+    worker_cell,
+)
+from .paths import ARBITER_ENV, JUDGE_ENV, MODELS_ENV, read_config
 from .task import Task
 
 if TYPE_CHECKING:
@@ -105,6 +117,16 @@ def _by_tier(cells: list[Cell]) -> list[str]:
 def _cap_effort(cell: Cell) -> Cell:
     capped = EFFORTS[min(cell.effort_rank, EFFORTS.index(JUDGE_MAX_EFFORT))]
     return _at(cell.model, capped)
+
+
+def _lists_no_claude_model() -> bool:
+    """Say whether the configured model list names only models of another provider (an older version's setting)."""
+    cfg = read_config()
+    configured = os.environ.get(MODELS_ENV) or cfg.get("models")
+    if not configured:
+        return False
+    names = [n.strip() for n in configured.split(",")] if isinstance(configured, str) else [str(n) for n in configured]
+    return all(n not in SHORT_TO_ID and n not in MODELS for n in names if n)
 
 
 def default_judge_cell(models: Iterable[str] | None = None) -> Cell:
@@ -297,6 +319,9 @@ class Policy:
         self.feedback = feedback
         self.min_gain = min_gain
         self.notes: list[str] = []
+        if _lists_no_claude_model():
+            self.notes.append("the models setting lists no Claude model: every Claude model is used; "
+                              "`router config --models` fixes it")
         try:
             self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
         except ValueError as exc:  # a judge setting from an older version (another provider's model), or a typo

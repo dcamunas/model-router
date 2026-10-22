@@ -8,7 +8,6 @@ that says "critical" is not a critical task for it, only a declaration or the ca
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -34,34 +33,16 @@ HIGH_RISK = r"\b(producci[oó]n|production|dinero|money|pago\w*|payment\w*|factu
 # user writes, never the material pasted below): `risk: high`, `kind=review`, `riesgo: alto`, `tipo: code`. The
 # value is a whole token (`risk: high-level` and `?risk=low` are not declarations). The first one wins.
 DECLARATION_LINES = 2
-READ_KINDS = frozenset({"search", "review", "analysis", "summarize", "extract"})  # chat and classify: only declared
 SPANISH_RISK = {"bajo": "low", "medio": "medium", "alto": "high", "crítico": "critical", "critico": "critical"}
 _RISK_VALUES = "|".join(list(RISKS) + list(SPANISH_RISK))
 _KIND_VALUES = "|".join(k for k in KINDS if k != "unknown")
 DECLARED_KIND = re.compile(r"(?:^|[\s,;(\[])(?:kind|tipo)\s*[:=]\s*(" + _KIND_VALUES + r")(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
 DECLARED_RISK = re.compile(r"(?:^|[\s,;(\[])(?:risk|riesgo)\s*[:=]\s*(" + _RISK_VALUES + r")(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
+# A line made of declarations only, e.g. `kind: review, risk: low, access: read`: where `access: read` counts.
+DECLARATION_LINE = re.compile(
+    r"^\s*(?:(?:kind|tipo|risk|riesgo|access|acceso|qa)\s*[:=]\s*[\w-]+\s*[,;.]?\s*)+$", re.I)
 DECLARED_ACCESS = re.compile(r"(?:^|[\s,;(\[])(?:access|acceso)\s*[:=]\s*(read|write|lectura|escritura)(?=\s*(?:$|[,;.)\]]))",
                              re.I | re.M)
-# Words that say a task edits, saves, runs something or reaches a service a read-only agent cannot. Any of them
-# keeps a subagent on the general agent: a read task kept there only costs tokens, a write task sent to the
-# read-only agent costs a wasted run. Broad on purpose, English and Spanish (matched without accents, so
-# "guárdalo" or "sustitúyelos" count); `access: read` overrides it.
-_WRITE_EN = (
-    r"edit|modif|change|fix|patch|implement|refactor|rewrit|write|writ|save|store|creat|add|append|insert|apply|commit|"
-    r"push|merge|rebase|cherry-pick|run|execut|install|delet|remov|renam|replac|substitut|updat|bump|upgrad|migrat|"
-    r"generat|scaffold|deploy|build|compil|test|reproduc|profil|benchmark|query|copy|move|post|publish|upload|send|"
-    r"close|reopen|open an?|comment|reply|email|e-mail|mail|archiv|tag|label|assign|approv|format|lint|"
-    r"bash|terminal|shell|command|script|pytest|npm|pnpm|yarn|pip|uv|make|docker|kubectl|curl|git|gh|github|gitlab|"
-    r"psql|sql|database|notion|slack|gmail|inbox|calendar|drive|jira|linear|mcp|browser|chrome|navigat|click|"
-    r"screenshot|download"
-)
-_WRITE_ES = (
-    r"edit|modific|cambi|arregl|corrig|parche|implement|refactori|reescrib|escrib|guard|almacen|cre[ao]|anad|agreg|"
-    r"inserta|aplic|commit|mergea|empuj|ejecut|lanz|corr[ea]|instal|borr|elimin|quit|renombr|reemplaz|sustit|"
-    r"actualiz|migr|gener|despleg|desplieg|compil|prueb|reproduc|copi|muev|mover|publi|sub[ei]|envi|cierr|cerr|"
-    r"comenta|respond|archiv|etiquet|asign|aprueb|formate|descarg"
-)
-WRITE_SIGNALS = re.compile(rf"(?<![\w-])(?:{_WRITE_EN}|{_WRITE_ES})\w*", re.I)
 
 
 @dataclass(frozen=True)
@@ -85,24 +66,20 @@ def declared_access(prompt: str) -> str | None:
     return "write" if m.group(1).lower() in ("write", "escritura") else "read"
 
 
-def _plain(text: str) -> str:
-    """Return `text` without accents (ñ becomes n), so one stem matches every accented form of a verb."""
-    return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
-
-
-def read_only(kind: str, text: str) -> tuple[bool, str]:
-    """Say whether a task is safe for a read-only agent, and why: a declared access decides; otherwise only the
-    reading kinds qualify (READ_KINDS), and only when nothing in the text asks to edit, run or reach a service.
+def read_only(prompt: str, description: str = "") -> tuple[bool, str]:
+    """Say whether a subagent may go to the read-only agent, and why. Only a declaration decides: `access: read`
+    (or `acceso: lectura`) on the prompt's first non-empty line, a line made of declarations only (`kind: review,
+    risk: low, access: read`). A sentence that happens to end in "access: read", material pasted below, or the
+    Agent tool's description never count; `access: write` anywhere in the prompt's
+    head or the description keeps the general agent. Guessing from the wording is not safe: a test of 71
+    realistic write requests found half of them phrased like reading work.
     """
-    access = declared_access(text)
-    if access is not None:
-        return access == "read", f"declared access: {access}"
-    if kind not in READ_KINDS:
-        return False, f"{kind} may write"
-    m = WRITE_SIGNALS.search(_plain(text))
-    if m:
-        return False, f"it asks to {m.group(0).strip()!r}"
-    return True, f"{kind}, nothing to edit or run"
+    if declared_access(description) == "write" or declared_access(prompt) == "write":
+        return False, "declared access: write"
+    first = next((line for line in prompt.splitlines() if line.strip()), "")
+    if DECLARATION_LINE.match(first) and declared_access(first) == "read":
+        return True, "declared access: read"
+    return False, "access not declared: the general agent"
 
 
 def declared(prompt: str) -> tuple[str | None, str | None]:

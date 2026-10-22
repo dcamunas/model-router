@@ -17,7 +17,8 @@ publishing; critical: high and hard to detect), and only you know what the resul
 Reading work goes to a read-only agent with Read, Grep, Glob, WebFetch and WebSearch only: no edits,
 no shell, no MCP, and a fraction of the context per turn. Say it on the first line of every subagent's
 prompt: `access: read` for work that only reads, `access: write` for anything that edits, saves, runs
-commands or uses MCP tools. Without it the hook guesses, keeping the general agent whenever in doubt.
+commands or uses MCP tools. Only `access: read` on the first line, a line of declarations only, sends a
+subagent to the read-only agent; the hook never guesses it from the wording, which is not safe.
 If the read-only agent answers that it cannot do the task, relaunch with `access: write`. What every
 subagent spent is measured when it ends: `router stats`.
 What this skill adds is the rest of the loop: verify by risk and escalate on failure.

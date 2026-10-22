@@ -178,7 +178,7 @@ def test_reading_work_goes_to_the_read_only_agent_when_one_is_installed(tmp_path
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
-    review = {"subagent_type": "general-purpose", "prompt": "kind: review, risk: medium\nReview the parser"}
+    review = {"subagent_type": "general-purpose", "prompt": "kind: review, risk: medium, access: read\nReview the parser"}
     updated, record = decided(review)
     assert updated["subagent_type"] == "general-purpose" and "agent" not in record  # nothing installed: unchanged
     (tmp_path / "profile" / "agents").mkdir(parents=True)
@@ -191,8 +191,8 @@ def test_reading_work_goes_to_the_read_only_agent_when_one_is_installed(tmp_path
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
     updated, _ = decided(review)
     assert updated["subagent_type"] == "model-router:reader"  # from the plugin
-    updated, record = decided({**review, "prompt": "kind: review\nReview the parser and fix it"})
-    assert updated["subagent_type"] == "general-purpose" and "fix" in record["lean"]  # it must edit: general agent
+    updated, record = decided({**review, "prompt": "kind: review\nReview the parser"})
+    assert updated["subagent_type"] == "general-purpose" and "not declared" in record["lean"]  # no guessing
     updated, _ = decided({"subagent_type": "general-purpose", "prompt": "Implement the parser"})
     assert updated["subagent_type"] == "general-purpose"
     write_config(lean=False)

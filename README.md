@@ -251,11 +251,12 @@ works on three things, all of them on Claude models:
   WebFetch and WebSearch: no edits, no shell, no MCP servers. The same review of one file, on the same
   model and effort, cost 0.0029 USD of context on the general agent and 0.0009 USD on the read-only
   one, 70 % less, with a quarter of the context written to the cache. `access: read` on the first line
-  of the prompt sends a subagent there, `access: write` keeps the general agent. Without a declaration
-  the hook sends only search, review, analysis, summaries and extraction whose prompt asks for nothing
-  that edits, saves, runs or reaches a service, in English or Spanish; the list is broad on purpose,
-  so some reading work stays on the general agent, which costs tokens and never a failed task. When
-  the reader is handed work it cannot do, it says so and asks to be relaunched with `access: write`.
+  of the prompt, on a line of declarations only (`kind: review, risk: low, access: read`), sends a
+  subagent there; anything else keeps the general agent. The hook does not guess from the wording: a
+  test of 71 realistic write requests found half of them phrased like reading work ("find where the
+  timeout is set and set it to 30"). Whoever launches the subagent knows whether it writes, and the
+  session context asks Claude to say so. When the reader is handed work it cannot do, it says so and
+  asks to be relaunched with `access: write`.
 - **Measurement.** `SubagentStop` reads each finished subagent's transcript and records its model,
   turns, tokens (cache reads and writes included), peak context, tool calls and duration, next to the
   routing decision. `router stats` shows it per agent and model. Context tokens are exact; output

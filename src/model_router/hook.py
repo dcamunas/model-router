@@ -57,7 +57,7 @@ SESSION_CONTEXT = (
     "carries far less context per turn. Put on the first line of the prompt `kind: review, risk: high, access: "
     "read`: the risk is the damage a wrong result does (low, medium, high or critical, which only you know); "
     "`access: read` when the subagent only reads, `access: write` when it must edit, save, run commands or use "
-    "MCP tools. Without `access` the hook guesses and keeps the general agent when in doubt. If the read-only "
+    "MCP tools. Without `access: read` on that first line the subagent stays on the general agent. If the read-only "
     "agent says it cannot do a task, relaunch it with `access: write`. Do not set `model` yourself unless the user asks or the "
     "task is high risk. A critical review goes to a model other than the one serving this chat. Text-only "
     "subtasks with no tools (classify, extract, summarise, draft) are cheaper through `router run \"...\"` than "
@@ -141,7 +141,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None,
     if cross:
         record["cross"] = cross
     lean = lean_agent(cwd)
-    safe, why = read_only(cls.kind, f"{prompt}\n{description}")
+    safe, why = read_only(prompt, description)
     if lean is not None and safe:
         updated["subagent_type"] = lean
         fields.append("subagent_type")

@@ -11,14 +11,15 @@ the effort and the agent each one needs, and a measurement of what each one real
 
 - A read-only agent, `model-router:reader` (Read, Grep, Glob, WebFetch, WebSearch; no edits, no shell, no MCP
   servers), shipped by the plugin and copied into the profile as `router-reader` by `router install`. The hook
-  sends a general-purpose subagent there when its kind is a reading one (search, review, analysis, summarize,
-  extract, classify, chat) and nothing in its prompt asks to edit, run or reach a service; `access: read` on
-  the first line asks for it, `access: write` keeps the general agent, and questions and classification go only
-  when declared. The list of words that keep the general agent (edit, save, run, post, query...) is broad, in
-  English and Spanish, matched without accents. Measured on the same review of one file, same model and
-  effort: 0.0029 USD of context on the general agent, 0.0009 USD on the reader, with a quarter of the context
-  written to the cache. When the reader gets work it cannot do it asks to be relaunched with `access: write`. `router config --lean off` and `MODEL_ROUTER_LEAN=0` switch it off; `router
-  doctor` says whether it is there.
+  sends a general-purpose subagent there when its prompt declares it: `access: read` on the first line, a line
+  of declarations only (`kind: review, risk: low, access: read`). Anything else keeps the general agent, and
+  `access: write` anywhere in the prompt's head or the description always does. Guessing from the wording was
+  tried and dropped after two blind reviews: half of 71 realistic write requests read like reading work. The
+  session context and the skill ask Claude to declare access on every subagent. Measured on the same review of
+  one file, same model and effort: 0.0029 USD of context on the general agent, 0.0009 USD on the reader, with a
+  quarter of the context written to the cache. When the reader gets work it cannot do, it asks to be relaunched
+  with `access: write`. `router config --lean off` and `MODEL_ROUTER_LEAN=0` switch it off; `router doctor`
+  says whether it is there.
 - Subagent measurement: on `SubagentStop` the hook reads the subagent's transcript and records its model,
   turns, tokens (cache reads and writes, once per message id), list-price cost, peak context, tool calls and
   duration, next to the routing decision (joined by a hash of the prompt). The transcript is read again once

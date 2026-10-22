@@ -60,10 +60,11 @@ Opener = Callable[..., Any]  # urllib.request.urlopen or a test double with the 
 Run = Callable[..., Any]  # subprocess.run or a test double that returns a CompletedProcess
 # Codex tools the judge must not have: a shell reads any file the user can read, `view_image` sends any image
 # to the model, and the rest reach the web, a browser, the desktop or other code. The prompt is all it judges.
-CODEX_DISABLED = ("shell_tool", "unified_exec", "view_image", "web_search_request", "web_search_cached",
-                  "standalone_web_search", "browser_use", "browser_use_external", "in_app_browser", "computer_use",
-                  "apps", "image_generation", "js_repl", "code_mode_host", "goals", "plugins", "plugin_hooks",
-                  "tool_search", "search_tool")
+CODEX_DISABLED = (
+    "shell_tool", "unified_exec", "view_image", "standalone_web_search", "browser_use", "browser_use_external",
+    "in_app_browser", "computer_use", "apps", "image_generation", "js_repl", "code_mode_host", "goals", "plugins",
+    "plugin_hooks", "tool_search", "search_tool",
+)
 # Kept from `codex exec`: the home decides the account, and an API key or base URL in the environment would move the
 # call to API billing, maybe on another account.
 CODEX_ENV_DROPPED = ("CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL")
@@ -233,7 +234,10 @@ class CodexClient:
 
 
 def _disabled() -> list[str]:
-    return [arg for feature in CODEX_DISABLED for arg in ("--disable", feature)]
+    """Return the arguments that turn the judge's tools off: every feature in CODEX_DISABLED, and web search,
+    which is a setting of its own (its old feature flags are ignored).
+    """
+    return [arg for feature in CODEX_DISABLED for arg in ("--disable", feature)] + ["-c", 'web_search="disabled"']
 
 
 def _codex_errors(events: list[dict[str, Any]]) -> list[str]:
