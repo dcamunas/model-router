@@ -51,7 +51,7 @@ from . import clock, floors, limits
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
-from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
+from .paths import CHILD_ENV, HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
 from .projects import (
     combine,
@@ -363,15 +363,10 @@ def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
     """Read a usage-limit failure of a turn or a subagent: find the model, ask it for its exact reset and keep it.
     The next launches go elsewhere until then.
     """
-    if "rate_limit" not in str(event.get("error") or ""):
-        return None
-    name = limits.model_in_failure(str(event.get("last_assistant_message") or event.get("error_details") or ""))
-    if name is None:
-        return None
-    model_id = SHORT_TO_ID.get("haiku" if name == limits.ALL_MODELS else name)
-    if model_id is None:
-        return None
-    limit = limits.record(name, limits.probe(model_id))
+    if "rate_limit" not in str(event.get("error") or "") or os.environ.get(CHILD_ENV) == "1":
+        return None  # in a session the router started (its own probe, say), asking again would never end
+    text = str(event.get("last_assistant_message") or event.get("error_details") or "")
+    limit = limits.learn(text, models={s.short: s.id for s in MODELS.values() if s.claude})
     if limit is None or os.environ.get(HOOK_QUIET_ENV) == "1":
         return None
     who = "every model" if limit.model == limits.ALL_MODELS else limit.model
@@ -381,7 +376,7 @@ def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
 
 def _limited_explicit(tool_input: dict[str, Any]) -> dict[str, Any] | None:
     """Refuse a launch that names a model whose usage limit is spent: it would fail. Say until when, and what to do."""
-    wanted = str(tool_input.get("model") or "")
+    wanted = str(tool_input.get("model") or "").lower().split("[")[0]  # `fable[1m]` is Fable too
     if wanted in MODELS:
         wanted = MODELS[wanted].short  # a full id, `claude-fable-5-1`, names the same model as `fable`
     limit = limits.active().get(wanted) if wanted else None

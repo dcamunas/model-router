@@ -29,6 +29,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,9 +44,10 @@ RECHECK = timedelta(minutes=10)  # how long a limit with no known reset holds be
 PROBE_SECONDS = 30.0
 PROBE_SYSTEM = "Answer with the single word ok."
 NO_MCP = '{"mcpServers":{}}'
-# "You've reached your Fable limit" names the model; "usage limit reached" with no model is the whole account.
-MODEL_LIMIT = re.compile(r"reached your (\w+) limit", re.I)
-ACCOUNT_LIMIT = re.compile(r"usage limit|rate limit", re.I)
+ACCOUNT_WINDOWS = ("five_hour", "seven_day")  # the windows that cover every model
+# "You've reached your Fable limit" names a model; a limit message that names none ("weekly limit", "usage limit
+# reached", "hit your limit") is the whole account.
+LIMIT_WORDS = re.compile(r"\blimit\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -129,31 +131,50 @@ def checked() -> str | None:
     return str(value) if value else None
 
 
-def record(model: str, probe: Probe) -> Limit | None:
-    """Keep what a probe of `model` said: a rejection becomes a limit until its reset (on `*` when the window covers
-    every model), an allowed answer clears the model's limit, and an unknown one holds it for RECHECK. Return the
-    limit kept, or None when there is none.
+def record_failure(model: str, probe: Probe) -> Limit | None:
+    """Keep what a probe said after a real usage-limit failure of `model`. A rejection with a future reset becomes a
+    limit until then (on `*` when the window covers every model). An allowed answer clears the model, and the
+    account-wide entry with it. An unknown answer holds the model for RECHECK, since the failure was real, but
+    never replaces a reset already known. Return the limit in force for that key, or None.
     """
+    return _store(model, probe, hold_unknown=True)
+
+
+def record_check(model: str, probe: Probe) -> Limit | None:
+    """Keep what a probe said when someone only asked (`router limits --check`): as `record_failure`, except that an
+    unknown answer, with no failure behind it, changes nothing.
+    """
+    return _store(model, probe, hold_unknown=False)
+
+
+def _store(model: str, probe: Probe, *, hold_unknown: bool) -> Limit | None:
     now = clock.now()
-    key = ALL_MODELS if probe.status == "rejected" and probe.window in ("five_hour", "seven_day") else model
+    rejected = probe.status == "rejected" and probe.until is not None and probe.until > now
+    key = ALL_MODELS if rejected and probe.window in ACCOUNT_WINDOWS else model
     path = limits_path()
     with locked(path):
         data = _read()
         stored = data.get("models")
         models: dict[str, Any] = stored if isinstance(stored, dict) else {}
-        kept: Limit | None = None
+        known = _limit(key, models.get(key))
         if probe.status == "allowed":
             models.pop(model, None)
-        else:
-            kept = Limit(key, probe.until, probe.window or "unknown", now)
-            models[key] = {"until": probe.until.isoformat() if probe.until else None, "window": kept.window,
-                           "seen": now.isoformat(timespec="seconds")}
+            models.pop(ALL_MODELS, None)  # an answered call: the account is not spent
+        elif rejected:
+            models[key] = _entry(probe.until, probe.window or "unknown", now)
+        elif hold_unknown and not (known is not None and known.until is not None and known.active(now)):
+            models[key] = _entry(None, probe.window or "unknown", now)
         data["models"] = {k: v for k, v in models.items() if _worth_keeping(_limit(k, v), now)}
         if probe.windows:
             data["windows"] = probe.windows
             data["checked"] = now.isoformat(timespec="seconds")
         _write(path, data)
-    return kept
+    held = _limit(key, data["models"].get(key))
+    return held if held is not None and held.active(now) else None
+
+
+def _entry(until: datetime | None, window: str, now: datetime) -> dict[str, Any]:
+    return {"until": until.isoformat() if until else None, "window": window, "seen": now.isoformat(timespec="seconds")}
 
 
 def _worth_keeping(limit: Limit | None, now: datetime) -> bool:
@@ -167,14 +188,30 @@ def _write(path: Path, data: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def model_in_failure(text: str) -> str | None:
-    """Return the model short name a limit message names (`fable`), `*` when it names the whole account, or None
-    when the text is not about a usage limit.
+def model_in_failure(text: str, models: Iterable[str]) -> str | None:
+    """Return the model a limit message names, out of `models` (short names such as `fable`); `*` when it is about a
+    limit and names none of them; None when it is not about a limit.
     """
-    match = MODEL_LIMIT.search(text)
-    if match:
-        return match.group(1).lower()
-    return ALL_MODELS if ACCOUNT_LIMIT.search(text) else None
+    if not LIMIT_WORDS.search(text):
+        return None
+    for name in models:
+        if re.search(rf"\b{re.escape(name)}\b[^.]*\blimit\b", text, re.I):
+            return name
+    return ALL_MODELS
+
+
+def learn(text: str, *, models: dict[str, str], config_dir: Path | None = None, binary: str = "claude") -> Limit | None:
+    """Learn from a usage-limit failure: find the model its message names among `models` (short name to id), ask that
+    model (or Haiku, for an account-wide limit) for its exact reset, and keep it. Return the limit in force, or None
+    when the text is not about a limit or the model is not one of `models`.
+    """
+    name = model_in_failure(text, models)
+    if name is None:
+        return None
+    model_id = models.get("haiku" if name == ALL_MODELS else name)
+    if model_id is None:
+        return None
+    return record_failure(name, probe(model_id, config_dir=config_dir, binary=binary))
 
 
 def probe(model_id: str, *, config_dir: Path | None = None, binary: str = "claude",
@@ -186,19 +223,24 @@ def probe(model_id: str, *, config_dir: Path | None = None, binary: str = "claud
             "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
             "--system-prompt", PROBE_SYSTEM]
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    env[CHILD_ENV] = "1"  # the router's own session: its hooks stay out of it
+    env[CHILD_ENV] = "1"  # the router's own session: its StopFailure hook must not probe again (`hook.handle`)
     env["MODEL_TRIBUNAL"] = "0"
     if config_dir is not None:
         env["CLAUDE_CONFIG_DIR"] = str(config_dir)
     try:
-        proc = subprocess.run(args, input="ok", capture_output=True, text=True, env=env, timeout=timeout, check=False)
-    except (OSError, subprocess.TimeoutExpired):
+        proc = subprocess.run(args, input="ok", capture_output=True, text=True, errors="replace", env=env,
+                              timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:  # retries can outlast the timeout; the event is printed before them
+        partial = exc.stdout or b""
+        return parse_events(partial.decode("utf-8", "replace") if isinstance(partial, bytes) else partial)
+    except OSError:
         return Probe("unknown")
     return parse_events(proc.stdout)
 
 
 def parse_events(stream: str) -> Probe:
-    """Read the rate-limit event of a `stream-json` output: rejected with its reset, allowed, or unknown."""
+    """Read the rate-limit events of a `stream-json` output: rejected with its reset, allowed, or unknown."""
+    allowed: Probe | None = None
     for line in stream.splitlines():
         try:
             event = json.loads(line)
@@ -209,11 +251,11 @@ def parse_events(stream: str) -> Probe:
             continue
         status = str(info.get("status") or "")
         seen = _windows(info.get("unifiedWindows"))
-        if status == "rejected":
+        if status == "rejected":  # a refusal wins over any allowed event before it
             return Probe("rejected", _moment(info.get("resetsAt")), str(info.get("rateLimitType") or ""), seen)
-        if status.startswith("allowed"):
-            return Probe("allowed", windows=seen)
-    return Probe("unknown")
+        if status.startswith("allowed") and allowed is None:
+            allowed = Probe("allowed", windows=seen)
+    return allowed or Probe("unknown")
 
 
 def _windows(raw: object) -> dict[str, dict[str, Any]]:

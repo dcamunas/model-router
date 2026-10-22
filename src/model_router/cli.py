@@ -572,14 +572,15 @@ def _cmd_limits(args: argparse.Namespace) -> int:
     from .cli_client import resolve_config_dir
 
     if args.check is not None:
-        names = args.check or sorted({"haiku", *[n for n in limits.active() if n != limits.ALL_MODELS]})
+        held = [n for n in limits.active() if n != limits.ALL_MODELS and n in SHORT_TO_ID]
+        names = args.check or sorted({"haiku", *held})
         config_dir = resolve_config_dir()
         for name in names:
             spec = MODELS.get(SHORT_TO_ID.get(name, name))
             if spec is None or not spec.claude:
                 known = ", ".join(s.short for s in MODELS.values() if s.claude)
                 raise SystemExit(f"unknown Claude model: {name}; try one of {known}")
-            limit = limits.record(spec.short, limits.probe(spec.id, config_dir=config_dir))
+            limit = limits.record_check(spec.short, limits.probe(spec.id, config_dir=config_dir))
             print(f"{spec.short}: " + (f"limited until {limit.when()} ({limit.window})" if limit else "available"))
     held = limits.active()
     if held:

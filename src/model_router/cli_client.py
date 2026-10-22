@@ -34,7 +34,7 @@ from typing import Any  # Any: the JSON that `claude -p` prints
 from pydantic import BaseModel, ValidationError
 
 from . import limits
-from .catalog import SHORT_TO_ID, Cell, Usage
+from .catalog import MODELS, Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
 from .paths import CHILD_ENV, CONFIG_DIR_ENV, config_path, read_config
 
@@ -150,11 +150,11 @@ class CliClient:
         """Keep the usage limit a refused call hit, with its exact reset (`limits.py`). The next plans skip that
         model until then.
         """
-        name = limits.model_in_failure(text)
-        if name is not None:
-            probe_model = cell.model if name != limits.ALL_MODELS else SHORT_TO_ID["haiku"]
-            with contextlib.suppress(OSError):
-                limits.record(name, limits.probe(probe_model, config_dir=self.config_dir, binary=self.binary))
+        if os.environ.get(CHILD_ENV) == "1":
+            return  # a session the router started: whoever started it learns the limit
+        models = {spec.short: spec.id for spec in MODELS.values() if spec.claude}
+        with contextlib.suppress(OSError, ValueError):  # learning the reset must never hide the refusal itself
+            limits.learn(text or cell.spec.short, models=models, config_dir=self.config_dir, binary=self.binary)
 
     def to_completion(self, data: dict[str, Any], cell: Cell, output_format: type[BaseModel] | None,
                       seconds: float) -> Completion:
