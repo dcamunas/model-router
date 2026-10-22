@@ -255,6 +255,7 @@ def test_the_router_s_own_cli_calls_and_the_judges_never_wake_the_tribunal(monke
     monkeypatch.setattr("model_router.cli_client.shutil.which", lambda b: "/bin/claude")
     monkeypatch.setattr("model_router.cli_client.subprocess.run", fake_run)
     monkeypatch.delenv(qa.CHILD_ENV, raising=False)
+    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(tmp_path))  # no Claude profile on a CI runner
     CliClient(config_dir=tmp_path).complete(parse_cell("haiku/low"), prompt="x")
     assert seen[qa.CHILD_ENV] == "0" and qa.CHILD_ENV not in os.environ  # set for the child only
     qa.repo_client(tmp_path)
