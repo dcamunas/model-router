@@ -70,6 +70,9 @@ from .policy import (
 )
 from .runner import Router, TaskResult
 from .store import Store
+from .subagents import LOG_FILE as SUBAGENT_LOG
+from .subagents import load as load_subagents
+from .subagents import summary_rows
 from .task import (
     DEFAULT_MAX_TOKENS,
     KINDS,
@@ -488,6 +491,12 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     if hook_rows:
         print("\nClaude Code hook decisions (routed subagents)")
         print(table(["cell", "kind", "risk", "times"], hook_rows))
+    measured = load_subagents(home() / SUBAGENT_LOG)
+    if measured:
+        rows = summary_rows(measured)
+        print("\nClaude Code subagents, measured from their transcripts (list price; cache reads are the context "
+              "read again every turn)")
+        print(table(["agent", "model/effort", "n", "turns", "peak ctx", "cache read", "cost", "total"], rows))
     return 0
 
 

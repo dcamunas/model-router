@@ -24,6 +24,17 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/router-hook.sh",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

@@ -1,0 +1,85 @@
+import json
+
+from model_router.hook import decide, handle
+from model_router.subagents import load, prompt_hash, read_transcript, record, summary_rows
+
+
+def _turn(msg_id, *, model="claude-opus-5-5", cache_read=1000, cache_write=100, output=10, tools=0, at="10:00:00"):
+    content = [{"type": "tool_use", "name": "Read", "id": f"t{i}", "input": {}} for i in range(tools)]
+    content.append({"type": "text", "text": "..."})
+    usage = {"input_tokens": 2, "output_tokens": output, "cache_read_input_tokens": cache_read,
+             "cache_creation_input_tokens": cache_write}
+    # a transcript writes one entry per content block, each repeating the message's usage
+    return [{"timestamp": f"2026-10-22T{at}Z", "message": {"role": "assistant", "id": msg_id, "model": model,
+                                                           "content": [block], "usage": usage}} for block in content]
+
+
+def _transcript(path, prompt, turns):
+    lines = [{"timestamp": "2026-10-22T10:00:00Z", "message": {"role": "user", "content": prompt}}]
+    for turn in turns:
+        lines += turn
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\nnot json\n")
+    return path
+
+
+def test_a_transcript_is_counted_once_per_message_with_its_peak_context_tools_and_time(tmp_path):
+    path = _transcript(tmp_path / "agent.jsonl", "Review the parser", [
+        _turn("m1", cache_read=1000, cache_write=500, tools=2, at="10:00:05"),
+        _turn("m2", cache_read=3000, cache_write=100, tools=1, at="10:01:05"),
+        _turn("m3", cache_read=4000, cache_write=0, output=300, at="10:02:00"),
+    ])
+    u = read_transcript(path)
+    assert (u.turns, u.tool_calls, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens) == (3, 3, 8000, 600, 320)
+    assert u.peak_context == 4002 and u.seconds == 120 and u.prompt == "Review the parser"
+    assert u.model == "claude-opus-5-5" and u.tokens == 6 + 320 + 8000 + 600
+    cost = u.cost()
+    assert cost is not None and cost > 0
+
+
+def test_a_finished_subagent_is_recorded_next_to_the_hook_s_decision(tmp_path, monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    prompt = "kind: review, risk: high\nReview the parser for off-by-one errors"
+    out = handle({"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s1", "cwd": "/tmp",
+                  "tool_input": {"subagent_type": "general-purpose", "description": "review", "prompt": prompt}})
+    assert out is not None
+    agent = _transcript(tmp_path / "agent.jsonl", prompt, [_turn("m1"), _turn("m2", cache_read=5000)])
+    event = {"hook_event_name": "SubagentStop", "session_id": "s1", "agent_id": "a1", "agent_type": "general-purpose",
+             "effort": {"level": "medium"}, "agent_transcript_path": str(agent)}
+    assert handle(event) is None
+    rec = load(tmp_path / "subagents.jsonl")[0]
+    assert rec["routed"] == "opus/medium" and (rec["kind"], rec["risk"]) == ("review", "high")
+    assert (rec["model"], rec["effort"], rec["turns"], rec["cache_read_tokens"]) == ("opus", "medium", 2, 6000)
+    assert rec["prompt_hash"] == prompt_hash(prompt) and rec["cost_usd"] > 0 and "prompt" not in rec
+    alone = _transcript(tmp_path / "other.jsonl", "classify these tickets as bug or billing", [_turn("x")])
+    handle({**event, "agent_id": "a2", "agent_transcript_path": str(alone)})
+    rec = load(tmp_path / "subagents.jsonl")[1]
+    assert rec["routed"] is None and rec["kind"] == "classify"  # the hook left it alone: kind read from the prompt
+    handle({**event, "agent_id": "a3", "agent_transcript_path": str(tmp_path / "missing.jsonl")})  # quiet
+    monkeypatch.setenv("MODEL_ROUTER_HOOK_LOG", "0")
+    handle({**event, "agent_id": "a4"})
+    assert len(load(tmp_path / "subagents.jsonl")) == 2
+
+
+def test_stats_groups_subagents_by_agent_and_cell_most_spent_first(tmp_path, monkeypatch, capsys):
+    from model_router.cli import main
+
+    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    base = {"agent_type": "general-purpose", "turns": 10, "peak_context": 50_000, "cache_read_tokens": 400_000}
+    lines = [{**base, "model": "opus", "effort": "medium", "cost_usd": 1.0},
+             {**base, "model": "opus", "effort": "medium", "cost_usd": 3.0},
+             {**base, "model": "haiku", "effort": "low", "cost_usd": 0.01, "agent_type": "model-router:reader"}]
+    (tmp_path / "subagents.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    rows = summary_rows(load(tmp_path / "subagents.jsonl"))
+    assert rows[0][:5] == ["general-purpose", "opus/medium", 2, 10.0, "50.0K"] and rows[0][-1] == "$4.00"
+    assert rows[1][1] == "haiku/low"
+    main(["stats"])
+    out = capsys.readouterr().out
+    assert "subagents, measured from their transcripts" in out and "model-router:reader" in out
+
+
+def test_record_without_a_known_model_has_no_cost():
+    from model_router.subagents import SubagentUsage
+
+    usage = SubagentUsage(model="some-new-model", turns=1, output_tokens=5)
+    assert record({"agent_type": "x"}, usage, None)["cost_usd"] is None
+    assert decide({"subagent_type": "Explore", "prompt": "x"})[0] is None  # untouched agents are still measured later

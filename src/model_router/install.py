@@ -1,6 +1,6 @@
 """`router install` / `router uninstall`: wire the router into a Claude Code profile or repo.
 
-Idempotent. `install` adds two hooks (PreToolUse on Agent, SessionStart) that run the `router-hook`
+Idempotent. `install` adds three hooks (PreToolUse on Agent, SessionStart, SubagentStop) that run the `router-hook`
 entry point installed next to this interpreter, copies the `router` skill into the profile's skills
 directory (or links it, for development), and records in ~/.model-router/config.json the profile
 that `router run` will use and, when asked, the models this installation may route to. `uninstall`
@@ -22,7 +22,7 @@ from .paths import CONFIG_DIR_ENV, read_config, save_config
 
 SKILL_SRC = Path(__file__).resolve().parent / "claude_code" / "router"
 HOOK_NAME = "router-hook"
-HOOK_EVENTS = ("PreToolUse", "SessionStart")
+HOOK_EVENTS = ("PreToolUse", "SessionStart", "SubagentStop")
 
 
 def default_settings() -> Path:
@@ -44,11 +44,14 @@ def hook_binary() -> Path | None:
 
 
 def hook_entries(hook_bin: Path) -> dict[str, list[dict[str, Any]]]:
-    """Return the settings.json entries that run `hook_bin` on PreToolUse(Agent) and SessionStart."""
+    """Return the settings.json entries that run `hook_bin` on PreToolUse(Agent), SessionStart and SubagentStop
+    (which measures what each subagent spent).
+    """
     cmd = {"type": "command", "command": str(hook_bin), "timeout": 10, "statusMessage": "router: picking a model"}
     return {
         "PreToolUse": [{"matcher": "Agent", "hooks": [cmd]}],
         "SessionStart": [{"hooks": [{"type": "command", "command": str(hook_bin), "timeout": 10}]}],
+        "SubagentStop": [{"hooks": [{"type": "command", "command": str(hook_bin), "timeout": 30}]}],
     }
 
 

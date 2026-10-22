@@ -36,6 +36,9 @@ from .classify import classify_rules
 from .feedback import FeedbackStore
 from .paths import HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
+from .subagents import LOG_FILE as SUBAGENT_LOG
+from .subagents import find_decision, prompt_hash, read_transcript
+from .subagents import record as subagent_record
 from .task import Task
 
 ROUTED_SUBAGENTS = frozenset({"", "general-purpose", "claude"})
@@ -130,6 +133,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None) -> tuple[d
     record = {
         "kind": cls.kind, "risk": cls.risk, "cell": cell.label, "set": fields, "why": cls.reason,
         "subagent": subagent or "general-purpose", "prompt_head": prompt.strip()[:PROMPT_HEAD_CHARS],
+        "prompt_hash": prompt_hash(prompt),
     }
     if cross:
         record["cross"] = cross
@@ -147,11 +151,32 @@ def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
         fh.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
+def _measure(event: dict[str, Any]) -> None:
+    """Record what a finished subagent spent (see `subagents.py`) next to the hook's decision on its prompt; a
+    transcript that cannot be read, or a log that cannot be written, is skipped quietly.
+    """
+    if os.environ.get(HOOK_LOG_ENV, "1") == "0" or not event.get("agent_transcript_path"):
+        return
+    try:
+        usage = read_transcript(Path(str(event["agent_transcript_path"])))
+        decision = find_decision(home() / "hook.jsonl", usage.prompt, event.get("session_id"))
+        line = subagent_record(event, usage, decision)
+        path = home() / SUBAGENT_LOG
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        sys.stderr.write(f"router-hook: subagent not measured: {exc}\n")
+
+
 def handle(event: dict[str, Any]) -> dict[str, Any] | None:
     """Return the JSON the hook prints for this event, or None for silence."""
     name = event.get("hook_event_name")
     if name == "SessionStart":
         return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": SESSION_CONTEXT}}
+    if name == "SubagentStop":
+        _measure(event)
+        return None
     if name != "PreToolUse" or event.get("tool_name") != "Agent":
         return None
     updated, record = decide(event.get("tool_input") or {}, main_model(event.get("transcript_path")))
