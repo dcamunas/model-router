@@ -67,6 +67,11 @@ model, solved.
 
 ## How it decides
 
+![The router's rules as sprint planning, in six frames. A low-risk ticket goes to the junior developer, Haiku, with no review. A critical payments migration skips the junior and the developer and goes to the senior, Opus, and the staff engineer, Fable, reviews it. A CSV export fails CI on the developer, Sonnet, and climbs to the senior with the log. Every ticket goes to the sprint report, and the repository learns to start CSV work one level up](docs/showcase/sprint.gif)
+
+An illustration: each frame is one rule, and each ticket's plan is what `router plan` gives with the
+default tables.
+
 1. **Kind and risk.** Declared on the first line, or read from the text. `critical` is never guessed.
 2. **Start cell.** A table by kind and risk names a model at an effort: `haiku/medium` for a low-risk
    extraction, `opus/medium` for a high-risk review. Floors keep high-risk work on `sonnet/low` or
