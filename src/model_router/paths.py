@@ -1,10 +1,9 @@
 """Where the router keeps its state and the environment variables that configure it.
 
 State lives in the Claude profile in use, `<profile>/model-router`, where the profile is $CLAUDE_CONFIG_DIR or
-~/.claude. Two profiles on one machine (a personal one and a work one, say) never share decisions,
-measurements, limits or settings. MODEL_ROUTER_HOME moves it. `config.json` holds what `router install` or
-`router config` decide for that profile: the Claude profile the cli backend uses and, optionally, the models
-this installation may route to, the judge cell and the active calibration. Every variable the router reads is
+~/.claude. Two profiles on one machine never share decisions, measurements, limits or settings, and `router run`
+calls Claude on the profile in use. `config.json` holds what `router config` sets for that profile: the models
+this installation may route to, the judge cell and the read-only agent switch. Every variable the router reads is
 named here, all under the MODEL_ROUTER_ prefix.
 """
 
@@ -19,20 +18,11 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any  # Any: config.json, decoded
 
-HOME_ENV = "MODEL_ROUTER_HOME"
-MAIN_LEDGER = "ledger.jsonl"  # the ledger of `router run` and `router judge`; benches write their own under bench/
-MODELS_ENV = "MODEL_ROUTER_MODELS"  # models this installation may route to, e.g. "haiku,sonnet,opus"
-CONFIG_DIR_ENV = "MODEL_ROUTER_CLAUDE_CONFIG_DIR"  # Claude profile for the cli backend
-JUDGE_ENV = "MODEL_ROUTER_JUDGE"  # the cell that judges in `full` mode, e.g. "opus/xhigh"
-LEAN_ENV = "MODEL_ROUTER_LEAN"  # 0 keeps every subagent on the agent Claude chose: no switch to the read-only one
-CALIBRATION_ENV = "MODEL_ROUTER_CALIBRATION"  # the calibration that decides: an id or a file; "none" = the code tables
+MAIN_LEDGER = "ledger.jsonl"  # the ledger of `router run` and `router judge`
 HOOK_ENV = "MODEL_ROUTER_HOOK"  # "0" disables the Claude Code hook without uninstalling it
 HOOK_LOG_ENV = "MODEL_ROUTER_HOOK_LOG"  # "0" stops the hook's decisions log
 HOOK_QUIET_ENV = "MODEL_ROUTER_HOOK_QUIET"  # "1" hides the hook's one-line notice in the UI
 CHILD_ENV = "MODEL_ROUTER_CHILD"  # "1" in every session the router starts itself (a worker, a judge): not a person's turn
-
-
-LEGACY_HOME = "~/.model-router"  # where every profile shared its state before 0.19.0; doctor reports it
 
 
 def claude_profile() -> Path:
@@ -41,9 +31,8 @@ def claude_profile() -> Path:
 
 
 def home() -> Path:
-    """Return the state directory: $MODEL_ROUTER_HOME, else `model-router` inside the Claude profile in use."""
-    value = os.environ.get(HOME_ENV)
-    return Path(value).expanduser() if value else claude_profile() / "model-router"
+    """Return the state directory: `model-router` inside the Claude profile in use."""
+    return claude_profile() / "model-router"
 
 
 def config_path() -> Path:
@@ -63,17 +52,13 @@ def read_config() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def save_config(data: dict[str, Any]) -> Path:
-    """Write `data` as the whole config.json, creating the state directory, and return its path."""
+def write_config(**values: Any) -> Path:
+    """Merge `values` into config.json (a None value removes its key) and return its path."""
+    data = {k: v for k, v in {**read_config(), **values}.items() if v is not None}
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
-
-
-def write_config(**values: Any) -> Path:
-    """Merge `values` into config.json and return its path."""
-    return save_config({**read_config(), **values})
 
 
 @contextlib.contextmanager

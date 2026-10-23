@@ -16,7 +16,7 @@ own: up one step, when it keeps failing (MIN_N launches, MIN_FAILS relaunched, a
 one relaunch on this machine (a raise on other installations' counts alone is only proposed). Moving down
 is only proposed, after DOWN_N launches with none relaunched, to the cell it was raised from or to one at least
 LOWER_SAVING cheaper, and applied by hand (`router project --apply`). A tuned cell remembers the cell it
-replaced and is ignored when the table or the calibration no longer gives that cell. The risk floors always
+replaced and is ignored when the table no longer gives that cell. The risk floors always
 hold. Tunings live in `<profile>/model-router/projects/`, never in the repository.
 """
 

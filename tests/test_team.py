@@ -62,13 +62,12 @@ def test_enable_creates_the_file_and_refuses_what_it_cannot_change_safely(tmp_pa
 
 
 def test_router_project_team_and_doctor_say_what_each_person_does(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path)
     assert main(["project", str(repo), "--team"]) == 0
     assert team.INSTALL_COMMAND in capsys.readouterr().out
     profile = tmp_path / "profile"
     (profile / "plugins").mkdir(parents=True)
-    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(profile))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(profile))
     monkeypatch.chdir(repo)
     main(["doctor"])
     out = capsys.readouterr().out
@@ -82,6 +81,6 @@ def test_router_project_team_and_doctor_say_what_each_person_does(tmp_path, monk
         {"scope": "project", "projectPath": str(repo)}]}}))
     main(["doctor"])
     out = capsys.readouterr().out
-    assert "ok     plugin turned on for the team" in out and "FAIL   hook PreToolUse" not in out
+    assert "ok     plugin turned on for the team" in out and f"ok     plugin {team.PLUGIN_ID} enabled in" in out
     with pytest.raises(SystemExit):
         main(["project", str(tmp_path / "nowhere"), "--team"])

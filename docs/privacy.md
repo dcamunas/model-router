@@ -5,9 +5,8 @@
 What each part of the router writes on your disk and what it sends, and to whom.
 
 The paths below are those of the default Claude profile, `~/.claude`. Each profile keeps its own folder: a
-session started with `CLAUDE_CONFIG_DIR=~/.claude-personal` writes to `~/.claude-personal/model-router`. Two
-profiles on one machine, a personal one and a work one say, share no decisions, measurements, limits or
-settings. `MODEL_ROUTER_HOME` moves the folder.
+session started with `CLAUDE_CONFIG_DIR=~/.claude-other` writes to `~/.claude-other/model-router`, and two
+profiles on one machine share no decisions, measurements, limits or settings.
 
 - The hooks classify by rules, locally, and call no API, with one exception: after a subagent dies on a
   usage limit, the StopFailure hook sends the word "ok" to that model through `claude -p`, on your
@@ -21,9 +20,8 @@ settings. `MODEL_ROUTER_HOME` moves the folder.
   and nothing else: launches and relaunches per kind, risk and cell, and runs and repeats of the agents
   committed in the repository itself. An agent from your profile, a plugin, a link or an untracked file is
   never named there, nor is one whose name has spaces or characters beyond letters, digits, `.`, `_` and `-`. They leave your machine only when you commit and push them.
-- `router run`, `router judge` and `router bench` send the prompt to Anthropic, through your API key
-  or your Claude Code account, and to nobody else.
-- The ledger and its SQLite index keep tokens, cost, cell, verdict and the judges' reasons for every
-  attempt; they keep neither the prompt nor the answer, only a hash of the task. A reason may quote a
-  few words of either.
+- `router run` and `router judge` send the prompt to Anthropic, through your API key or your Claude Code
+  account, and to nobody else.
+- The ledger keeps tokens, cost, cell, verdict and the judges' reasons for every attempt; it keeps neither
+  the prompt nor the answer. A reason may quote a few words of either.
 - `router plan`, `router stats`, `router cells` and `router doctor` without `--live` call nothing.

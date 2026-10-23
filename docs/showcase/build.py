@@ -6,8 +6,8 @@ captures it and Pillow stitches the GIF (half size, 64 colours).
 Needs Google Chrome; no other tool.
 
 - `sprint.gif`: the router's rules told as sprint planning, an illustration. The same board in every frame, so
-  only what changes moves; each ticket's plan is what `router plan` gives with the code tables
-  (MODEL_ROUTER_CALIBRATION=none) and all four models. `--carousel` also writes its frames as a PDF, one page each.
+  only what changes moves; each ticket's plan is what `router plan` gives with the code tables and all four
+  models. `--carousel` also writes its frames as a PDF, one page each.
 - `router-run.gif`: the lines of `router-run.txt`, the exact output of
   `router run --file docs/showcase/notice.md --kind write --risk critical` in a terminal of 126 columns
   (COLUMNS=126, what the drawn window holds at 22 px), never text typed in.

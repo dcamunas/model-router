@@ -8,8 +8,7 @@ from model_router.hook import decide
 
 
 def _repo(tmp_path, monkeypatch, rules) -> str:
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("MODEL_ROUTER_CALIBRATION", "none")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     (repo / ".claude").mkdir()
@@ -85,8 +84,8 @@ def test_router_project_and_doctor_show_the_floors_and_how_often_each_fired(tmp_
 
     repo = _repo(tmp_path, monkeypatch, [{"match": "migration", "risk": "critical", "why": "customer data"},
                                          {"match": "(", "risk": "high"}])
-    home = tmp_path / "home"
-    home.mkdir()
+    home = tmp_path / "profile" / "model-router"
+    home.mkdir(parents=True)
     (home / "hook.jsonl").write_text(json.dumps({"project": repo, "floor": "low -> critical: customer data",
                                                  "floor_match": "migration"}) + "\n"
                                      + "{cut short\n")

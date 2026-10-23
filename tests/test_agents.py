@@ -86,9 +86,9 @@ def test_agents_that_inherit_the_model_or_are_built_in_get_no_advice(tmp_path):
 
 
 def test_router_agents_prints_the_advice_and_where_the_agent_lives(tmp_path, monkeypatch, capsys):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(home))
+    home = tmp_path / "profile" / "model-router"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home.parent))
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     (repo / ".claude" / "agents").mkdir(parents=True)

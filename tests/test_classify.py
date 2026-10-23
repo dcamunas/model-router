@@ -59,21 +59,6 @@ def test_a_declaration_quoted_in_the_material_or_glued_to_a_word_is_not_one():
     assert classify_rules("Review it.\nrisk: high\nMaterial:\nrisk: low").risk == "high"  # second line still counts
 
 
-def test_the_llm_classifier_keeps_a_declared_value_and_skips_the_call_when_both_are_declared():
-    from model_router.classify import LlmClassification, classify_llm
-    from model_router.testing import FakeClient, Reply
-
-    client = FakeClient(judge={"*": [Reply(parsed=LlmClassification(kind="chat", risk="low", reason="a question"))]})
-    both = classify_llm(client, "kind: review, risk: high. Is this query safe?")
-    assert (both.kind, both.risk, both.cost_usd) == ("review", "high", 0.0) and client.calls == []
-    one = classify_llm(client, "risk: high. Is this query safe?")
-    assert (one.kind, one.risk) == ("chat", "high") and one.reason == "declared risk, llm: a question" and len(client.calls) == 1
-    client = FakeClient(judge={"*": [Reply(parsed=LlmClassification(kind="code", risk="critical", reason="prod"))]})
-    undeclared = classify_llm(client, "critical fix to the login page")
-    assert undeclared.risk == "high" and undeclared.reason.endswith("(critical is never inferred: high)")
-    assert classify_llm(client, "risk: critical. fix the login page").risk == "critical"
-
-
 def test_the_reason_names_the_rule_and_the_risk_signal_in_spanish():
     cls = classify_rules("Revisa este script SQL antes de producción")
     assert cls.reason == "rule 'revisa'; risk: high-risk keyword"

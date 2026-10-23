@@ -2,11 +2,9 @@ from pathlib import Path
 
 from model_router.catalog import Usage, parse_cell
 from model_router.client import ClientUnavailableError
-from model_router.feedback import FeedbackStore
 from model_router.ledger import Ledger, summarize
-from model_router.policy import LadderPolicy, Policy
 from model_router.runner import Router
-from model_router.task import Task, contains_checker, regex_checker
+from model_router.task import Task, contains_checker
 from model_router.testing import FakeClient, Reply
 from model_router.verify import Verdict
 
@@ -50,9 +48,8 @@ def test_judge_verdict_drives_escalation_and_full_verifier_is_cross_model():
 
 def test_judge_records_an_external_answer_without_worker_cost(tmp_path: Path):
     ledger = Ledger(tmp_path / "ledger.jsonl")
-    store = FeedbackStore(tmp_path / "fb.json")
     client = FakeClient(judge={"*": [ok("solid")]})
-    router = Router(client, ledger=ledger, feedback=store)
+    router = Router(client, ledger=ledger)
     result = router.judge(Task(prompt="write the notice", kind="write", risk="critical", id="ext1"), "the notice",
                           mode="full")
     assert result.solved and result.verify == "full" and result.answer == "the notice"
@@ -61,7 +58,7 @@ def test_judge_records_an_external_answer_without_worker_cost(tmp_path: Path):
     assert attempt.verdict is True and attempt.verdict_source == "judge" and len(attempt.judges) == 1
     assert result.verify_cost_usd > 0 and "judged only" in result.rationale[-1]
     assert all(c["output_format"] == "Verdict" for c in client.calls)  # no worker call
-    assert ledger.tasks()[0]["attempts"][0]["stop_reason"] == "external" and store.data == {}
+    assert ledger.tasks()[0]["attempts"][0]["stop_reason"] == "external"
     light = router.judge(Task(prompt="x", kind="chat", risk="low"), "hi", worker=parse_cell("sonnet/low"), mode="light")
     assert light.attempts[0].verdict_source == "judge" and light.attempts[0].judges == [parse_cell("opus/low")]
     failed = router.judge(Task(prompt="x", kind="code", risk="low", checker=contains_checker("42")), "41")
@@ -116,40 +113,12 @@ def test_judge_outage_keeps_the_attempt_and_ends_the_task_as_error(tmp_path: Pat
 
     client = JudgeDown(script={"*": [Reply("draft")]})
     ledger = Ledger(tmp_path / "ledger.jsonl")
-    store = FeedbackStore(tmp_path / "fb.json")
-    result = Router(client, ledger=ledger, feedback=store).run(Task(prompt="x", kind="write", risk="high"))
+    result = Router(client, ledger=ledger).run(Task(prompt="x", kind="write", risk="high"))
     assert result.status == "error" and result.answer == "draft" and result.final_cell == parse_cell("opus/low")
     attempt = result.attempts[0]
     assert attempt.verdict is None and attempt.verdict_source == "judge-error" and "rate limited" in attempt.reason
     assert attempt.cost_usd > 0 and result.verify_cost_usd == 0
     assert ledger.tasks()[0]["status"] == "error"
-    assert store.data == {}  # a judge that could not answer is no evidence against the worker
-
-
-def test_feedback_learns_only_from_verified_verdicts(tmp_path: Path):
-    store = FeedbackStore(tmp_path / "fb.json")
-    client = FakeClient(script={"*": [Reply("hello")]}, judge={"*": [Reply("{}", parsed=None)]})
-    router = Router(client, feedback=store)
-    router.run(Task(prompt="hi", kind="chat", risk="low"))  # accepted without verification
-    assert store.data == {}
-    result = router.run(Task(prompt="x", kind="write", risk="high", max_attempts=1))  # judge returns no verdict
-    assert result.attempts[0].verdict_source == "judge-error"
-    assert store.data == {}
-    router.run(Task(prompt="x", kind="chat", risk="low", checker=contains_checker("hello")))
-    assert store.first_attempt_stats("chat", parse_cell("sonnet/low")) == (1, 1.0)
-
-
-def test_first_attempt_flag_belongs_to_the_start_cell_only(tmp_path: Path):
-    store = FeedbackStore(tmp_path / "fb.json")
-    refusal = Reply("", refused=True, refusal_category="x", stop_reason="refusal")
-    client = FakeClient(script={"opus/low": [refusal], "fable/low": [Reply("42")]})
-    result = Router(client, feedback=store).run(Task(prompt="f", kind="code", risk="medium", checker=contains_checker("42")))
-    assert result.solved and [a.cell.label for a in result.attempts] == ["opus/low", "fable/low"]
-    assert store.first_attempt_stats("code", parse_cell("fable/low")) == (0, None)  # escalated, not a first attempt
-    assert store.data["code"]["fable/low"] == {"n": 1, "pass": 1, "n_first": 0, "pass_first": 0}
-    client = FakeClient(script={"sonnet/low": [Reply("half", stop_reason="max_tokens"), Reply("42")]})
-    Router(client, feedback=store).run(Task(prompt="f", kind="chat", risk="low", max_tokens=1000, checker=contains_checker("42")))
-    assert store.first_attempt_stats("chat", parse_cell("sonnet/low")) == (1, 1.0)  # the retry on the start cell is first
 
 
 def test_truncation_retry_stops_at_the_models_output_cap():
@@ -161,17 +130,6 @@ def test_truncation_retry_stops_at_the_models_output_cap():
     assert len(client.calls) == 1 and result.attempts[0].verdict_source == "none"  # no room left: no retry
 
 
-def test_in_memory_ledger_keeps_the_original_record_after_an_override():
-    ledger = Ledger(None)
-    client = FakeClient(script={"*": [Reply("42")]})
-    Router(client, ledger=ledger).run(Task(prompt="f", kind="code", risk="medium", checker=contains_checker("42"), id="m1"))
-    ledger.override("m1", passed=False)
-    assert ledger.tasks()[0]["status"] == "unsolved"
-    found = ledger.find("m1")
-    assert found is not None and found["status"] == "solved" and "overridden" not in found
-    assert ledger.last_override("m1") is False and ledger.last_override("nope") is None
-
-
 def test_api_unavailable_is_recorded_and_not_escalated():
     class Down:
         def complete(self, cell, **kw):
@@ -179,13 +137,6 @@ def test_api_unavailable_is_recorded_and_not_escalated():
 
     result = Router(Down()).run(Task(prompt="x", kind="chat", risk="low"))
     assert result.status == "error" and len(result.attempts) == 1 and result.attempts[0].cost_usd == 0
-
-
-def test_fixed_ladder_policy_never_escalates_past_its_cells():
-    client = FakeClient(script={"*": [Reply("bad")]}, judge={"*": [ko()]})
-    router = Router(client, policy=LadderPolicy([parse_cell("sonnet/high")]))
-    result = router.run(Task(prompt="x", kind="code", risk="high", checker=regex_checker("good")))
-    assert result.status == "unsolved" and len(result.attempts) == 1
 
 
 def test_ledger_persists_and_summarises(tmp_path: Path):
@@ -200,26 +151,7 @@ def test_ledger_persists_and_summarises(tmp_path: Path):
     assert s.tasks == 2 and s.solved == 2 and s.retries == 1 and s.attempts == 3
     assert s.by_cell["opus/low"]["passes"] == 1 and s.by_cell["opus/low"]["judged"] == 2
     assert s.cost_per_solved is not None and abs(s.cost_per_solved - s.total_cost / 2) < 1e-12
-    ledger.override("a2", passed=False, note="wrong after all")
-    s2 = summarize(ledger.tasks())
-    assert s2.solved == 1
-    assert "cost per solved task" in s2.text()
-
-
-def test_feedback_learns_first_attempt_rate_and_moves_the_start(tmp_path: Path):
-    store = FeedbackStore(tmp_path / "fb.json", min_n=3)
-    client = FakeClient(script={"opus/low": [Reply("1")], "fable/low": [Reply("42")]}, judge={"*": [ok()]})
-    router = Router(client, policy=Policy(feedback=store), feedback=store)
-    for i in range(3):
-        router.run(Task(prompt="f", kind="code", risk="medium", checker=contains_checker("42"), id=f"t{i}"))
-    n, rate = store.first_attempt_stats("code", parse_cell("opus/low"))
-    assert (n, rate) == (3, 0.0)
-    plan = Policy(feedback=store).plan(Task(prompt="f", kind="code", risk="medium"))
-    assert plan.start.label == "fable/low"
-    assert any("feedback" in r for r in plan.rationale)
-    reloaded = FeedbackStore(tmp_path / "fb.json", min_n=3)
-    assert reloaded.first_attempt_stats("code", parse_cell("opus/low")) == (3, 0.0)
-    assert reloaded.rows()[0][:2] == ["code", "fable/low"] or reloaded.rows()[0][:2] == ["code", "opus/low"]
+    assert "cost per solved task" in s.text()
 
 
 def test_escalation_carries_the_failure_reason_to_the_next_cell():
@@ -233,40 +165,16 @@ def test_escalation_carries_the_failure_reason_to_the_next_cell():
     assert result.to_dict()["attempts"][1]["carried_reason"] is True
 
 
-def test_result_records_fingerprint_version_and_calibration():
-    client = FakeClient(script={"*": [Reply("ok")]})
-    task = Task(prompt="say ok", kind="chat", risk="low")
-    result = Router(client).run(task)
-    assert result.fingerprint == task.fingerprint and len(task.fingerprint) == 12
-    assert Task(prompt="say ok", kind="chat", risk="low").fingerprint == task.fingerprint  # a new id, the same task
-    assert Task(prompt="say ok", kind="chat", risk="high").fingerprint != task.fingerprint
-    assert result.router_version and result.calibration_id == "builtin" and result.eval_id is None and result.repeat is None
-    assert {"fingerprint", "router_version", "calibration_id", "eval_id", "repeat"} <= result.to_dict().keys()
-    judged = Router(client).judge(task, "ok")
-    assert judged.fingerprint == task.fingerprint and judged.calibration_id == "builtin"
-    fixed = Router(client, policy=LadderPolicy([parse_cell("haiku/low")])).run(task, eval_id="e1", repeat=3)
-    assert fixed.calibration_id == "fixed" and fixed.eval_id == "e1" and fixed.repeat == 3
-
-
-def test_a_judge_s_verdict_feeds_the_feedback_store(tmp_path: Path):
-    client = FakeClient(script={"*": [Reply("x")]}, judge={"*": [ok()]})
-    feedback = FeedbackStore(tmp_path / "feedback.json")
-    result = Router(client, feedback=feedback).run(Task(prompt="x", kind="write", risk="critical", verify="full"))
-    assert result.attempts[0].verdict_source == "judge"
-    assert feedback.data["write"]["opus/medium"] == {"n": 1, "pass": 1, "n_first": 1, "pass_first": 1}
-
-
-def test_scoreboard_counts_each_judge_s_verdicts_and_human_contradictions(tmp_path: Path):
+def test_the_summary_counts_each_judge_s_verdicts_and_the_record_names_the_version(tmp_path: Path):
     ledger = Ledger(tmp_path / "ledger.jsonl")
     client = FakeClient(script={"*": [Reply("x")]}, judge={"fable/low": [ok(), ok(), ko("thin")]})
     router = Router(client, ledger=ledger)
     for i in range(3):
         router.run(Task(prompt="x", kind="write", risk="critical", id=f"w{i}", max_attempts=1))
-    ledger.override("w1", passed=False, note="it was bad")
-    board = summarize(ledger.tasks()).by_judge
-    assert board["fable/low"] == {"verdicts": 3, "passes": 2, "contradicted": 1}
-    text = summarize(ledger.tasks()).text()
-    assert "judges' scoreboard" in text and "fable/low" in text
+    summary = summarize(ledger.tasks())
+    assert summary.by_judge["fable/low"] == {"verdicts": 3, "passes": 2}
+    assert "fable/low" in summary.text()
+    assert all(record["router_version"] for record in ledger.tasks())
 
 
 def test_ask_takes_another_prompt_system_and_role_for_a_seat_of_someone_else_s():

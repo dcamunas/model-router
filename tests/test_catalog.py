@@ -59,21 +59,19 @@ def test_step_down_gives_up_little_capability_for_a_real_saving():
     assert step_down(parse_cell("haiku/low"), cells) is None
 
 
-def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
-    from model_router.catalog import MODELS_ENV, available_models, nearest_available, parse_models
+def test_available_models_come_from_the_config_else_the_catalogue():
+    from model_router.catalog import available_models, nearest_available, parse_models
     from model_router.paths import write_config
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.delenv(MODELS_ENV, raising=False)
     assert available_models() == list(MODELS)
     write_config(models=["opus", "haiku"])
     assert available_models() == ["claude-haiku-5-5", "claude-opus-5-5"]  # catalogue order, not config order
-    monkeypatch.setenv(MODELS_ENV, "sonnet, claude-opus-5-5")
+    write_config(models="sonnet, claude-opus-5-5")
     assert available_models() == ["claude-sonnet-5-5", "claude-opus-5-5"]
     assert [c.label for c in lattice()][-1] == "opus/xhigh"
-    monkeypatch.setenv(MODELS_ENV, "sonet")
+    write_config(models=["sonet"])
     assert available_models() == list(MODELS)  # a name it does not know is ignored, and the plan says so
-    monkeypatch.setenv(MODELS_ENV, "sonet,opus")
+    write_config(models=["sonet", "opus"])
     assert available_models() == ["claude-opus-5-5"]
     with pytest.raises(ValueError):
         parse_models("")
@@ -83,7 +81,7 @@ def test_available_models_env_then_config_then_catalogue(tmp_path, monkeypatch):
     assert nearest_available(parse_cell("opus/high"), ["opus"]).label == "opus/high"
 
 
-def test_a_registered_model_can_be_named_and_priced_but_never_enters_the_router_s_lattice(monkeypatch, tmp_path):
+def test_a_registered_model_can_be_named_and_priced_but_never_enters_the_router_s_lattice():
     from model_router.catalog import (
         MODELS,
         ModelSpec,
@@ -96,8 +94,8 @@ def test_a_registered_model_can_be_named_and_priced_but_never_enters_the_router_
         unregister,
         worker_cell,
     )
+    from model_router.paths import write_config
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
     other = ModelSpec("vendor-model-1", "vendor", 0, 0.1, 0.5, 0.1, 0.1, "medium", False, provider="vendor",
                       efforts=("low", "medium", "high", "xhigh"))
     with pytest.raises(ValueError, match="Claude model's name"):
@@ -109,7 +107,7 @@ def test_a_registered_model_can_be_named_and_priced_but_never_enters_the_router_
         claude = [m for m, s in MODELS.items() if s.claude]
         assert parse_cell("vendor/high").capability == 0.40 and parse_cell("vendor").effort == "medium"  # its tier's
         assert nearest_available(parse_cell("vendor/high"), ["opus"]) == parse_cell("vendor/high")  # its registrar serves it
-        monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable,vendor,nosuch")  # an older version's list
+        write_config(models=["haiku", "sonnet", "opus", "fable", "vendor", "nosuch"])  # an older version's list
         assert available_models() == claude and len(lattice()) == 16  # registered, listed, and still out
         assert worker_cell(parse_cell("haiku/low"), ["vendor"]).label == "vendor/low"  # asked for by name, it stands in
         assert nearest_effort("max", ("low", "high")) == "high" and nearest_effort("low", ("medium",)) == "medium"

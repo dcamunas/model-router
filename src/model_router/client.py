@@ -1,6 +1,5 @@
 """The one place that talks to the Claude API. Everything else sees a `ClaudeClient` that takes a
-cell and a prompt and returns a `Completion` with real usage, so tests and the simulator can swap
-in a fake.
+cell and a prompt and returns a `Completion` with real usage, so tests can swap in a fake.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ class Completion:
 
 
 class ClaudeClient(Protocol):
-    """Anything that completes a prompt on a cell: the SDK client, the `claude -p` backend, a fake, the simulator."""
+    """Anything that completes a prompt on a cell: the SDK client, the `claude -p` backend, a fake."""
 
     def complete(
         self,

@@ -41,30 +41,28 @@ A programmatic checker, when the task has one, always runs first and is final wh
 - You pass them (`--kind`, `--risk`), or the first two lines of the text declare them
   (`kind: review, risk: high`; also `tipo:` and `riesgo: alto`). A value ends the line or is followed
   by a comma or a full stop, and material pasted below the head never counts.
-- Otherwise rules infer them; the rules know English and Spanish prompts. `--classify-llm` uses Haiku.
+- Otherwise rules infer them; the rules know English and Spanish prompts.
 - The risk is the damage a wrong answer does, and the text does not carry it. On 28 real tasks the
-  rules got it right 9 times and Haiku 5 to 10, both reading difficulty or vocabulary instead of
-  consequences. So a text that says "critical" or "production" is not a critical task for the router.
+  rules got it right 9 times and a Haiku classifier 5 to 10, both reading difficulty or vocabulary
+  instead of consequences. So a text that says "critical" or "production" is not a critical task for the
+  router, and only a declaration makes it one.
 - The high-risk keywords (money, customers, production, deletions, legal, health, credentials) still
   raise an undeclared risk to `high`.
 
 ### 2. Start cell
 
-**A table by kind and risk; real verdicts can move it up; the floors cannot be lowered.**
+**A table by kind and risk; a repository's own evidence can move it; the floors cannot be lowered.**
 
-- The `START` table in `policy.py` (kind × risk), or the table of the active calibration
-  (`router calibrate --apply`; `router plan` names it, see [Calibration](calibration.md)).
-- With 10 or more verified verdicts (a checker or a judge) for that kind, the feedback store moves the
-  start up when its first-attempt pass rate falls below the break-even `c1 / c2`: the cost of an
-  attempt on that cell, verification included, over the cost of the next step. Below that, starting
-  cheap costs more.
+- The `START` table in `policy.py` (kind × risk).
+- In Claude Code, a repository where a start keeps failing starts it one step up
+  ([learning per repository](claude-code.md#learning-per-repository)).
 - The risk floors (`high` at `sonnet/low` or above, `critical` at `opus/medium` or above) hold over
-  the table, the feedback and any per-repository tuning. A repository can also raise the risk itself
+  the table and any per-repository tuning. A repository can also raise the risk itself
   from what a brief says ([risk floors per repository](claude-code.md#risk-floors-per-repository)).
 - A model over its usage limit is not available until the exact reset
   ([usage limits](claude-code.md#usage-limits)): its cells go to the next model, as for a model you lack.
-- No cell the router picks on its own is at `max` effort: a `max` cell from a calibration or a tuning
-  runs at `xhigh`, and the plan says so.
+- No cell the router picks on its own is at `max` effort: a `max` cell from a tuning runs at `xhigh`, and
+  the plan says so.
 
 ### 3. Ladder
 
@@ -78,12 +76,11 @@ A programmatic checker, when the task has one, always runs first and is final wh
 **A checker first, then a judge by risk, on another model than the worker.**
 
 - `low` and `medium` go unverified, `high` gets `light`, `critical` gets `full`. Full verification
-  was the biggest cost sink; raise `high` to `full` with `--verify full`, or in `policy.py` once your
-  bench justifies it.
+  was the biggest cost sink; raise `high` to `full` with `--verify full` when a task needs it.
 - `light` is the nearest other model at low effort (the tier above first), in a fresh context. A
   worker judging itself passed a quarter of the answers an independent judge failed.
-- `full` is one fixed judge, `opus/xhigh` unless `router config --judge` or `MODEL_ROUTER_JUDGE` say
-  otherwise, on another model than the worker (see [Who judges](#who-judges)).
+- `full` is one fixed judge, `opus/xhigh` unless `router config --judge` says otherwise, on another model
+  than the worker (see [Who judges](#who-judges)).
 
 ### 5. Stopping
 
@@ -97,14 +94,9 @@ An answer cut by `max_tokens` is retried once on the same cell with twice the ro
 
 **Every attempt, with what it really cost.**
 
-- `ledger.jsonl` in the router's folder of the Claude profile (`~/.claude/model-router` by default; `MODEL_ROUTER_HOME` moves it) keeps every attempt with its real
-  tokens and cost, the model that served it (when a fallback ran), the verdict and the reason.
-- It also keeps the router version, the calibration that decided, the task's fingerprint (a hash of
-  kind, risk and prompt, so the same task can be compared across strategies and versions) and, for
-  bench runs, the eval file and the repetition.
-- `router.db` next to it is a SQLite index of the same records (tasks, attempts, every judge's
-  verdict, overrides) for queries across months. The JSON-lines file stays the source, and
-  `router db rebuild` reloads the index from it.
+- `ledger.jsonl` in the router's folder of the Claude profile (`~/.claude/model-router` by default) keeps
+  every attempt of `router run` and `router judge` with its real tokens and cost, the model that served it
+  (when a fallback ran), the verdict, the reason and the router version. No prompt and no answer.
 
 ### 7. Escalation
 
@@ -117,8 +109,8 @@ the mistake. `router stats` counts the retries that repeat it anyway.
 
 **A fixed choice, not a climb up the lattice.**
 
-- `full` uses one judge cell, `opus/xhigh` unless `router config --judge` or `MODEL_ROUTER_JUDGE` say
-  otherwise, in a fresh context.
+- `full` uses one judge cell, `opus/xhigh` unless `router config --judge` says otherwise, in a fresh
+  context.
 - When the worker is already on that model, the judge moves to the next model up at low effort (Fable
   at low for an Opus worker), or to the model below when there is nothing above. The check stays a
   cross-check between models.
@@ -133,6 +125,19 @@ passed themselves on 89 % and 93 % of first attempts. An Opus judge passed 64 % 
 answers, for word limits broken, formats ignored and facts invented. A model does not see its own
 blind spots in a fresh context either.
 
-Every judge's own verdict goes to the ledger, so `router stats` keeps a scoreboard per judge cell:
-verdicts, pass rate, and how many of its verdicts you contradicted with `router feedback`. Those are
-the numbers to pick a judge with, instead of the error rates the simulation assumes.
+Every judge's own verdict goes to the ledger, so `router stats` shows each judge cell's verdicts and pass
+rate.
+
+## What is assumed
+
+Read these before you believe a number. The only measured ones are the ledger's real cost per solved
+task and, in Claude Code, what each subagent spent.
+
+- **Prices** in `catalog.py`, Anthropic API as of 2026-10-06. The ledger prices the real `usage`.
+- **`EFFORT_OUTPUT_MULT`**: output tokens per effort relative to `high` (0.5 / 0.75 / 1 / 1.6 / 2.5).
+- **`CAPABILITY_TIER` + `CAPABILITY_EFFORT`**: capability 0-1 per cell. Haiku 0.40, Sonnet 0.60, Opus 0.75,
+  Fable 0.90; effort adds between −0.06 and +0.05. An opinion, not a measurement: it orders the ladder.
+- **The `START` table** is a judgement per kind and risk. Per-repository learning corrects it where
+  subagents keep failing.
+- **Prompt caches are per model**: every model change in the ladder loses the cache. For a long
+  conversation, change cells between conversations, not inside one.

@@ -18,8 +18,8 @@ All of it on Claude models.
 
 `PreToolUse` on the Agent tool sets `model` and `effort` for every
 general-purpose subagent launched without a model, from the kind and the risk declared on the first
-line of the prompt (`kind: review, risk: high`), else inferred from the text, and from the active
-calibration. A critical review never runs on the model serving the chat. The router never picks `max` effort
+line of the prompt (`kind: review, risk: high`), else inferred from the text. A critical review never runs
+on the model serving the chat. The router never picks `max` effort
 on its own: `xhigh` is the top it chooses, and `max` runs only when someone names it.
 
 ## The read-only agent
@@ -183,15 +183,15 @@ router project --share       # pool counts with the team through .claude/model-r
 router project --team        # turn the plugin on for everyone in the repo (Install, "In a team repository")
 router agents                # advice for the agents fixed by hand in this repo
 router limits                # models over their usage limit, until the exact reset; --check asks now
-router config --lean off     # keep every subagent on the agent Claude chose
+router config --lean off     # keep every subagent on the agent Claude chose (`--lean on` undoes it)
 ```
 
 ## What else the plugin does
 
 `SessionStart` tells Claude the hook exists and what to declare. The skill `router` covers what a
 hook cannot do: verify a subagent's result, escalate, and send text-only subtasks through `router
-run`, which carries no session context at all. The hooks take a few tenths of a second and call no
-API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
+run`, which carries no session context at all. A launch takes the hook about 50 milliseconds, and the
+hooks call no API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
 word (a `claude -p` call of up to 30 seconds) to learn its reset. They block only a launch that names a
 model over its limit; on any error they exit quietly. Agents defined in `.claude/agents/*.md` and forks are
 left alone; they are still measured. A session opened before a plugin update keeps routing with the
@@ -202,7 +202,6 @@ environment the update installed, and never puts the older version back.
 | Variable | Effect |
 |---|---|
 | `MODEL_ROUTER_HOOK=0` | Turns the hooks off without uninstalling. |
-| `MODEL_ROUTER_LEAN=0` | Keeps subagents off the read-only agent. |
 | `MODEL_ROUTER_SHARE=0` | Keeps this installation out of a repository's shared counts. |
 | `MODEL_ROUTER_HOOK_QUIET=1` | Removes the one-line notice. |
 | `MODEL_ROUTER_HOOK_LOG=0` | Stops logging decisions and measurements, and with them all learning. |

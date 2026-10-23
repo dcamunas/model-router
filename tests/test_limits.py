@@ -30,8 +30,8 @@ REJECTED, ALLOWED = _event("rejected"), _event("allowed_warning", window="seven_
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     monkeypatch.delenv("MODEL_ROUTER_CHILD", raising=False)
     monkeypatch.setattr(clock, "now", lambda: NOW)
     return tmp_path

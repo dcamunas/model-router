@@ -37,7 +37,8 @@ def test_a_transcript_is_counted_once_per_message_with_its_peak_context_tools_an
 
 
 def test_a_finished_subagent_is_recorded_next_to_the_hook_s_decision(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     prompt = "kind: review, risk: high\nReview the parser for off-by-one errors"
     out = handle({"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s1", "cwd": "/tmp",
                   "tool_input": {"subagent_type": "general-purpose", "description": "review", "prompt": prompt}})
@@ -46,30 +47,31 @@ def test_a_finished_subagent_is_recorded_next_to_the_hook_s_decision(tmp_path, m
     event = {"hook_event_name": "SubagentStop", "session_id": "s1", "agent_id": "a1", "agent_type": "general-purpose",
              "effort": {"level": "medium"}, "agent_transcript_path": str(agent)}
     assert handle(event) is None
-    rec = load(tmp_path / "subagents.jsonl")[0]
+    rec = load(tmp_path / "model-router" / "subagents.jsonl")[0]
     assert rec["routed"] == "opus/medium" and (rec["kind"], rec["risk"]) == ("review", "high")
     assert (rec["model"], rec["effort"], rec["turns"], rec["cache_read_tokens"]) == ("opus", "medium", 2, 6000)
     assert rec["prompt_hash"] == prompt_hash(prompt) and rec["cost_usd"] > 0 and "prompt" not in rec
     alone = _transcript(tmp_path / "other.jsonl", "classify these tickets as bug or billing", [_turn("x")])
     handle({**event, "agent_id": "a2", "agent_transcript_path": str(alone)})
-    rec = load(tmp_path / "subagents.jsonl")[1]
+    rec = load(tmp_path / "model-router" / "subagents.jsonl")[1]
     assert rec["routed"] is None and rec["kind"] == "classify"  # the hook left it alone: kind read from the prompt
     handle({**event, "agent_id": "a3", "agent_transcript_path": str(tmp_path / "missing.jsonl")})  # quiet
     monkeypatch.setenv("MODEL_ROUTER_HOOK_LOG", "0")
     handle({**event, "agent_id": "a4"})
-    assert len(load(tmp_path / "subagents.jsonl")) == 2
+    assert len(load(tmp_path / "model-router" / "subagents.jsonl")) == 2
 
 
 def test_stats_groups_subagents_by_agent_and_cell_most_spent_first(tmp_path, monkeypatch, capsys):
     from model_router.cli import main
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     base = {"agent_type": "general-purpose", "turns": 10, "peak_context": 50_000, "cache_read_tokens": 400_000}
     lines = [{**base, "model": "opus", "effort": "medium", "cost_usd": 1.0},
              {**base, "model": "opus", "effort": "medium", "cost_usd": 3.0},
              {**base, "model": "haiku", "effort": "low", "cost_usd": 0.01, "agent_type": "model-router:reader"}]
-    (tmp_path / "subagents.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
-    rows = summary_rows(load(tmp_path / "subagents.jsonl"))
+    (tmp_path / "model-router" / "subagents.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    rows = summary_rows(load(tmp_path / "model-router" / "subagents.jsonl"))
     assert rows[0][:5] == ["general-purpose", "opus/medium", 2, 10.0, "50.0K"] and rows[0][-1] == "$4.00"
     assert rows[1][1] == "haiku/low"
     main(["stats"])
@@ -88,11 +90,12 @@ def test_record_without_a_known_model_has_no_cost():
 def test_a_first_reading_is_completed_once_the_transcript_settles(tmp_path, monkeypatch):
     from model_router.subagents import finalize
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     agent = _transcript(tmp_path / "agent.jsonl", "Review the parser", [_turn("m1")])  # the last turn is not in yet
     handle({"hook_event_name": "SubagentStop", "session_id": "s1", "agent_id": "a1", "agent_type": "general-purpose",
             "agent_transcript_path": str(agent)})
-    log = tmp_path / "subagents.jsonl"
+    log = tmp_path / "model-router" / "subagents.jsonl"
     assert load(log)[0]["turns"] == 1 and load(log)[0]["final"] is False
     _transcript(agent, "Review the parser", [_turn("m1"), _turn("m2", output=500)])  # Claude Code writes the end
     assert finalize(log) == 0  # still fresh: it may be written to
@@ -107,7 +110,7 @@ def test_a_first_reading_is_completed_once_the_transcript_settles(tmp_path, monk
 def test_finalize_keeps_records_appended_meanwhile_survives_bad_ones_and_counts_a_subagent_once(tmp_path):
     from model_router.subagents import append, finalize, summary_rows
 
-    log = tmp_path / "subagents.jsonl"
+    log = tmp_path / "model-router" / "subagents.jsonl"
     agent = _transcript(tmp_path / "agent.jsonl", "Review", [_turn("m1"), _turn("m2")])
     base = {"agent_type": "general-purpose", "model": "opus", "effort": "low", "session": "s", "final": False}
     append(log, {**base, "agent_id": "bad", "transcript": ""})  # Path("") is a directory: never read, made final
@@ -125,9 +128,9 @@ def test_an_old_config_naming_unknown_models_never_stops_the_router(tmp_path, mo
     from model_router.catalog import available_models
     from model_router.cli import main
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
-    (tmp_path / "config.json").write_text(json.dumps({"judge": "gpt/high", "models": ["luna"]}))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
+    (tmp_path / "model-router" / "config.json").write_text(json.dumps({"judge": "gpt/high", "models": ["luna"]}))
     assert len(available_models()) == 4  # only unknown names listed: every Claude model instead of none
     assert main(["plan", "review the payment code", "--risk", "high"]) == 0
     out = capsys.readouterr().out

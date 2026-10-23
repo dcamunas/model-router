@@ -4,7 +4,7 @@ import stat
 import pytest
 
 from model_router.catalog import parse_cell
-from model_router.cli_client import CliClient, resolve_config_dir
+from model_router.cli_client import CliClient
 from model_router.client import ClientUnavailableError
 from model_router.verify import Verdict
 
@@ -94,32 +94,19 @@ def test_served_model_is_the_requested_one_when_listed_else_the_busiest():
     assert _served_model({}, "claude-opus-5-5") == "claude-opus-5-5"
 
 
-def test_profile_must_be_explicit(monkeypatch, tmp_path):
-    from model_router.cli_client import resolve_profile
-    from model_router.paths import write_config
+def test_the_cli_backend_runs_on_the_profile_in_use(monkeypatch, tmp_path):
+    monkeypatch.setattr("model_router.cli_client.shutil.which", lambda b: "/bin/claude")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "work"))
+    assert CliClient().config_dir == (tmp_path / "work").absolute()
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert CliClient().config_dir == (tmp_path / ".claude").absolute()
+    assert CliClient(config_dir=tmp_path / "other").config_dir == tmp_path / "other"  # a caller may name another
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", raising=False)
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    with pytest.raises(ClientUnavailableError, match="MODEL_ROUTER_CLAUDE_CONFIG_DIR"):
-        resolve_config_dir()
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "ambient"))
-    assert resolve_profile() == (tmp_path / "ambient", "CLAUDE_CONFIG_DIR")
-    write_config(claude_config_dir=str(tmp_path / "installed"))
-    assert resolve_profile()[0] == tmp_path / "installed"  # config.json beats the ambient variable
-    monkeypatch.setenv("MODEL_ROUTER_CLAUDE_CONFIG_DIR", str(tmp_path))
-    assert resolve_config_dir() == tmp_path
+
+def test_a_missing_claude_executable_is_one_clear_error():
     with pytest.raises(ClientUnavailableError, match="cannot find"):
         CliClient(binary="claude-does-not-exist")
-
-
-def test_with_the_state_in_the_default_profile_that_profile_is_the_one_used(monkeypatch, tmp_path):
-    from model_router.cli_client import resolve_profile
-
-    for name in ("MODEL_ROUTER_HOME", "MODEL_ROUTER_CLAUDE_CONFIG_DIR", "CLAUDE_CONFIG_DIR"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    assert resolve_profile()[0] == tmp_path / ".claude"
 
 
 def test_every_session_the_router_starts_is_marked_as_its_child(tmp_path, monkeypatch):

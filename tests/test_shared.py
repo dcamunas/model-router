@@ -7,6 +7,7 @@ import pytest
 from model_router import projects, shared
 from model_router.catalog import parse_cell
 from model_router.hook import decide, handle, start_in_force
+from model_router.paths import write_config
 from model_router.policy import Policy
 from model_router.task import Task
 
@@ -15,15 +16,19 @@ SETTLED = NOW - timedelta(days=14)  # a week that closed more than a day ago
 WEEK = projects.week_of(SETTLED)
 
 
+def STATE(tmp_path: Path) -> Path:  # noqa: N802 - reads as the folder it names
+    return tmp_path / "home" / "model-router"
+
+
 @pytest.fixture(autouse=True)
 def _frozen(freeze_clock):
     freeze_clock(NOW)
 
 
 def _repo(tmp_path, monkeypatch, *, share=True):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "home"))
     monkeypatch.delenv("MODEL_ROUTER_SHARE", raising=False)
-    (tmp_path / "home").mkdir()
+    (STATE(tmp_path)).mkdir(parents=True)
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     if share:
@@ -58,7 +63,7 @@ def test_each_settled_week_is_one_small_file_written_once(tmp_path, monkeypatch)
     records += [_rec(project, "sonnet/low", 8, SETTLED, chose=False)]  # Claude picked the effort: no evidence
     records += [_rec("/elsewhere", "sonnet/low", 7, SETTLED)]
     records += [_rec(project, "sonnet/low", 6, NOW - timedelta(weeks=20))]  # beyond the window
-    log = tmp_path / "home" / "hook.jsonl"
+    log = STATE(tmp_path) / "hook.jsonl"
     log.write_text(json.dumps({"relaunch_of": "a1"}) + "\n")
     [path] = shared.write_own(project, records, decision_log=log)
     assert path.name == f"{_mine(project)}-{WEEK.replace('-', '')}.json"
@@ -99,7 +104,7 @@ def test_nothing_is_shared_unless_the_repository_and_this_installation_take_part
 
 def test_a_salt_that_cannot_be_kept_shares_nothing(tmp_path, monkeypatch):
     project = _repo(tmp_path, monkeypatch)
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "repo" / ".git" / "nope" / "x"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "repo" / ".git" / "nope"))
     (tmp_path / "repo" / ".git" / "nope").write_text("a file where a directory should be")
     assert projects.install_key()[1] is False
     assert shared.write_own(project, [_rec(project, "sonnet/low", 1, SETTLED)], decision_log=tmp_path / "none") == []
@@ -132,7 +137,7 @@ def test_the_team_counts_alone_only_propose_a_raise_and_one_failure_here_makes_i
     project = _repo(tmp_path, monkeypatch)
     cell = start_in_force({})("analysis", "medium").label
     _theirs(project, "aaaaaaaaaaaa", WEEK, {f"analysis|medium|{cell}": [6, 6]})
-    home = tmp_path / "home"
+    home = STATE(tmp_path)
     event = {"hook_event_name": "SessionStart", "session_id": "s", "cwd": project}
     out = handle(event)
     assert out is not None and "systemMessage" not in out and projects.load_tuning(project).get("start", {}) == {}
@@ -160,17 +165,18 @@ def test_router_project_share_turns_it_on_and_applies_a_team_raise_by_hand(tmp_p
     assert projects.load_tuning(project)["start"]["search"]["low"]["base"] == cell
 
 
-def test_a_tuned_cell_never_runs_below_the_start_it_replaced(monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
-    plain = Policy(calibration=None).plan(Task(prompt="x", kind="review", risk="critical")).start
+def test_a_tuned_cell_never_runs_below_the_start_it_replaced():
+    write_config(models=["haiku", "sonnet", "opus"])
+    plain = Policy().plan(Task(prompt="x", kind="review", risk="critical")).start
     tuning = {"name": "repo", "start": {"review": {"critical": {"cell": "fable/low", "base": plain.label}}}}
-    plan = Policy(calibration=None, tuning=tuning).plan(Task(prompt="x", kind="review", risk="critical"))
+    plan = Policy(tuning=tuning).plan(Task(prompt="x", kind="review", risk="critical"))
     assert plan.start.capability >= plain.capability
     assert any("ignored" in line for line in plan.rationale)
 
 
 def test_a_cross_checked_review_is_no_evidence_about_its_start(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     _, record = decide({"subagent_type": "general-purpose", "description": "review",
                         "prompt": "kind: review, risk: critical\nReview the payment code"},
                        chat_model=parse_cell(start_in_force({})("review", "critical").label).claude_code()["model"])
@@ -216,7 +222,8 @@ def test_a_shared_directory_that_links_elsewhere_is_not_used(tmp_path, monkeypat
 
 
 def test_an_applied_cheaper_start_is_in_force(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     table = start_in_force({})("search", "medium")
     cheaper = projects.cheaper_below(table, projects.lattice())
     assert cheaper is not None
@@ -232,7 +239,7 @@ def test_an_undeletable_entry_never_stops_sharing_nor_hides_a_raise(tmp_path, mo
     (shared.shared_dir(project) / "343434343434-2020W01.json").mkdir()  # a directory with a file's name
     cell = start_in_force({})("analysis", "medium").label
     _theirs(project, "aaaaaaaaaaaa", WEEK, {f"analysis|medium|{cell}": [5, 2]})
-    home = tmp_path / "home"
+    home = STATE(tmp_path)
     (home / "subagents.jsonl").write_text(json.dumps(_rec(project, cell, 1, SETTLED)) + "\n")
     (home / "hook.jsonl").write_text(json.dumps({"relaunch_of": "a1"}) + "\n")
     out = handle({"hook_event_name": "SessionStart", "session_id": "s", "cwd": project})
@@ -260,14 +267,14 @@ def test_share_refuses_a_claude_directory_that_is_a_link(tmp_path, monkeypatch):
     assert list((tmp_path / "tools").iterdir()) == []
 
 
-def test_a_raise_whose_model_is_gone_keeps_a_stronger_stand_in(monkeypatch):
-    plain = Policy(calibration=None).plan(Task(prompt="x", kind="analysis", risk="medium")).start
+def test_a_raise_whose_model_is_gone_keeps_a_stronger_stand_in():
+    plain = Policy().plan(Task(prompt="x", kind="analysis", risk="medium")).start
     raised = projects.step_up(plain, projects.lattice())
     assert raised is not None
     tuning = {"name": "repo", "start": {"analysis": {"medium": {"cell": raised.label, "base": plain.label}}}}
     others = [m for m in ("haiku", "sonnet", "opus", "fable") if m != raised.spec.short]
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", ",".join(others))
-    start = Policy(calibration=None, tuning=tuning).plan(Task(prompt="x", kind="analysis", risk="medium")).start
+    write_config(models=others)
+    start = Policy(tuning=tuning).plan(Task(prompt="x", kind="analysis", risk="medium")).start
     assert start.capability >= plain.capability
 
 
@@ -280,7 +287,7 @@ def test_a_time_without_a_zone_is_read_as_utc():
 
 def test_shared_counts_are_written_even_when_tuning_fails(tmp_path, monkeypatch):
     project = _repo(tmp_path, monkeypatch)
-    (tmp_path / "home" / "subagents.jsonl").write_text(json.dumps(_rec(project, "sonnet/low", 1, SETTLED)) + "\n")
+    (STATE(tmp_path) / "subagents.jsonl").write_text(json.dumps(_rec(project, "sonnet/low", 1, SETTLED)) + "\n")
 
     def broken(tuning):
         raise RuntimeError("tuning broke")
@@ -336,7 +343,7 @@ def test_the_week_file_carries_the_repository_s_own_agents_and_nothing_from_else
     subprocess.run(["git", "-C", project, "add", ".claude/agents/client-secret.md"], check=True)  # a link, even committed
     records += [_agent_run(project, "client-secret", 11, SETTLED)]
     records += [_agent_run(project, "curator", 7, NOW)]  # this week is still open
-    [path] = shared.write_own(project, records, decision_log=tmp_path / "home" / "hook.jsonl")
+    [path] = shared.write_own(project, records, decision_log=STATE(tmp_path) / "hook.jsonl")
     assert json.loads(path.read_text()) == {"v": 1, "c": {}, "a": {"curator|opus/xhigh": [3, 0]}}
     text = path.read_text()
     assert not any(name in text for name in ("my-profile-agent", "untracked", "client-secret", project))
@@ -374,7 +381,7 @@ def test_router_agents_advises_on_the_whole_team_s_runs(tmp_path, monkeypatch, c
     assert set(advice) == {"curator", "documenter"}
     assert advice["curator"].runs == 10 and advice["curator"].team_runs == 6 and advice["curator"].action == "lower"
     assert advice["documenter"].action == "measuring" and advice["documenter"].mean_turns == 0
-    (tmp_path / "home" / "subagents.jsonl").write_text("".join(json.dumps({**r, "final": True}) + "\n" for r in mine))
+    (STATE(tmp_path) / "subagents.jsonl").write_text("".join(json.dumps({**r, "final": True}) + "\n" for r in mine))
     path = shared.shared_dir(project) / f"aaaaaaaaaaaa-{WEEK.replace('-', '')}.json"
     path.write_text(json.dumps({"v": 1, "c": {}, "a": {"curator|opus/xhigh": [6, 0]}}))
     assert main(["agents", project]) == 0

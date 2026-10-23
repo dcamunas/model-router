@@ -5,7 +5,7 @@ import pytest
 
 from model_router import projects
 from model_router.catalog import parse_cell
-from model_router.hook import handle, start_in_force
+from model_router.hook import PLUGIN_AGENT, handle, start_in_force
 
 NOW = datetime(2026, 10, 22, 12, tzinfo=UTC)  # a Thursday
 
@@ -21,8 +21,8 @@ def test_a_signature_ignores_the_declaration_line_tells_tasks_apart_and_is_salte
     assert projects.alike(projects.signature(task), same) == 1.0
     other = projects.signature("Summarise the meeting notes from Tuesday into five bullet points for the team.")
     assert projects.alike(same, other) < 0.2 and projects.alike(None, same) == 0.0
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "elsewhere"))
-    assert projects.alike(projects.signature(task), same) < 0.2  # another install's salt: not comparable
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "another-profile"))
+    assert projects.alike(projects.signature(task), same) < 0.2  # another profile's salt: not comparable
 
 
 def _old(**kw):
@@ -57,7 +57,8 @@ def _records(project, kind, risk, cell, n, prefix, *, chose=True, at=None):
 
 
 def test_raises_only_the_cell_in_force_and_lowers_only_by_hand_back_to_where_it_came_from(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     project = str(tmp_path / "repo")
     current = {("review", "medium"): parse_cell("haiku/medium")}
 
@@ -87,7 +88,8 @@ def test_raises_only_the_cell_in_force_and_lowers_only_by_hand_back_to_where_it_
 
 
 def test_a_cheaper_start_must_really_be_cheaper_and_respect_the_floor(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     project = str(tmp_path / "repo")
     for label in ("opus/high", "opus/medium", "sonnet/low", "fable/low"):
         counts = projects.evidence(project, _records(project, "agentic", "medium", label, 10, "x"), relaunched=set())
@@ -99,7 +101,8 @@ def test_a_cheaper_start_must_really_be_cheaper_and_respect_the_floor(tmp_path, 
 
 
 def test_reset_keeps_raises_from_coming_back_and_bad_tunings_are_ignored(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     project = str(tmp_path / "repo")
     records = _records(project, "review", "medium", "haiku/medium", 6, "a")
     counts = projects.evidence(project, records, relaunched={"a0", "a1", "a2"})
@@ -121,11 +124,11 @@ def test_a_tuning_is_ignored_once_the_table_no_longer_gives_the_cell_it_replaced
     from model_router.task import Task
 
     task = Task(prompt="x", kind="review", risk="medium")
-    base = Policy(calibration=None).plan(task).start
-    tuned = Policy(calibration=None, tuning={"name": "repo", "start": {"review": {"medium": {
+    base = Policy().plan(task).start
+    tuned = Policy(tuning={"name": "repo", "start": {"review": {"medium": {
         "cell": "fable/low", "base": base.label}}}}).plan(task)
     assert tuned.start.label == "fable/low" and any("tuned for repo" in r for r in tuned.rationale)
-    stale = Policy(calibration=None, tuning={"name": "repo", "start": {"review": {"medium": {
+    stale = Policy(tuning={"name": "repo", "start": {"review": {"medium": {
         "cell": "haiku/low", "base": "sonnet/xhigh"}}}}).plan(task)
     assert stale.start == base and any("ignored" in r for r in stale.rationale)
 
@@ -149,11 +152,11 @@ def _transcript(prompt, model):
 
 
 def test_the_hook_learns_from_model_relaunches_not_from_access_or_other_tasks(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
-    (tmp_path / "profile" / "agents").mkdir(parents=True)
-    (tmp_path / "profile" / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\n")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "home"))
+    plugin = tmp_path / "plugin"
+    (plugin / PLUGIN_AGENT).parent.mkdir(parents=True)
+    (plugin / PLUGIN_AGENT).write_text("---\nname: reader\n---\n")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     cwd = str(repo)
@@ -180,7 +183,7 @@ def test_the_hook_learns_from_model_relaunches_not_from_access_or_other_tasks(tm
         finish(f"kind: review, risk: medium\nReview utils_{i}.py for off-by-one errors in the loop.", f"u{i}",
                launch(f"kind: review, risk: medium\nReview utils_{i}.py for off-by-one errors in the loop."))
         launch(f"kind: review, risk: high\nReview utils_{i}.py for off-by-one errors in the loop.")
-    log = [json.loads(line) for line in (tmp_path / "home" / "hook.jsonl").read_text().splitlines()]
+    log = [json.loads(line) for line in (tmp_path / "home" / "model-router" / "hook.jsonl").read_text().splitlines()]
     assert not any(e.get("relaunch_of") for e in log)
     started = handle({"hook_event_name": "SessionStart", "session_id": "s2", "cwd": cwd})
     assert started is not None and "systemMessage" not in started  # nothing failed: nothing raised
@@ -190,7 +193,7 @@ def test_the_hook_learns_from_model_relaunches_not_from_access_or_other_tasks(tm
         finish(prompt, f"a{i}", out)
         if i < 2:
             launch(prompt, model="fable", effort="high")
-    log = [json.loads(line) for line in (tmp_path / "home" / "hook.jsonl").read_text().splitlines()]
+    log = [json.loads(line) for line in (tmp_path / "home" / "model-router" / "hook.jsonl").read_text().splitlines()]
     assert {e.get("relaunch_of") for e in log} >= {"a0", "a1"}
     started = handle({"hook_event_name": "SessionStart", "session_id": "s3", "cwd": cwd})
     assert started is not None and "analysis (medium) in repo now starts on" in started["systemMessage"]
@@ -204,13 +207,13 @@ def test_the_hook_learns_from_model_relaunches_not_from_access_or_other_tasks(tm
 def test_router_project_shows_the_evidence_proposes_applies_and_resets(tmp_path, monkeypatch, capsys):
     from model_router.cli import main
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "home"))
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     project = str(repo.resolve())
-    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / "model-router").mkdir(parents=True)
     lines = [{**r, "final": True} for r in _records(project, "search", "low", "fable/low", 10, "b")]
-    (tmp_path / "home" / "subagents.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    (tmp_path / "home" / "model-router" / "subagents.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
     monkeypatch.setattr("model_router.hook.start_in_force", lambda tuning: lambda kind, risk: parse_cell("fable/low"))
     assert main(["project", str(repo)]) == 0
     out = capsys.readouterr().out
@@ -226,7 +229,8 @@ def test_router_project_shows_the_evidence_proposes_applies_and_resets(tmp_path,
 
 
 def test_a_cheaper_start_needs_ten_clean_launches_not_nine(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "model-router").mkdir(exist_ok=True)
     project = str(tmp_path / "repo")
 
     cells = projects.lattice()
@@ -254,7 +258,7 @@ def test_evidence_counts_the_whole_weeks_of_the_window_and_nothing_older():
 def test_router_plan_starts_where_the_hook_would_in_this_repository(tmp_path, monkeypatch, capsys):
     from model_router.cli import main
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "home"))
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     table = start_in_force({})("search", "low")

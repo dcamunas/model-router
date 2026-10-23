@@ -7,23 +7,21 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any  # Any: results are written out as JSON; structured output of any shape
 
+from . import clock
 from .catalog import PLAN_OUTPUT_TOKENS_AT_HIGH, Cell, Usage, cost_usd
 from .client import ClaudeClient, ClientUnavailableError
-from .policy import Policy, PolicyProtocol
-from .task import VERIFIED_SOURCES, Task
-from .verify import JudgeVerdict, Verifier
+from .policy import Plan, Policy
+from .task import EXTERNAL_STOP, VERIFIED_SOURCES, Task
+from .verify import JudgeVerdict, Verifier, VerifyResult
 from .version import router_version
 
 if TYPE_CHECKING:
-    from .feedback import FeedbackStore
     from .ledger import Ledger
 
-STATUSES: tuple[str, ...] = ("solved", "unsolved", "refused", "budget", "error")
-EXTERNAL_STOP = "external"  # the stop reason of an attempt whose answer was produced outside the router (`Router.judge`)
 CARRIED_REASON_CHARS = 600  # how much of a failed verdict's reason the next attempt's prompt carries
+REFUSALS_TO_STOP = 2  # a task refused this many times is refused: another cell would only spend more
 
 
 def with_failure(prompt: str, cell: Cell, reason: str) -> str:
@@ -65,6 +63,12 @@ class Attempt:
     def fallback_ran(self) -> bool:
         return self.served_model != self.cell.model
 
+    def judged(self, verdict: VerifyResult) -> Attempt:
+        """Return this attempt with the verification's verdict, judges and cost."""
+        return replace(self, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
+                       verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
+                       judges=verdict.judges, verdicts=verdict.verdicts)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "n": self.n, "cell": self.cell.label, "usage": self.usage.to_dict(), "cost_usd": round(self.cost_usd, 6),
@@ -97,11 +101,7 @@ class TaskResult:
     elapsed: float
     parsed: Any = None
     rationale: list[str] = field(default_factory=list)
-    fingerprint: str = ""  # `Task.fingerprint`: the same task under another strategy or version has the same one
     router_version: str = ""
-    calibration_id: str = "builtin"  # which tables decided (the policy's)
-    eval_id: str | None = None  # the eval file this task came from, when a bench ran it
-    repeat: int | None = None  # which repetition of the eval, when a bench ran it more than once
 
     @property
     def solved(self) -> bool:
@@ -138,42 +138,34 @@ class TaskResult:
             "started_at": self.started_at, "elapsed": round(self.elapsed, 2), "attempts": [a.to_dict() for a in self.attempts],
             "work_cost_usd": round(self.work_cost_usd, 6), "verify_cost_usd": round(self.verify_cost_usd, 6),
             "total_cost_usd": round(self.total_cost_usd, 6), "retries": self.retries, "usage": self.usage.to_dict(),
-            "answer_chars": len(self.answer), "rationale": self.rationale, "fingerprint": self.fingerprint,
-            "router_version": self.router_version, "calibration_id": self.calibration_id, "eval_id": self.eval_id,
-            "repeat": self.repeat,
+            "answer_chars": len(self.answer), "rationale": self.rationale, "router_version": self.router_version,
         }
 
 
 class Router:
-    """The loop: plan, attempt, verify, escalate, stop on budget. Every result goes to the ledger and, when a
-    feedback store is given, every verdict goes to it.
-    """
+    """The loop: plan, attempt, verify, escalate, stop on budget. Every result goes to the ledger."""
 
     def __init__(
         self,
         client: ClaudeClient,
         *,
-        policy: PolicyProtocol | None = None,
+        policy: Policy | None = None,
         ledger: Ledger | None = None,
-        feedback: FeedbackStore | None = None,
         verifier: Verifier | None = None,
     ) -> None:
         self.client = client
-        self.policy = policy or Policy(feedback=feedback)
+        self.policy = policy or Policy()
         self.verifier = verifier or Verifier(client, self.policy)
-        self.feedback = feedback
         if ledger is None:
             from .ledger import Ledger
 
             ledger = Ledger(None)
         self.ledger = ledger
 
-    def run(self, task: Task, *, eval_id: str | None = None, repeat: int | None = None) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
-        """Run `task` through its plan and return the result. Side effects: the result is appended to the
-        ledger and, with a feedback store, every verified verdict (checker or judge) is
-        recorded and the store saved; a judge that cannot be reached ends the task with status `error`.
-        After a verified fail, the next attempt's prompt carries the reason (`with_failure`). `eval_id`
-        and `repeat` say which eval file and repetition a bench is running, for the record.
+    def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
+        """Run `task` through its plan, append the result to the ledger and return it. A judge that cannot be
+        reached ends the task with status `error`. After a verified fail, the next attempt's prompt carries the
+        reason (`with_failure`).
         """
         plan = self.policy.plan(task)
         failure: tuple[Cell, str] | None = None  # the last verified fail: its cell and reason
@@ -183,7 +175,7 @@ class Router:
         answer, parsed, final, status = "", None, None, "unsolved"
         max_tokens = task.max_tokens
         truncated_retry = False
-        started_at = datetime.now(UTC).isoformat(timespec="seconds")
+        started_at = clock.stamp()
         t0 = time.monotonic()
         i = 0
         while i < len(plan.ladder) and len(attempts) < plan.max_attempts:
@@ -210,7 +202,7 @@ class Router:
             if completion.refused:
                 attempts.append(replace(base, refused=True, verdict_source="refusal",
                                         reason=f"refused ({completion.refusal_category or 'no category'})"))
-                if sum(a.refused for a in attempts) >= 2:
+                if sum(a.refused for a in attempts) >= REFUSALS_TO_STOP:
                     status = "refused"
                     break
                 i += 1
@@ -230,9 +222,7 @@ class Router:
                 status = "error"
                 break
             spent += verdict.cost_usd
-            attempts.append(replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
-                                    verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
-                                    judges=verdict.judges, verdicts=verdict.verdicts))
+            attempts.append(base.judged(verdict))
             answer, parsed, final = completion.text, completion.parsed, cell
             if verdict.passed:
                 status = "solved"
@@ -245,34 +235,18 @@ class Router:
             i += 1
         if status == "unsolved" and attempts and all(a.refused for a in attempts):
             status = "refused"
-        result = TaskResult(
-            task_id=task.id, kind=task.kind, risk=task.risk, plan=[c.label for c in plan.ladder], verify=plan.verify,
-            budget_usd=plan.budget_usd, attempts=attempts, answer=answer, status=status, final_cell=final,
-            started_at=started_at, elapsed=time.monotonic() - t0, parsed=parsed, rationale=plan.rationale,
-            fingerprint=task.fingerprint, router_version=router_version(),
-            calibration_id=getattr(self.policy, "calibration_id", "builtin"), eval_id=eval_id, repeat=repeat,
-        )
-        if self.feedback is not None:
-            first = True
-            for a in attempts:
-                if a.verdict is None or a.verdict_source not in VERIFIED_SOURCES:
-                    continue  # refusals, truncations, judge errors and unverified passes are not evidence
-                self.feedback.record(task.kind, a.cell, a.verdict, first=first and a.cell == plan.ladder[0])
-                first = False
-            self.feedback.save()
-        self.ledger.append(result)
-        return result
+        return self._record(task, plan, attempts=attempts, answer=answer, status=status, final=final,
+                            started_at=started_at, elapsed=time.monotonic() - t0, parsed=parsed)
 
     def judge(self, task: Task, answer: str, *, worker: Cell | None = None, mode: str | None = None) -> TaskResult:
         """Verify an `answer` produced outside the router (a subagent, a person) as one attempt on `worker` (the
         plan's start cell when None) in `mode` (the plan's when None), with no worker cost, and record it in
-        the ledger so `router feedback` and the judges' scoreboard see it. The feedback store is left alone:
-        the answer was not made under the router's conditions.
+        the ledger.
         """
         plan = self.policy.plan(task)
         worker = worker or plan.start
         mode = mode or plan.verify
-        started_at = datetime.now(UTC).isoformat(timespec="seconds")
+        started_at = clock.stamp()
         t0 = time.monotonic()
         base = Attempt(1, worker, Usage(), 0.0, 0.0, EXTERNAL_STOP, worker.model, None, refused=False, verdict=None,
                        verdict_source="", reason="")
@@ -282,17 +256,21 @@ class Router:
             attempt = replace(base, verdict_source="judge-error", reason=f"verifier unavailable: {exc}")
             status = "error"
         else:
-            attempt = replace(base, verdict=verdict.passed, verdict_source=verdict.source, reason=verdict.reason,
-                              verifier=verdict.cell, verify_usage=verdict.usage, verify_cost_usd=verdict.cost_usd,
-                              judges=verdict.judges, verdicts=verdict.verdicts)
+            attempt = base.judged(verdict)
             status = "solved" if verdict.passed else "unsolved"
+        plan.verify = mode
+        plan.rationale = [*plan.rationale, "answer produced outside the router: judged only"]
+        return self._record(task, plan, attempts=[attempt], answer=answer, status=status, final=worker,
+                            started_at=started_at, elapsed=time.monotonic() - t0)
+
+    def _record(self, task: Task, plan: Plan, *, attempts: list[Attempt], answer: str, status: str,
+                final: Cell | None, started_at: str, elapsed: float, parsed: Any = None) -> TaskResult:
+        """Build the result of `task` under `plan`, append it to the ledger and return it."""
         result = TaskResult(
-            task_id=task.id, kind=task.kind, risk=task.risk, plan=[c.label for c in plan.ladder], verify=mode,
-            budget_usd=plan.budget_usd, attempts=[attempt], answer=answer, status=status, final_cell=worker,
-            started_at=started_at, elapsed=time.monotonic() - t0,
-            rationale=[*plan.rationale, "answer produced outside the router: judged only"],
-            fingerprint=task.fingerprint, router_version=router_version(),
-            calibration_id=getattr(self.policy, "calibration_id", "builtin"),
+            task_id=task.id, kind=task.kind, risk=task.risk, plan=[c.label for c in plan.ladder], verify=plan.verify,
+            budget_usd=plan.budget_usd, attempts=attempts, answer=answer, status=status, final_cell=final,
+            started_at=started_at, elapsed=elapsed, parsed=parsed, rationale=plan.rationale,
+            router_version=router_version(),
         )
         self.ledger.append(result)
         return result

@@ -7,8 +7,7 @@ per-model rate (Haiku 5.5's is an assumption: 10% of input). Haiku 5.5 bills 5x 
 tokens. The ledger always prices the real `usage` returned by the API.
 
 Two tables are assumptions, not measurements. They drive planning (expected cost of a cell, which
-cell to escalate to) and the offline simulation, and the feedback store is there to overrule them
-with real verdicts:
+cell to escalate to); a project's tuning (`projects.py`) moves a start cell on what really happened:
 
 * EFFORT_OUTPUT_MULT - output tokens (thinking + answer) at each effort relative to `high`.
 * CAPABILITY_TIER / CAPABILITY_EFFORT - a 0-1 capability score per cell. The model tier dominates
@@ -24,12 +23,11 @@ to it: `available_models`, the lattice, the plans and the hook stay on Claude.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from . import limits
-from .paths import MODELS_ENV, read_config
+from .paths import read_config
 
 PRICES_AS_OF = "2026-10-06"
 CLAUDE = "anthropic"  # the provider of the models the router routes to
@@ -37,7 +35,7 @@ TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}  # a re
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 # The efforts the router chooses on its own. `max` is left out: it costs far more output than `xhigh` for little more
-# capability, so it runs only when someone names it (a cell given by hand, an agent's own effort, a bench matrix).
+# capability, so it runs only when someone names it (a cell given by hand, an agent's own effort).
 AUTO_EFFORTS: tuple[str, ...] = EFFORTS[:-1]
 EFFORT_OUTPUT_MULT: dict[str, float] = {"low": 0.5, "medium": 0.75, "high": 1.0, "xhigh": 1.6, "max": 2.5}
 CAPABILITY_TIER: dict[str, float] = {"haiku": 0.40, "sonnet": 0.60, "opus": 0.75, "fable": 0.90}
@@ -197,10 +195,9 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
 
 
 def configured_models() -> list[str]:
-    """Return the Claude models this installation is set to use, in catalogue order. The MODEL_ROUTER_MODELS
-    variable wins, then `models` in config.json (`router config --models`); with neither, every Claude model in
-    the catalogue. A name the catalogue does not know, or a registered model's, is ignored: the router routes to
-    Claude only.
+    """Return the Claude models this installation is set to use, in catalogue order: `models` in config.json
+    (`router config --models`), else every Claude model in the catalogue. A name the catalogue does not know, or a
+    registered model's, is ignored: the router routes to Claude only.
     """
     claude = [m for m, spec in MODELS.items() if spec.claude]
     known = [n for n in listed_models() if n in SHORT_TO_ID or n in MODELS]
@@ -219,8 +216,8 @@ def available_models() -> list[str]:
 
 
 def listed_models() -> list[str]:
-    """Return the names the models setting lists, as written: MODEL_ROUTER_MODELS, else `models` in config.json."""
-    configured = os.environ.get(MODELS_ENV) or read_config().get("models")
+    """Return the names `models` in config.json lists, as written."""
+    configured = read_config().get("models")
     if not configured:
         return []
     names = [n.strip() for n in configured.split(",")] if isinstance(configured, str) else [str(n) for n in configured]
@@ -348,7 +345,7 @@ def step_up(current: Cell, cells: Iterable[Cell], *, min_gain: float = 0.08, tie
 
 def step_down(current: Cell, cells: Iterable[Cell], *, max_loss: float = 0.08, min_saving: float = 0.20) -> Cell | None:
     """Return the most capable cell that gives up at most `max_loss` capability and saves at least
-    `min_saving` of the expected cost. Used only for exploration by the feedback store.
+    `min_saving` of the expected cost: the cheaper cell `router agents` advises.
     """
     cands = [
         c

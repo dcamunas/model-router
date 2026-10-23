@@ -13,11 +13,9 @@ What differs from the API backend (`client.LiveClient`):
 * Dollar amounts in the ledger are list-price equivalents: a subscription is billed by quota, not
   per token, so read them as a proxy for quota consumption.
 
-Profile: the subprocess runs on the Claude profile named by MODEL_ROUTER_CLAUDE_CONFIG_DIR, else the profile in
-use, whose folder holds the router's state. Only with the state moved elsewhere (MODEL_ROUTER_HOME) does it read
-the profile `router install` recorded, then CLAUDE_CONFIG_DIR; with none of them it refuses to start, so the
-router never uses another profile by accident.
-CLAUDECODE is dropped from the environment so the CLI does not think it is nested in a session.
+Profile: the subprocess runs on the Claude profile in use ($CLAUDE_CONFIG_DIR, else ~/.claude), the one whose
+folder holds the router's state, unless the caller names another. CLAUDECODE is dropped from the environment so
+the CLI does not think it is nested in a session.
 """
 
 from __future__ import annotations
@@ -37,41 +35,13 @@ from pydantic import BaseModel, ValidationError
 from . import limits
 from .catalog import MODELS, Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
-from .paths import CHILD_ENV, CONFIG_DIR_ENV, HOME_ENV, claude_profile, config_path, read_config
+from .paths import CHILD_ENV, claude_profile
 
 DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
 NO_MCP = '{"mcpServers":{}}'
 NOT_LOGGED_IN = "not logged in"
 ERROR_DETAIL_CHARS = 300  # how much of the CLI's stderr/stdout an error message carries
 RATE_LIMITED = 429
-
-
-def resolve_profile() -> tuple[Path, str]:
-    """Return the Claude profile directory for the cli backend and where it came from: the
-    MODEL_ROUTER_CLAUDE_CONFIG_DIR variable, else the profile in use, which owns the state folder. With the state
-    moved by MODEL_ROUTER_HOME, `config.json` (written by `router install`), then the ambient CLAUDE_CONFIG_DIR.
-    Nothing else: the router must never land on another profile by accident.
-    """
-    value = os.environ.get(CONFIG_DIR_ENV)
-    if value:
-        return Path(value).expanduser(), CONFIG_DIR_ENV
-    if not os.environ.get(HOME_ENV):  # a profile recorded in this folder never points away from its owner
-        return claude_profile(), "the profile in use, which holds the router's state"
-    value = read_config().get("claude_config_dir")
-    if value:
-        return Path(str(value)).expanduser(), str(config_path())
-    value = os.environ.get("CLAUDE_CONFIG_DIR")
-    if value:
-        return Path(value).expanduser(), "CLAUDE_CONFIG_DIR"
-    raise ClientUnavailableError(
-        f"Claude profile not set: run `router install` in the profile the router must use, or export "
-        f"{CONFIG_DIR_ENV}, for example ~/.claude-personal"
-    )
-
-
-def resolve_config_dir() -> Path:
-    """Return the Claude profile directory for the cli backend (see `resolve_profile`)."""
-    return resolve_profile()[0]
 
 
 def _served_model(model_usage: Any, requested: str) -> str:
@@ -105,7 +75,7 @@ class CliClient:
         if path is None:
             raise ClientUnavailableError(f"cannot find the executable {binary!r}; install Claude Code or pass --backend api")
         self.binary = path
-        self.config_dir = config_dir or resolve_config_dir()
+        self.config_dir = config_dir or claude_profile()
         self.timeout = timeout
         self.extra_args = list(extra_args)
         self.tools = tools  # built-in tools the call may use, e.g. "Read,Grep,Glob"; none by default. Nothing is
@@ -156,7 +126,7 @@ class CliClient:
         """
         if os.environ.get(CHILD_ENV) == "1":
             return  # a session the router started: whoever started it learns the limit
-        if not os.environ.get(HOME_ENV) and self.config_dir.resolve() != claude_profile().resolve():
+        if self.config_dir.resolve() != claude_profile().resolve():
             return  # another profile's account: its own sessions learn its limits, in its own folder
         models = {spec.short: spec.id for spec in MODELS.values() if spec.claude}
         with contextlib.suppress(OSError, ValueError):  # learning the reset must never hide the refusal itself

@@ -2,7 +2,8 @@ import json
 import subprocess
 import sys
 
-from model_router.hook import decide, handle
+from model_router.hook import PLUGIN_AGENT, decide, handle
+from model_router.paths import write_config
 
 
 def agent_event(**tool_input):
@@ -22,25 +23,23 @@ def decided(tool_input, chat_model=None) -> tuple[dict, dict]:
     return updated, record
 
 
-def test_fills_model_and_effort_for_general_purpose_subagent(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+def test_fills_model_and_effort_for_general_purpose_subagent(state):
     out = routed(agent_event())
     updated = out["hookSpecificOutput"]["updatedInput"]
     assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     assert updated["model"] == "opus" and updated["effort"] == "medium"  # review x high -> opus/medium
     assert updated["prompt"].startswith("Review")
     assert out["systemMessage"].startswith("router: opus/medium")
-    log = (tmp_path / "hook.jsonl").read_text().strip().splitlines()
+    log = (state / "hook.jsonl").read_text().strip().splitlines()
     assert len(log) == 1 and json.loads(log[0])["cell"] == "opus/medium"
 
 
-def test_keeps_an_explicit_model_and_skips_custom_agents(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+def test_keeps_an_explicit_model_and_skips_custom_agents(state):
     assert handle(agent_event(model="sonnet")) is None
     assert handle(agent_event(subagent_type="fork")) is None
     assert handle(agent_event(subagent_type="Explore")) is None
     assert handle(agent_event(subagent_type="migration-curator-g3w")) is None
-    assert not (tmp_path / "hook.jsonl").exists()
+    assert not (state / "hook.jsonl").exists()
 
 
 def test_only_model_is_set_when_claude_chose_an_effort():
@@ -57,7 +56,7 @@ def test_session_start_adds_context_and_other_events_are_silent():
 
 
 def test_entry_point_never_fails_on_garbage(tmp_path, monkeypatch):
-    env = {"MODEL_ROUTER_HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    env = {"CLAUDE_CONFIG_DIR": str(tmp_path), "PATH": "/usr/bin:/bin"}
     for payload in ("not json", "{}", json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_input": None})):
         proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=payload, text=True,
                               capture_output=True, env=env)
@@ -66,7 +65,7 @@ def test_entry_point_never_fails_on_garbage(tmp_path, monkeypatch):
 
 
 def test_entry_point_routes_a_real_payload(tmp_path):
-    env = {"MODEL_ROUTER_HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    env = {"CLAUDE_CONFIG_DIR": str(tmp_path), "PATH": "/usr/bin:/bin"}
     payload = json.dumps(agent_event(prompt="Write a LinkedIn post about data migrations"))
     proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=payload, text=True, capture_output=True, env=env)
     out = json.loads(proc.stdout)
@@ -74,7 +73,7 @@ def test_entry_point_routes_a_real_payload(tmp_path):
 
 
 def test_hook_env_switch_disables_it_without_uninstalling(tmp_path):
-    env = {"MODEL_ROUTER_HOME": str(tmp_path), "MODEL_ROUTER_HOOK": "0", "PATH": "/usr/bin:/bin"}
+    env = {"CLAUDE_CONFIG_DIR": str(tmp_path), "MODEL_ROUTER_HOOK": "0", "PATH": "/usr/bin:/bin"}
     proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=json.dumps(agent_event()), text=True,
                           capture_output=True, env=env)
     assert proc.returncode == 0 and proc.stdout == ""
@@ -100,8 +99,7 @@ def test_main_model_reads_last_non_sidechain_assistant_entry(tmp_path):
     assert main_model(None) is None
 
 
-def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
+def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, state):
     prompt = "risk: critical. Review this design of the payments migration before running it"
     event = agent_event(prompt=prompt)
     event["transcript_path"] = _transcript(tmp_path, {"type": "assistant", "message": {"model": "claude-opus-5-5"}})
@@ -109,14 +107,13 @@ def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, monkey
     updated = out["hookSpecificOutput"]["updatedInput"]
     assert (updated["model"], updated["effort"]) == ("fable", "low")  # review x critical = opus/high, crossed
     assert out["systemMessage"].endswith("cross-checked against the chat")
-    record = json.loads((tmp_path / "hook.jsonl").read_text().strip().splitlines()[-1])
+    record = json.loads((state / "hook.jsonl").read_text().strip().splitlines()[-1])
     assert record["cell"] == "fable/low" and "another model than the chat (opus)" in record["cross"]
 
 
-def test_a_strange_transcript_line_does_not_stop_the_routing(tmp_path, monkeypatch):
+def test_a_strange_transcript_line_does_not_stop_the_routing(tmp_path):
     from model_router.hook import main_model
 
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
     path = _transcript(tmp_path, {"type": "assistant", "message": {"model": "claude-opus-5-5"}},
                        {"type": "assistant", "message": "assistant"}, ["assistant"])
     assert main_model(path) == "opus"  # the odd lines are skipped, the last good one counts
@@ -126,9 +123,8 @@ def test_a_strange_transcript_line_does_not_stop_the_routing(tmp_path, monkeypat
 
 
 def test_a_log_that_cannot_be_written_does_not_stop_the_routing(tmp_path, monkeypatch, capsys):
-    blocker = tmp_path / "state"
-    blocker.write_text("not a directory")
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(blocker))
+    (tmp_path / "model-router").write_text("not a directory")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     out = routed(agent_event())
     assert out["hookSpecificOutput"]["updatedInput"]["model"] == "opus"
     assert "not logged" in capsys.readouterr().err
@@ -144,89 +140,46 @@ def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp
     assert updated["model"] == "opus" and updated["effort"] == "medium" and "cross" not in record
 
 
-def test_a_judge_setting_the_router_cannot_resolve_never_stops_the_routing(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    (tmp_path / "config.json").write_text(json.dumps({  # an older version's config: a judge and a model it does not know
+def test_a_judge_setting_the_router_cannot_resolve_never_stops_the_routing(state):
+    (state / "config.json").write_text(json.dumps({  # an older version's config: a judge and a model it does not know
         "judge": "luna/high", "models": ["haiku", "sonnet", "opus", "fable", "luna"]}))
     updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
     assert updated["model"] in ("opus", "fable") and record["cell"].split("/")[0] in ("opus", "fable")
 
 
-def test_without_fable_the_hook_stays_on_available_models(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
+def test_without_fable_the_hook_stays_on_available_models():
+    write_config(models=["haiku", "sonnet", "opus"])
     updated, record = decided({"prompt": "risk: critical. Analyse the design of the payments migration"})
     assert updated["model"] == "opus" and record["cell"] == "opus/medium"  # fable/low degraded, then the floor
     updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
     assert updated["model"] == "opus" and "cross" not in record  # no other model can take the cross-check
 
 
-def test_the_hook_never_names_a_model_claude_code_cannot_run(monkeypatch, tmp_path):
-    from model_router.hook import decide
-
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path))
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus,fable")
+def test_the_hook_never_names_a_model_claude_code_cannot_run():
+    write_config(models=["haiku", "sonnet", "opus", "fable"])
     for prompt in ("Write the release notes for 2.0", "risk: critical. Analyse the outage", "classify these tickets"):
         updated, record = decide({"subagent_type": "general-purpose", "prompt": prompt})
         assert updated is not None and updated["model"] in ("haiku", "sonnet", "opus", "fable"), prompt
 
 
-def test_reading_work_goes_to_the_read_only_agent_when_one_is_installed(tmp_path, monkeypatch):
-    from model_router.hook import PLUGIN_AGENT
-    from model_router.paths import write_config
-
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
+def test_reading_work_goes_to_the_plugin_s_read_only_agent_only_when_declared(tmp_path, monkeypatch):
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
     review = {"subagent_type": "general-purpose", "prompt": "kind: review, risk: medium, access: read\nReview the parser"}
     updated, record = decided(review)
-    assert updated["subagent_type"] == "general-purpose" and "agent" not in record  # nothing installed: unchanged
-    (tmp_path / "profile" / "agents").mkdir(parents=True)
-    (tmp_path / "profile" / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\n")
-    updated, record = decided(review)
-    assert updated["subagent_type"] == "router-reader" and "subagent_type" in record["set"]  # from `router install`
+    assert updated["subagent_type"] == "general-purpose" and "agent" not in record  # not from the plugin: unchanged
     root = tmp_path / "plugin"
     (root / PLUGIN_AGENT).parent.mkdir(parents=True)
     (root / PLUGIN_AGENT).write_text("---\nname: reader\n---\n")
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
-    updated, _ = decided(review)
-    assert updated["subagent_type"] == "model-router:reader"  # from the plugin
+    updated, record = decided(review)
+    assert updated["subagent_type"] == "model-router:reader" and "subagent_type" in record["set"]
     updated, record = decided({**review, "prompt": "kind: review\nReview the parser"})
     assert updated["subagent_type"] == "general-purpose" and "not declared" in record["lean"]  # no guessing
     updated, _ = decided({"subagent_type": "general-purpose", "prompt": "Implement the parser"})
     assert updated["subagent_type"] == "general-purpose"
-    write_config(lean=False)
-    updated, _ = decided(review)
-    assert updated["subagent_type"] == "general-purpose"  # `router config --lean off`
-    write_config(lean=True)
-    monkeypatch.setenv("MODEL_ROUTER_LEAN", "0")
-    assert decided(review)[0]["subagent_type"] == "general-purpose"
-
-
-def test_declarations_are_read_from_the_prompt_head_even_with_a_description(tmp_path, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
-    (tmp_path / "profile" / "agents").mkdir(parents=True)
-    (tmp_path / "profile" / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\n")
     updated, record = decided({"subagent_type": "general-purpose", "description": "Typos in docs",
                                "prompt": "kind: review, risk: medium\naccess: write\nReview the docs and their typos."})
     assert updated["subagent_type"] == "general-purpose" and record["lean"] == "declared access: write"
-    updated, record = decided({"subagent_type": "general-purpose", "description": "Docs",
-                               "prompt": "kind: review, risk: low, access: read\nReview the change to the docs."})
-    assert updated["subagent_type"] == "router-reader" and record["risk"] == "low"
-
-
-def test_a_read_only_agent_installed_in_the_project_is_found_from_the_event_s_cwd(tmp_path, monkeypatch):
-    from model_router.hook import decide
-
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "profile"))
-    repo = tmp_path / "repo"
-    (repo / ".claude" / "agents").mkdir(parents=True)
-    (repo / ".claude" / "agents" / "router-reader.md").write_text("---\nname: router-reader\n---\n")
-    review = {"subagent_type": "general-purpose", "prompt": "kind: review, access: read\nReview the parser"}
-    away, here = decide(review)[0], decide(review, cwd=str(repo))[0]
-    assert away is not None and away["subagent_type"] == "general-purpose"
-    assert here is not None and here["subagent_type"] == "router-reader"
+    write_config(lean=False)
+    updated, _ = decided(review)
+    assert updated["subagent_type"] == "general-purpose"  # `router config --lean off`

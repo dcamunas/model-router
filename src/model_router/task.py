@@ -5,7 +5,6 @@ the output can be checked by code (tests pass, JSON validates, a regex matches).
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -22,6 +21,7 @@ KINDS: tuple[str, ...] = (
 RISKS: tuple[str, ...] = ("low", "medium", "high", "critical")
 VERIFY_MODES: tuple[str, ...] = ("none", "light", "full")  # what the verifier can do
 VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge"})  # verdict sources that are evidence
+EXTERNAL_STOP = "external"  # the stop reason of an attempt whose answer was made outside the router (`router judge`)
 
 DEFAULT_MAX_TOKENS = 16_000  # equals client.NON_STREAMING_MAX_TOKENS, so the api backend never streams by default
 CHARS_PER_TOKEN = 4  # rough average for Spanish and English prose and code; planning only
@@ -72,13 +72,6 @@ class Task:
             raise ValueError("max_attempts must be at least 1")
         if self.budget_usd is not None and self.budget_usd <= 0:
             raise ValueError("budget_usd must be positive")
-
-    @property
-    def fingerprint(self) -> str:
-        """Return a stable 12-character id of what the task asks (kind, risk, prompt): the same task on another
-        day or under another strategy has the same fingerprint, so the ledger can compare them.
-        """
-        return hashlib.sha256(f"{self.kind}\n{self.risk}\n{self.prompt}".encode()).hexdigest()[:12]
 
     @property
     def estimated_input_tokens(self) -> int:

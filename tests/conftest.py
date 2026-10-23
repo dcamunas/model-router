@@ -2,9 +2,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _own_state_dir(tmp_path_factory, monkeypatch):
-    """Keep every test away from the machine's router state: its config, calibrations and ledger are not the suite's."""
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path_factory.mktemp("state")))
+def _own_profile(tmp_path_factory, monkeypatch):
+    """Keep every test away from the machine's Claude profile and router state: a fresh profile per test."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("profile")))
+
+
+@pytest.fixture
+def state():
+    """Return the router's state folder in the test's profile (`<profile>/model-router`), created."""
+    from model_router.paths import home
+
+    home().mkdir(parents=True, exist_ok=True)
+    return home()
 
 
 @pytest.fixture

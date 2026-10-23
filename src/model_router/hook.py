@@ -35,6 +35,7 @@ exits 0 silently.
 Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the decisions log
 (<profile>/model-router/hook.jsonl), the measurements and with them all learning; MODEL_ROUTER_HOOK_QUIET=1
 hides the one-line notices in the UI; MODEL_ROUTER_SHARE=0 keeps this installation out of shared counts.
+MODEL_ROUTER_CHILD=1 marks the sessions the router starts itself, where the hook never probes a limit.
 """
 
 from __future__ import annotations
@@ -50,9 +51,8 @@ from typing import Any  # Any: hook events and log records are decoded JSON
 from . import clock, floors, limits
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
-from .feedback import FeedbackStore
-from .paths import CHILD_ENV, HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, claude_profile, home, read_config
-from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
+from .paths import CHILD_ENV, HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home, read_config
+from .policy import VERIFY_BY_RISK, Policy
 from .projects import (
     combine,
     evidence,
@@ -74,8 +74,7 @@ from .task import Task
 
 ROUTED_SUBAGENTS = frozenset({"", "general-purpose", "claude"})
 PLUGIN_NAME = "model-router"
-PLUGIN_AGENT = Path("src") / "model_router" / "claude_code" / "agents" / "reader.md"  # inside the plugin's root
-PROFILE_AGENT = "router-reader"  # the name `router install` gives the copy in the profile's agents directory
+PLUGIN_AGENT = Path("agents") / "reader.md"  # inside the plugin's root
 PROMPT_HEAD_CHARS = 60
 TRANSCRIPT_TAIL_BYTES = 262_144  # enough for the last few assistant entries of a long session
 
@@ -143,15 +142,10 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     description = str(tool_input.get("description") or "")
     cls = classify_rules(f"{prompt}\n{description}")
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
-    feedback = FeedbackStore(home() / "feedback.json")
     project = project_of(cwd)
     raised = floors.apply(cls.risk, floors.head(prompt, description), floors=floors.load(project))
     risk = raised.risk
-    tuning = load_tuning(project)
-    try:
-        policy = Policy(cells=claude, feedback=feedback, tuning=tuning)
-    except ValueError:  # a judge setting this router cannot resolve: route anyway, `router doctor` reports it
-        policy = Policy(cells=claude, feedback=feedback, judge=parse_cell(DEFAULT_JUDGE), tuning=tuning)
+    policy = Policy(cells=claude, tuning=load_tuning(project))
     plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=risk))
     cell, cross = _cross_review(cls.kind, risk, worker_cell(plan.start, [c.model for c in claude]),
                                 chat_model=chat_model, policy=policy)
@@ -173,7 +167,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     if cross:
         record["cross"] = cross
     record.update(_notes(cls.risk, raised))
-    lean = lean_agent(cwd)
+    lean = lean_agent()
     safe, why = read_only(prompt, description)
     if lean is not None and safe:
         updated["subagent_type"] = lean
@@ -209,22 +203,14 @@ def _cross_review(kind: str, risk: str, cell: Cell, *, chat_model: str | None, p
     return other, f"{risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
 
 
-def lean_agent(cwd: str | None = None) -> str | None:
-    """Return the name of the read-only agent this installation has, or None (switched off, or not installed): the
-    plugin's own (`model-router:reader`, when the hook runs from the plugin), else the one `router install` copied
-    into the project (`<cwd>/.claude/agents`) or the profile (`router-reader`). MODEL_ROUTER_LEAN=0 or `router
-    config --lean off` turn it off.
+def lean_agent() -> str | None:
+    """Return the name of the plugin's read-only agent (`model-router:reader`), or None when the hook does not run
+    from the plugin or `router config --lean off` turned it off.
     """
-    if os.environ.get(LEAN_ENV) == "0" or read_config().get("lean") is False:
-        return None
     root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    if root and (Path(root) / PLUGIN_AGENT).is_file():
-        return f"{PLUGIN_NAME}:reader"
-    profile = claude_profile()
-    places = [Path(cwd) / ".claude" / "agents"] if cwd else []
-    if any((place / f"{PROFILE_AGENT}.md").is_file() for place in [*places, profile / "agents"]):
-        return PROFILE_AGENT
-    return None
+    if read_config().get("lean") is False or not root or not (Path(root) / PLUGIN_AGENT).is_file():
+        return None
+    return f"{PLUGIN_NAME}:reader"
 
 
 def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
@@ -313,7 +299,7 @@ def _share(event: dict[str, Any]) -> None:
 
 def start_in_force(tuning: dict[str, Any]) -> Callable[[str, str], Cell]:
     """Return a function giving the start cell the hook would use for a kind and risk with `tuning` applied."""
-    policy = Policy(cells=lattice(), feedback=FeedbackStore(home() / "feedback.json"), tuning=tuning)
+    policy = Policy(cells=lattice(), tuning=tuning)
     return lambda kind, risk: policy.plan(Task(prompt="x", kind=kind, risk=risk)).start
 
 

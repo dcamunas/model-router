@@ -28,6 +28,7 @@ def test_the_manifest_names_the_plugin_and_the_version_of_pyproject():
     assert plugin["name"] == "model-router" and plugin["version"] == VERSION
     skills = ROOT / plugin["skills"]
     assert plugin["skills"].startswith("./") and (skills / "router" / "SKILL.md").is_file()
+    assert [(ROOT / agent).is_file() for agent in plugin["agents"]] == [True]
     hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
     commands = [h["command"] for entries in hooks.values() for e in entries for h in e["hooks"]]
     assert all('"${CLAUDE_PLUGIN_ROOT}"/hooks/router-hook.sh' in c for c in commands)
@@ -38,7 +39,7 @@ def test_the_manifest_names_the_plugin_and_the_version_of_pyproject():
 
 def run_hook(data: Path, event: dict, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     base = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""),
-            "CLAUDE_PLUGIN_ROOT": str(ROOT), "CLAUDE_PLUGIN_DATA": str(data), "MODEL_ROUTER_HOME": str(data / "home")}
+            "CLAUDE_PLUGIN_ROOT": str(ROOT), "CLAUDE_PLUGIN_DATA": str(data), "CLAUDE_CONFIG_DIR": str(data / "profile")}
     return subprocess.run([str(SCRIPT), *args], input=json.dumps(event), text=True, capture_output=True,
                           env={**base, **(env or {})}, timeout=300)
 
@@ -73,7 +74,8 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     proc = run_hook(data, event)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "fable"
-    (data / "home" / "config.json").write_text(json.dumps({"models": ["haiku", "sonnet", "opus"]}))
+    (data / "profile" / "model-router").mkdir(parents=True, exist_ok=True)
+    (data / "profile" / "model-router" / "config.json").write_text(json.dumps({"models": ["haiku", "sonnet", "opus"]}))
     proc = run_hook(data, event)
     assert json.loads(proc.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "opus"  # no Fable here
     proc = run_hook(data, {"hook_event_name": "SessionStart"}, "--bootstrap")

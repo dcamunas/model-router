@@ -18,8 +18,8 @@
     "effort",
     "subagents"
   ],
-  "skills": "./src/model_router/claude_code",
+  "skills": "./skills",
   "agents": [
-    "./src/model_router/claude_code/agents/reader.md"
+    "./agents/reader.md"
   ]
 }

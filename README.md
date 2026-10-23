@@ -20,8 +20,9 @@ this repository ran on Opus for 36 turns and read 3.6M cached tokens: 1.43 USD o
 list price. model-router gives each subagent the model and effort its risk calls for, and learns per
 repository which starts fall short.
 
-Claude models only. Status: experimental. The start table is an assumption until you
-[calibrate it](docs/calibration.md) on your own tasks.
+Claude models only. Status: experimental. The start table is an assumption
+([what is assumed](docs/how-it-decides.md#what-is-assumed)); each repository corrects it with its own
+relaunches.
 
 ## Quick start
 
@@ -45,8 +46,7 @@ The kind is one of `classify`, `extract`, `summarize`, `search`, `chat`, `write`
 ([what each means](docs/how-it-decides.md#by-risk-at-a-glance)).
 
 The plugin brings the `router` command (stats, plans, limits, text-only tasks) to Claude Code's shell, and
-each Claude profile keeps its own state. For `router` in a terminal:
-`uv tool install git+https://github.com/dcamunas/model-router@v0.19.0`. Other setups are in
+each Claude profile keeps its own state. Teams, upgrades and the command in a terminal:
 [Install](docs/install.md).
 
 ## What you get
@@ -58,7 +58,7 @@ each Claude profile keeps its own state. For `router` in a terminal:
 - **[One setup for a team repository](docs/install.md#in-a-team-repository)**: the plugin and risk floors for all.
 - **[Team pooling, if you want it](docs/claude-code.md#shared-with-your-team-optional)**: weekly counts, no prompts.
 - **[Cheap text-only tasks](docs/cli.md)**: `router run` carries about 900 tokens of context, not Claude Code's 100K.
-- **[A cost for every solved task](docs/calibration.md)**, and a start table you can calibrate from it.
+- **[A cost for every solved task](docs/how-it-decides.md#6-ledger)** that `router run` and `router judge` handle.
 
 ## See it run
 
@@ -89,7 +89,7 @@ The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.
 
 | I want to… | Read |
 |---|---|
-| Install it without plugins, in one repository, or remove it | [Install](docs/install.md) |
+| Install, upgrade or remove it | [Install](docs/install.md) |
 | Set it up for a whole team in one repository | [In a team repository](docs/install.md#in-a-team-repository) |
 | Know what the plugin does to my subagents | [Inside Claude Code](docs/claude-code.md) |
 | Turn the hooks off, or keep subagents off the read-only agent | [Environment variables](docs/claude-code.md#environment-variables) |
@@ -97,7 +97,7 @@ The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.
 | Run tasks from the command line or from Python | [Command line and library](docs/cli.md) |
 | Use it with my Claude account, without an API key | [Without an API key](docs/cli.md#without-an-api-key-with-your-claude-account) |
 | Understand how the start cell, the ladder and the judges are chosen | [How it decides](docs/how-it-decides.md) |
-| Calibrate it on my own tasks, and see what is assumed | [Calibration and assumptions](docs/calibration.md) |
+| See what is assumed and what is measured | [What is assumed](docs/how-it-decides.md#what-is-assumed) |
 | Know what leaves my machine | [What leaves your machine](docs/privacy.md) |
 | See where the idea comes from and how it compares with learned routers | [Background](docs/background.md) |
 | See what changed in each version | [CHANGELOG](CHANGELOG.md) |
@@ -123,9 +123,8 @@ uv run pytest -q && uv run ruff check src tests && uv run pyright
 uv run docs/showcase/flow.py && uv run --with pillow docs/showcase/build.py   # rebuild the figures
 ```
 
-GitHub Actions runs the same checks on every push, checks that the skill ships inside the wheel and
-validates the plugin with the Claude Code CLI. Everything in the repository is in English; more in
-[Work on the repository](docs/install.md#work-on-the-repository).
+GitHub Actions runs the same checks on every push and validates the plugin with the Claude Code CLI.
+Everything in the repository is in English; more in [Work on the repository](docs/install.md#work-on-the-repository).
 
 ## Licence
 

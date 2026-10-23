@@ -97,7 +97,7 @@ key. The plugin brings the `router` command; until the first session has built i
    router judge "<the same subtask>" --kind <kind> --risk <risk> --cell <start cell> --answer result.md
    ```
 
-   It runs the plan's judge (light or full), records every verdict in the ledger for the scoreboard, prints
+   It runs the plan's judge (light or full), records every verdict in the ledger, prints
    the reasons and exits 1 on a fail. About 900 tokens of context per judge instead of a subagent.
 
    Launch judge subagents instead only when the verdict needs tools (run the tests, read the repo):
