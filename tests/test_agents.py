@@ -70,7 +70,7 @@ def test_between_measuring_and_lowering_the_advice_is_to_keep():
 def test_only_agents_fixed_by_hand_in_this_repository_are_advised():
     records = [_run(1), _run(2, agent="general-purpose"), _run(3, agent="workflow-subagent"),
                _run(4, agent="model-router:reader"), _run(5, agent="Explore"), _run(6, routed="haiku/low"),
-               {**_run(7), "project": "/other"}, {**_run(8), "model": "gpt-x"}]
+               {**_run(7), "project": "/other"}, {**_run(8), "model": "other-model"}]
     assert [(a.agent, a.runs) for a in agents.advise(records, REPO, cells=lattice())] == [("curator", 1)]
 
 

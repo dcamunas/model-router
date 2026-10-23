@@ -36,7 +36,7 @@ SPRINT_FRAME_MS, SPRINT_LAST_MS = 2600, 3800  # a sprint frame has a sentence an
 
 LIGHT, LIGHT2, DARK = "#f6f5f1", "#eceae4", "#1d2733"
 TEXT, SECONDARY, ACCENT, ACCENT2, LINE, MUTED = "#1f2328", "#5b6670", "#2b64a8", "#a35a1f", "#7d858e", "#c9c4b8"
-MODEL_COLOUR = {"haiku": "#8a9bb0", "sonnet": "#7b5ea7", "opus": DARK, "fable": ACCENT}  # as in the tribunal's figures
+MODEL_COLOUR = {"haiku": "#8a9bb0", "sonnet": "#7b5ea7", "opus": DARK, "fable": ACCENT}  # one colour per model, in every figure
 TITLE_FONT = "Georgia, 'Times New Roman', serif"
 BODY_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif"
 MONO_FONT = "Menlo, 'SF Mono', Consolas, monospace"

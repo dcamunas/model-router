@@ -42,7 +42,7 @@ def _fake_claude(tmp_path, output: str, *, sleep: float = 0) -> str:
     script = tmp_path / "claude"
     log = tmp_path / "claude.calls"
     script.write_text(f"""#!/bin/sh
-echo "$* CHILD=$MODEL_ROUTER_CHILD TRIBUNAL=$MODEL_TRIBUNAL" >> {log}
+echo "$* CHILD=$MODEL_ROUTER_CHILD" >> {log}
 cat >/dev/null
 cat <<'OUT'
 {output}
@@ -58,7 +58,7 @@ def test_a_real_probe_reads_the_exact_reset_and_runs_as_the_router_s_own_session
     probe = limits.probe("claude-fable-5-1", binary=fake)
     assert probe.status == "rejected" and probe.until == RESET and probe.window == "seven_day_overage_included"
     call = (tmp_path / "claude.calls").read_text()
-    assert "--model claude-fable-5-1" in call and "stream-json" in call and "CHILD=1 TRIBUNAL=0" in call
+    assert "--model claude-fable-5-1" in call and "stream-json" in call and "CHILD=1" in call
 
 
 def test_a_probe_cut_by_its_timeout_keeps_the_event_already_printed(home, tmp_path):
@@ -173,7 +173,7 @@ def test_router_run_learns_the_limit_of_the_model_its_message_names(home, tmp_pa
     client.config_dir, client.binary = tmp_path, _fake_claude(tmp_path, REJECTED)
     with pytest.raises(ClientUnavailableError, match="Fable limit"):
         client.to_completion({"is_error": True, "api_error_status": 429, "result": FABLE_MESSAGE},
-                             parse_cell("sonnet/low"), None, 0.5)  # the cell that failed is not the model named
+                             parse_cell("sonnet/low"), output_format=None, seconds=0.5)  # not the model named
     assert "--model claude-fable-5-1" in (tmp_path / "claude.calls").read_text()
     assert limits.active()["fable"].until == RESET
 

@@ -22,16 +22,16 @@ def _transcript(path, prompt, turns):
     return path
 
 
-def test_a_transcript_is_counted_once_per_message_with_its_peak_context_tools_and_time(tmp_path):
+def test_a_transcript_is_counted_once_per_message_with_its_peak_context_and_time(tmp_path):
     path = _transcript(tmp_path / "agent.jsonl", "Review the parser", [
         _turn("m1", cache_read=1000, cache_write=500, tools=2, at="10:00:05"),
         _turn("m2", cache_read=3000, cache_write=100, tools=1, at="10:01:05"),
         _turn("m3", cache_read=4000, cache_write=0, output=300, at="10:02:00"),
     ])
     u = read_transcript(path)
-    assert (u.turns, u.tool_calls, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens) == (3, 3, 8000, 600, 320)
+    assert (u.turns, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens) == (3, 8000, 600, 320)
     assert u.peak_context == 4002 and u.seconds == 120 and u.prompt == "Review the parser"
-    assert u.model == "claude-opus-5-5" and u.tokens == 6 + 320 + 8000 + 600
+    assert u.model == "claude-opus-5-5" and u.usage.total == 6 + 320 + 8000 + 600
     cost = u.cost()
     assert cost is not None and cost > 0
 
@@ -83,7 +83,7 @@ def test_record_without_a_known_model_has_no_cost():
     from model_router.subagents import SubagentUsage
 
     usage = SubagentUsage(model="some-new-model", turns=1, output_tokens=5)
-    assert record({"agent_type": "x"}, usage, None)["cost_usd"] is None
+    assert record({"agent_type": "x"}, usage, decision=None)["cost_usd"] is None
     assert decide({"subagent_type": "Explore", "prompt": "x"})[0] is None  # untouched agents are still measured later
 
 
@@ -118,7 +118,7 @@ def test_finalize_keeps_records_appended_meanwhile_survives_bad_ones_and_counts_
     append(log, {**base, "agent_id": "a1", "transcript": str(agent), "turns": 1, "cost_usd": 0.1})
     assert finalize(log, now=agent.stat().st_mtime + 60) == 3
     recs = load(log)
-    assert all(r["final"] for r in recs) and recs[2]["turns"] == 2 and recs[2]["context_cost_usd"] is not None
+    assert all(r["final"] for r in recs) and recs[2]["turns"] == 2 and recs[2]["cost_usd"] is not None
     append(log, {**base, "agent_id": "a1", "final": True, "turns": 5, "cost_usd": 1.0})  # resumed: a later record
     rows = summary_rows(load(log))
     assert rows[0][2] == 3  # three subagents, a1 once (its last record)
@@ -130,19 +130,20 @@ def test_an_old_config_naming_unknown_models_never_stops_the_router(tmp_path, mo
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     (tmp_path / "model-router").mkdir(exist_ok=True)
-    (tmp_path / "model-router" / "config.json").write_text(json.dumps({"judge": "gpt/high", "models": ["luna"]}))
+    (tmp_path / "model-router" / "config.json").write_text(json.dumps({"judge": "vendor/high", "models": ["vendor"]}))
     assert len(available_models()) == 4  # only unknown names listed: every Claude model instead of none
     assert main(["plan", "review the payment code", "--risk", "high"]) == 0
     out = capsys.readouterr().out
     assert "judge setting cannot be used" in out and "opus/xhigh instead" in out
 
 
-def test_load_recent_reads_only_the_end_and_skips_a_cut_line(tmp_path):
-    from model_router.subagents import load_recent
+def test_a_log_s_tail_is_read_without_the_line_cut_in_half(tmp_path):
+    from model_router.paths import read_jsonl
 
     log = tmp_path / "subagents.jsonl"
     log.write_text("".join(json.dumps({"agent_id": f"a{i}", "pad": "x" * 50}) + "\n" for i in range(1000)))
-    recent = load_recent(log, max_bytes=2000)
+    recent = read_jsonl(log, tail_bytes=2000)
     assert recent and recent[-1]["agent_id"] == "a999" and len(recent) < 40
     assert all("agent_id" in r for r in recent)  # the line cut in half at the start is not misread
-    assert load_recent(tmp_path / "missing.jsonl") == []
+    assert len(read_jsonl(log, tail_bytes=10**9)) == 1000  # a tail longer than the file: every line
+    assert read_jsonl(tmp_path / "missing.jsonl") == []

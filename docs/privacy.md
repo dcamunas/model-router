@@ -12,8 +12,7 @@ profiles on one machine share no decisions, measurements, limits or settings.
   usage limit, the StopFailure hook sends the word "ok" to that model through `claude -p`, on your
   account, to read the exact reset. It goes to `~/.claude/model-router/limits.json` with the window's use: times
   and numbers, no text. Every decision goes to
-  `~/.claude/model-router/hook.jsonl` with the first 60 characters of the subagent's prompt and a hash of
-  it; every measurement goes to `~/.claude/model-router/subagents.jsonl` with numbers, that hash, a
+  `~/.claude/model-router/hook.jsonl` with a hash of the subagent's prompt, never its text; every measurement goes to `~/.claude/model-router/subagents.jsonl` with numbers, that hash, a
   signature of sixteen numbers (no text) and the project's path, read from the transcript Claude Code
   already keeps on your disk. A project's tuning goes to `~/.claude/model-router/projects/`.
 - In a repository that shares counts, the hook adds weekly files to `.claude/model-router/` with counts

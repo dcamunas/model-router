@@ -215,7 +215,7 @@ class Router:
                 max_tokens = room
                 continue
             try:
-                verdict = self.verifier.verify(task, completion.text, plan.verify, cell)
+                verdict = self.verifier.verify(task, completion.text, mode=plan.verify, worker=cell)
             except ClientUnavailableError as exc:
                 attempts.append(replace(base, verdict_source="judge-error", reason=f"verifier unavailable: {exc}"))
                 answer, parsed, final = completion.text, completion.parsed, cell
@@ -251,7 +251,7 @@ class Router:
         base = Attempt(1, worker, Usage(), 0.0, 0.0, EXTERNAL_STOP, worker.model, None, refused=False, verdict=None,
                        verdict_source="", reason="")
         try:
-            verdict = self.verifier.verify(task, answer, mode, worker)
+            verdict = self.verifier.verify(task, answer, mode=mode, worker=worker)
         except ClientUnavailableError as exc:
             attempt = replace(base, verdict_source="judge-error", reason=f"verifier unavailable: {exc}")
             status = "error"

@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Any  # Any: Claude Code settings, decoded JSON
 
-from .paths import read_regular
+from .paths import read_regular, replace_file
 
 MARKETPLACE = "dcamunas"
 MARKETPLACE_REPO = "dcamunas/claude-plugins"
@@ -80,22 +79,13 @@ def enable(project: str) -> list[str]:
 
 def _write(path: Path, data: dict[str, Any]) -> None:
     """Replace the file in one step, so a teammate's session never reads half of it, keeping its permissions."""
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         mode = path.stat().st_mode & 0o777
     except OSError:  # a new file: what the umask gives an ordinary file
         umask = os.umask(0)
         os.umask(umask)
         mode = 0o666 & ~umask
-    descriptor, tmp = tempfile.mkstemp(dir=path.parent, prefix=".settings-", suffix=".json")
-    try:
-        Path(tmp).chmod(mode)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-        Path(tmp).replace(path)
-    except BaseException:  # an interrupt too: never leave a half-written temporary file next to the settings
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    replace_file(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", mode=mode)
 
 
 def enabled_in(project: str | None) -> bool:

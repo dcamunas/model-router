@@ -142,7 +142,7 @@ def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp
 
 def test_a_judge_setting_the_router_cannot_resolve_never_stops_the_routing(state):
     (state / "config.json").write_text(json.dumps({  # an older version's config: a judge and a model it does not know
-        "judge": "luna/high", "models": ["haiku", "sonnet", "opus", "fable", "luna"]}))
+        "judge": "vendor/high", "models": ["haiku", "sonnet", "opus", "fable", "vendor"]}))
     updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
     assert updated["model"] in ("opus", "fable") and record["cell"].split("/")[0] in ("opus", "fable")
 

@@ -119,7 +119,7 @@ The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.
 
 ```bash
 git clone https://github.com/dcamunas/model-router && cd model-router && uv sync
-uv run pytest -q && uv run ruff check src tests && uv run pyright
+uv run pytest -q && uv run ruff check src tests docs/showcase && uv run pyright
 uv run docs/showcase/flow.py && uv run --with pillow docs/showcase/build.py   # rebuild the figures
 ```
 

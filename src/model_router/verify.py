@@ -1,22 +1,25 @@
 """Verification by risk. Order of trust: the task's programmatic checker (free, authoritative when it fails),
 then one judge model with a structured verdict, in a fresh context. `light` uses the nearest other model at
 low effort; `full` uses the configured judge cell on another model than the worker, a blind cross-check.
-Every judge's verdict is kept, so the ledger can keep a scoreboard of whom a human corrects.
+Every judge's own verdict is kept in the ledger.
 
-`Verifier.ask` is the building block: one judge, one prompt, one verdict. Another package can compose more
-judges on it; the router itself asks one.
+`ask` is the building block: one judge, one prompt, one verdict. Another package can compose more judges on it;
+the router itself asks one.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol  # Any: verdicts are written out as JSON
+from typing import TYPE_CHECKING, Any  # Any: verdicts are written out as JSON
 
 from pydantic import BaseModel, Field
 
 from .catalog import Cell, Usage, cost_usd
 from .client import ClaudeClient
 from .task import Task
+
+if TYPE_CHECKING:
+    from .policy import Policy
 
 
 class Verdict(BaseModel):
@@ -42,6 +45,7 @@ JUDGE_SYSTEM = (
 MAX_ANSWER_CHARS = 60_000
 JUDGE_MAX_TOKENS = 8000  # thinking counts against max_tokens; a verdict is short but the reasoning is not
 MAX_ISSUES_SHOWN = 3  # issues appended to a failed verdict's reason
+MIN_CONFIDENCE = 0.5  # a pass the judge is less sure of than this is a fail
 
 
 def judge_prompt(task: Task, answer: str) -> str:
@@ -89,25 +93,14 @@ class VerifyResult:
     verdicts: list[JudgeVerdict] = field(default_factory=list)
 
 
-class JudgePolicy(Protocol):
-    """What the Verifier needs from a policy: the judges of a worker's answer."""
-
-    def judges_for(self, worker: Cell, mode: str) -> list[Cell]: ...
-
-
 class Verifier:
-    """Verifies answers by mode: the task's checker first, then the judge cell the policy chooses; a judge verdict
-    under `min_confidence` fails.
-    """
+    """Verifies answers by mode: the task's checker first, then the judge cell the policy chooses."""
 
-    def __init__(self, client: ClaudeClient, policy: JudgePolicy, *, min_confidence: float = 0.5,
-                 judge_system: str = JUDGE_SYSTEM) -> None:
+    def __init__(self, client: ClaudeClient, policy: Policy) -> None:
         self.client = client
         self.policy = policy
-        self.min_confidence = min_confidence
-        self.judge_system = judge_system
 
-    def verify(self, task: Task, answer: str, mode: str, worker: Cell) -> VerifyResult:
+    def verify(self, task: Task, answer: str, *, mode: str, worker: Cell) -> VerifyResult:
         """Verify `answer` to `task` in `mode` (none, light, full); `worker` is the cell that answered, so the judge
         is chosen relative to it.
         """
@@ -122,31 +115,29 @@ class Verifier:
         judges = self.policy.judges_for(worker, mode)
         if not judges:
             return VerifyResult(True, "none", "no verifier cell")
-        return self.ask(task, answer, judges[0])
+        return ask(self.client, task, answer, cell=judges[0])
 
-    def ask(self, task: Task, answer: str, cell: Cell, *, prompt: str | None = None, system: str | None = None,
-            role: str = "judge") -> VerifyResult:
-        """Ask one judge, `cell`, for a structured verdict on `answer` (with `prompt` and `system` in place of the
-        judge prompt and the judge instructions when given) and return it as a result of source `judge`, or
-        `judge-error` when no verdict came back.
 
-        Raises:
-            ClientUnavailableError: the judge could not be reached at all.
-        """
-        completion = self.client.complete(
-            cell, prompt=prompt or judge_prompt(task, answer), system=system or self.judge_system,
-            max_tokens=JUDGE_MAX_TOKENS,
-            output_format=Verdict,
-        )
-        cost = cost_usd(cell.model, completion.usage)
-        verdict = completion.parsed
-        if completion.refused or not isinstance(verdict, Verdict):
-            why = f"refused ({completion.refusal_category})" if completion.refused else "no structured verdict"
-            return VerifyResult(False, "judge-error", f"verifier returned no verdict: {why}", cell, completion.usage, cost,
-                                judges=[cell])
-        confidence = max(0.0, min(1.0, verdict.confidence))
-        passed = verdict.passed and confidence >= self.min_confidence
-        issues = "; ".join(verdict.issues[:MAX_ISSUES_SHOWN])
-        reason = verdict.reason if passed or not verdict.issues else f"{verdict.reason} | {issues}"
-        own = JudgeVerdict(cell, passed, reason, role, confidence)
-        return VerifyResult(passed, "judge", reason, cell, completion.usage, cost, confidence, judges=[cell], verdicts=[own])
+def ask(client: ClaudeClient, task: Task, answer: str, *, cell: Cell, prompt: str | None = None,
+        system: str = JUDGE_SYSTEM, role: str = "judge", min_confidence: float = MIN_CONFIDENCE) -> VerifyResult:
+    """Ask one judge, `cell`, for a structured verdict on `answer` (`prompt` in place of the judge prompt when given)
+    and return it as a result of source `judge`, or `judge-error` when no verdict came back. A pass under
+    `min_confidence` is a fail.
+
+    Raises:
+        ClientUnavailableError: the judge could not be reached at all.
+    """
+    completion = client.complete(cell, prompt=prompt or judge_prompt(task, answer), system=system,
+                                 max_tokens=JUDGE_MAX_TOKENS, output_format=Verdict)
+    cost = cost_usd(cell.model, completion.usage)
+    verdict = completion.parsed
+    if completion.refused or not isinstance(verdict, Verdict):
+        why = f"refused ({completion.refusal_category})" if completion.refused else "no structured verdict"
+        return VerifyResult(False, "judge-error", f"verifier returned no verdict: {why}", cell, completion.usage, cost,
+                            judges=[cell])
+    confidence = max(0.0, min(1.0, verdict.confidence))
+    passed = verdict.passed and confidence >= min_confidence
+    issues = "; ".join(verdict.issues[:MAX_ISSUES_SHOWN])
+    reason = verdict.reason if passed or not verdict.issues else f"{verdict.reason} | {issues}"
+    own = JudgeVerdict(cell, passed, reason, role, confidence)
+    return VerifyResult(passed, "judge", reason, cell, completion.usage, cost, confidence, judges=[cell], verdicts=[own])

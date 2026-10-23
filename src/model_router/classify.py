@@ -29,6 +29,9 @@ HIGH_RISK = r"\b(producci[oó]n|production|dinero|money|pago\w*|payment\w*|factu
 # user writes, never the material pasted below): `risk: high`, `kind=review`, `riesgo: alto`, `tipo: code`. The
 # value is a whole token (`risk: high-level` and `?risk=low` are not declarations). The first one wins.
 DECLARATION_LINES = 2
+SHORT_QUESTION_CHARS = 200  # a question this short with no other signal is chat
+CHEAP_PROMPT_CHARS = 400  # a cheap kind of task this short is low risk unless it says otherwise
+CHEAP_KINDS = frozenset({"classify", "summarize", "chat"})
 SPANISH_RISK = {"bajo": "low", "medio": "medium", "alto": "high", "crítico": "critical", "critico": "critical"}
 _RISK_VALUES = "|".join(list(RISKS) + list(SPANISH_RISK))
 _KIND_VALUES = "|".join(k for k in KINDS if k != "unknown")
@@ -54,8 +57,7 @@ def declared_access(prompt: str) -> str | None:
     """Return the access the head of the text declares (`access: read` or `access: write`, also `acceso: lectura`
     or `escritura`), as `read` or `write`, or None.
     """
-    head = "\n".join([line for line in prompt.splitlines() if line.strip()][:DECLARATION_LINES])
-    m = DECLARED_ACCESS.search(head)
+    m = DECLARED_ACCESS.search(_head(prompt))
     if not m:
         return None
     return "write" if m.group(1).lower() in ("write", "escritura") else "read"
@@ -65,9 +67,9 @@ def read_only(prompt: str, description: str = "") -> tuple[bool, str]:
     """Say whether a subagent may go to the read-only agent, and why. Only a declaration decides: `access: read`
     (or `acceso: lectura`) on the prompt's first non-empty line, a line made of declarations only (`kind: review,
     risk: low, access: read`). A sentence that happens to end in "access: read", material pasted below, or the
-    Agent tool's description never count; `access: write` anywhere in the prompt's
-    head or the description keeps the general agent. Guessing from the wording is not safe: a test of 71
-    realistic write requests found half of them phrased like reading work.
+    Agent tool's description never count; `access: write` in the prompt's head or the description keeps the general
+    agent. The wording is never enough: write requests are often phrased like reading work ("find where the
+    timeout is set and set it to 30").
     """
     if declared_access(description) == "write" or declared_access(prompt) == "write":
         return False, "declared access: write"
@@ -82,11 +84,16 @@ def declared(prompt: str) -> tuple[str | None, str | None]:
     `riesgo: alto`), None for each one it does not. Only the first DECLARATION_LINES non-empty lines count,
     so a declaration quoted in the material (a URL, a pasted report, an eval file) never sets the risk.
     """
-    head = "\n".join([line for line in prompt.splitlines() if line.strip()][:DECLARATION_LINES])
+    head = _head(prompt)
     kind = DECLARED_KIND.search(head)
     risk = DECLARED_RISK.search(head)
     risk_value = risk.group(1).lower() if risk else None
     return (kind.group(1).lower() if kind else None), (SPANISH_RISK.get(risk_value, risk_value) if risk_value else None)
+
+
+def _head(prompt: str) -> str:
+    """Return the first DECLARATION_LINES non-empty lines of `prompt`, where a declaration counts."""
+    return "\n".join([line for line in prompt.splitlines() if line.strip()][:DECLARATION_LINES])
 
 
 def classify_rules(prompt: str) -> Classification:
@@ -104,12 +111,12 @@ def classify_rules(prompt: str) -> Classification:
             if m:
                 kind, why = candidate, f"rule '{m.group(0)}'"
                 break
-        if kind == "unknown" and len(prompt) < 200 and prompt.rstrip().endswith("?"):
+        if kind == "unknown" and len(prompt) < SHORT_QUESTION_CHARS and prompt.rstrip().endswith("?"):
             kind, why = "chat", "short question"
     if risk is None:
         if re.search(HIGH_RISK, text):
             risk, risk_why = "high", "high-risk keyword"
-        elif kind in ("classify", "summarize", "chat") and len(prompt) < 400:
+        elif kind in CHEAP_KINDS and len(prompt) < CHEAP_PROMPT_CHARS:
             risk, risk_why = "low", "cheap kind, short prompt"
         else:
             risk, risk_why = "medium", "default"

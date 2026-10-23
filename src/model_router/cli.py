@@ -18,10 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
-from . import agents, floors, shared, team
-from ._fmt import money, table
+from . import agents, clock, floors, limits, projects, shared, team
 from .catalog import (
     MODELS,
+    PLAN_INPUT_TOKENS,
+    PLAN_OUTPUT_TOKENS_AT_HIGH,
     PRICES_AS_OF,
     SHORT_TO_ID,
     UnknownModelError,
@@ -32,9 +33,12 @@ from .catalog import (
     unknown_listed,
 )
 from .classify import Classification, classify_rules
-from .client import ClaudeClient, ClientUnavailableError, Completion
+from .cli_client import CliClient
+from .client import ClaudeClient, ClientUnavailableError, Completion, LiveClient
+from .fmt import money, table
+from .hook import start_in_force
 from .ledger import Ledger, summarize
-from .paths import MAIN_LEDGER, claude_profile, config_path, home, read_config, write_config
+from .paths import DECISION_LOG, MAIN_LEDGER, claude_profile, config_path, home, read_config, read_jsonl, write_config
 from .policy import DEFAULT_JUDGE, FLOOR, Policy, default_judge
 from .runner import Router, TaskResult
 from .subagents import LOG_FILE as SUBAGENT_LOG
@@ -51,6 +55,14 @@ REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it
 MIN_REASON_CHARS = 16
 DECLARED_ONLY_PROMPT = "(kind and risk declared, no text)"  # what `router plan` plans when it is given no text
 CLAUDE_VERSION_SECONDS = 20  # `claude --version` answers in well under a second; this only guards a hung binary
+MINUTE_CHARS = 16  # an ISO moment cut to the minute: 2026-10-23T12:13
+CHANGES_SHOWN = 5  # the last changes of a project's tuning `router project` prints
+ANSWER_SHOWN_CHARS = 20  # how much of the live check's answer doctor prints
+
+
+def _here() -> str | None:
+    """Return the git repository the command runs in, or None outside one."""
+    return projects.project_of(str(Path.cwd()))
 
 
 def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True, with_verify: bool = True) -> None:
@@ -90,10 +102,8 @@ def _task_from(args: argparse.Namespace, prompt: str) -> tuple[Task, Classificat
         cls = classify_rules(prompt)
         kind = kind or cls.kind
         risk = risk or cls.risk
-    from .projects import project_of
-
     if prompt != DECLARED_ONLY_PROMPT:
-        raised = floors.apply(risk, floors.head(prompt), floors=floors.load(project_of(str(Path.cwd()))))
+        raised = floors.apply(risk, floors.head(prompt), floors=floors.load(_here()))
         if raised.rule is not None:
             print(f"risk raised to {raised.risk} by this repository's floor: {raised.rule.label}", file=sys.stderr)
         for label in raised.unsearched:
@@ -115,9 +125,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     declared_only = args.kind is not None and args.risk is not None and not args.file and not args.prompt
     prompt = DECLARED_ONLY_PROMPT if declared_only else _prompt_from(args)
     task, cls = _task_from(args, prompt)
-    from .projects import load_tuning, project_of
-
-    tuning = load_tuning(project_of(str(Path.cwd())))  # what the hook would start a subagent on, here
+    tuning = projects.load_tuning(_here())  # what the hook would start a subagent on, here
     policy = Policy(tuning=tuning)
     plan = policy.plan(task)
     if args.claude_code:
@@ -175,11 +183,7 @@ def _live_client(args: argparse.Namespace) -> ClaudeClient:
     if backend == "auto":
         backend = "api" if os.environ.get("ANTHROPIC_API_KEY") else "cli"
     if backend == "api":
-        from .client import LiveClient
-
         return LiveClient(server_fallbacks=not args.no_fallbacks)
-    from .cli_client import CliClient
-
     return CliClient()
 
 
@@ -232,7 +236,7 @@ def _cmd_stats(args: argparse.Namespace) -> int:
         print(f"no tasks in {ledger.path}")
     else:
         print(summarize(records).text())
-    hook_rows = _hook_decisions(home() / "hook.jsonl")
+    hook_rows = _hook_decisions(home() / DECISION_LOG)
     if hook_rows:
         print("\nClaude Code hook decisions (routed subagents)")
         print(table(["cell", "kind", "risk", "times"], hook_rows))
@@ -248,8 +252,6 @@ def _cmd_stats(args: argparse.Namespace) -> int:
 
 
 def _cmd_project(args: argparse.Namespace) -> int:
-    from . import projects
-
     where = args.path or Path.cwd()
     project = projects.project_of(str(where.expanduser()))
     if project is None:
@@ -281,8 +283,6 @@ def _cmd_project(args: argparse.Namespace) -> int:
 
 
 def _cmd_limits(args: argparse.Namespace) -> int:
-    from . import limits
-
     if args.check is not None:
         held = [n for n in limits.active() if n != limits.ALL_MODELS and n in SHORT_TO_ID]
         names = args.check or sorted({"haiku", *held})
@@ -311,15 +311,11 @@ def _cmd_limits(args: argparse.Namespace) -> int:
 
 
 def _local(moment: object) -> str:
-    from . import clock
-
     parsed = clock.parse_moment(moment) if moment else None
     return clock.local(parsed) if parsed else "?"
 
 
 def _cmd_agents(args: argparse.Namespace) -> int:
-    from . import projects
-
     where = args.path or Path.cwd()
     project = projects.project_of(str(where.expanduser()))
     if project is None:
@@ -396,7 +392,7 @@ def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
         raise SystemExit(f"{folder} cannot be used for shared counts because {shared.SHARE_ENV}=0 keeps this "
                          "installation out. Unset it and run `router project --share` again")
     shared.prune(project)
-    written = shared.write_own(project, records, decision_log=home() / "hook.jsonl")
+    written = shared.write_own(project, records, decision_log=home() / DECISION_LOG)
     print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
           + (f" (added {len(written)} week file(s))" if written else
              " (a week is added a day after it closes, if the router routed subagents in it)"))
@@ -404,16 +400,14 @@ def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
 
 def _project_evidence(project: str, records: list[dict[str, Any]], *, since: str | None) -> _Evidence:
     """Return a project's evidence since `since`: this machine's and, when the repository shares, the team's."""
-    from . import projects
-
-    mine = projects.evidence(project, records, relaunched=projects.relaunched_ids(home() / "hook.jsonl"), since=since)
+    mine = projects.evidence(project, records, relaunched=projects.relaunched_ids(home() / DECISION_LOG), since=since)
     others, installs = shared.pooled(project, since=since)
     return _Evidence(mine=mine, others=others, both=projects.combine(mine, others), installs=installs)
 
 
 def _print_evidence(project: str, evidence: _Evidence, *, since: str | None) -> None:
     """Print where a project's evidence comes from and its counts per kind, risk and start cell."""
-    print(f"project {project}" + (f" (evidence since {since[:16]})" if since else ""))
+    print(f"project {project}" + (f" (evidence since {since[:MINUTE_CHARS]})" if since else ""))
     if shared.sharing(project):
         print(f"shared counts: on, {evidence.installs} other installation(s) with evidence in "
               f"{shared.shared_dir(project)}")
@@ -428,16 +422,14 @@ def _print_evidence(project: str, evidence: _Evidence, *, since: str | None) -> 
 
 def _print_tuning(project: str, tuning: dict[str, Any]) -> None:
     """Print a project's tuning in force and its last changes."""
-    from . import projects
-
     tuned = [[kind, risk, entry["cell"], entry["base"]] for kind, row in sorted(tuning.get("start", {}).items())
              for risk, entry in sorted(row.items())]
     if not tuned:
         return
     print(f"\ntuning in force ({projects.tuning_path(project)})")
     print(table(["kind", "risk", "starts on", "instead of"], tuned))
-    for change in [change for change in tuning.get("changes", []) if change.get("kind")][-5:]:
-        print(f"  {change['at'][:16]} {change['what']} {change['kind']} ({change['risk']}) from {change['from']} "
+    for change in [change for change in tuning.get("changes", []) if change.get("kind")][-CHANGES_SHOWN:]:
+        print(f"  {change['at'][:MINUTE_CHARS]} {change['what']} {change['kind']} ({change['risk']}) from {change['from']} "
               f"to {change['to']}, {change['relaunched']} of {change['n']} relaunched")
 
 
@@ -447,7 +439,7 @@ def _print_floors(project: str) -> None:
     if found.path is None:
         return
     hits: dict[str, int] = {}
-    for record in _jsonl(home() / "hook.jsonl"):
+    for record in read_jsonl(home() / DECISION_LOG):
         if record.get("project") == project and record.get("floor_match"):
             hits[str(record["floor_match"])] = hits.get(str(record["floor_match"]), 0) + 1
     print(f"\nrisk floors ({found.path})")
@@ -462,9 +454,7 @@ def _team_check(profile: Path) -> tuple[Path | None, tuple[bool, str] | None]:
     """Check a repository that turns the plugin on for its team (`router project --team`): is it installed in this
     profile? Return the repository's settings when it is (the plugin is on through them), and the check.
     """
-    from .projects import project_of
-
-    project = project_of(str(Path.cwd()))
+    project = _here()
     if project is None or not team.enabled_in(project):
         return None, None
     settings = team.settings_path(project)
@@ -476,8 +466,6 @@ def _team_check(profile: Path) -> tuple[Path | None, tuple[bool, str] | None]:
 
 def _limits_checks() -> list[tuple[bool, str]]:
     """Report the models over their usage limit and until when; informative, so never a failure."""
-    from . import limits
-
     return [(True, f"usage limit: {'every model' if name == limits.ALL_MODELS else name} until {limit.when()} "
                    f"({limit.window}); `router limits` for the windows")
             for name, limit in sorted(limits.active().items())]
@@ -485,9 +473,7 @@ def _limits_checks() -> list[tuple[bool, str]]:
 
 def _floors_check() -> tuple[bool, str] | None:
     """Check the floors of the repository the command runs in, when it has a floors file."""
-    from .projects import project_of
-
-    found = floors.load(project_of(str(Path.cwd())))
+    found = floors.load(_here())
     if found.path is None:
         return None
     if found.problems:
@@ -499,9 +485,6 @@ def _proposals(project: str, tuning: dict[str, Any], *, evidence: _Evidence) -> 
     """Return the changes the evidence supports that wait for a hand: raises on other installations' counts alone,
     and cheaper starts.
     """
-    from . import projects
-    from .hook import start_in_force
-
     current = start_in_force(tuning)
     return (projects.team_raises(evidence.both, current, local=evidence.mine)
             + projects.propose_lower(project, evidence.both, floors=FLOOR, current=current))
@@ -509,8 +492,6 @@ def _proposals(project: str, tuning: dict[str, Any], *, evidence: _Evidence) -> 
 
 def _print_proposals(proposals: list[Change]) -> None:
     """Print the changes that wait for a hand, if there are any."""
-    from . import projects
-
     if not proposals:
         return
     print("\nchanges the evidence supports, not applied (raises from other installations' counts alone, "
@@ -520,24 +501,10 @@ def _print_proposals(proposals: list[Change]) -> None:
               f"{change['relaunched']} of {change['n']} relaunched")
 
 
-def _jsonl(path: Path) -> list[dict[str, Any]]:
-    """Return the JSON objects of a log, one per line; a line cut short by two sessions writing at once is skipped."""
-    if not path.exists():
-        return []
-    out = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            record = json.loads(line) if line.strip() else None
-        except ValueError:
-            continue
-        if isinstance(record, dict):
-            out.append(record)
-    return out
-
-
 def _hook_decisions(path: Path) -> list[list[Any]]:
+    """Return the hook's decisions in the log at `path` counted per cell, kind and risk, the most frequent first."""
     counts: dict[tuple[str, str, str], int] = {}
-    for r in _jsonl(path):
+    for r in read_jsonl(path):
         key = (r.get("cell", "?"), r.get("kind", "?"), r.get("risk", "?"))
         counts[key] = counts.get(key, 0) + 1
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
@@ -605,8 +572,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     """Check that everything is in place: claude, the plugin, settings, limits, floors and state; `--live` adds
     one real Haiku call. Print one line per check and return 1 when any failed.
     """
-    from .cli_client import CliClient
-
     profile = claude_profile()
     claude = _claude_check()
     checks = [claude, (profile.is_dir(), f"Claude profile: {profile}" + ("" if profile.is_dir() else " DOES NOT EXIST"))]
@@ -621,7 +586,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             checks.append(team_check)
         checks += _profile_checks(profile, enabled_by=enabled_by)
     ledger_n = len(Ledger(home() / MAIN_LEDGER).tasks())
-    hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
+    hook_n = sum(n for *_, n in _hook_decisions(home() / DECISION_LOG))
     checks.append((True, f"state in {home()}: {ledger_n} tasks in the ledger, {hook_n} hook decisions"))
     if args.live and claude[0]:
         checks.append(_live_check("claude", lambda: CliClient().complete(
@@ -637,14 +602,15 @@ def _live_check(name: str, call: Callable[[], Completion]) -> tuple[bool, str]:
         c = call()
     except ClientUnavailableError as exc:
         return False, f"live call ({name}): {exc}"
-    return True, f"live call ({name}): {c.model} answered {c.text.strip()[:20]!r} in {c.seconds:.1f}s, {c.usage.total} tokens"
+    answered = c.text.strip()[:ANSWER_SHOWN_CHARS]
+    return True, f"live call ({name}): {c.model} answered {answered!r} in {c.seconds:.1f}s, {c.usage.total} tokens"
 
 
 def _cmd_cells(_args: argparse.Namespace) -> int:
     rows = [[c.label, c.tier, f"{c.capability:.2f}", money(c.expected_cost()), c.spec.input, c.spec.output] for c in lattice()]
     print(table(["cell", "tier", "capability*", "ref. cost", "$/M in", "$/M out"], rows))
-    print(f"\n* assumed capability (catalog.py), not measured · ref. cost = 2,000 tokens in, 1,500 out at effort high"
-          f" · prices {PRICES_AS_OF}")
+    print(f"\n* assumed capability (catalog.py), not measured · ref. cost = {PLAN_INPUT_TOKENS:,} tokens in, "
+          f"{PLAN_OUTPUT_TOKENS_AT_HIGH:,} out at effort high · prices {PRICES_AS_OF}")
     off = [spec.short for m, spec in MODELS.items() if spec.claude and m not in configured_models()]
     if off:
         print(f"not in this installation: {', '.join(off)} (`router config --models`)")

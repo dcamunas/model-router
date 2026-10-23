@@ -7,10 +7,10 @@ description: Verify and escalate subagent work by risk with the model router (`r
 
 What already happens on its own: a `PreToolUse` hook on the Agent tool sets `model` and `effort`
 on every general-purpose subagent you launch without `model`, from the kind and the risk of the
-task. Declare both on the first line of the subagent's prompt, as `kind: review,
-risk: high` (a value ends the line or is followed by a comma or a full stop; only the first two lines
-count, so material pasted below never sets the risk); a declared value beats what the hook infers from the text, and `critical` is never
-inferred, only declared. The risk is the damage a wrong result does (low: you read it and can redo
+task. Declare both on the first line of the subagent's prompt, as `kind: review, risk: high`. A value
+ends the line or is followed by a comma or a full stop, and only the first two lines count, so material
+pasted below never sets the risk. A declared value beats what the hook infers from the text, and
+`critical` is never inferred, only declared. The risk is the damage a wrong result does (low: you read it and can redo
 it; medium: used without a second read; high: money, customers, production, legal, deletions,
 publishing; critical: high and hard to detect), and only you know what the result is for.
 
@@ -116,10 +116,10 @@ key. The plugin brings the `router` command; until the first session has built i
 You, the main chat, have no automatic verifier or escalation: no hook can change your model. When
 the design is yours and it touches production, money, customers or deletions:
 
-1. Launch a general-purpose subagent **without `model`** whose prompt starts with "Review" and says
-   it is critical, with the brief, the full design and the request for `passed / reason / issues`.
-2. The hook classifies it as review/critical and sends it to a model other than yours (chat on Opus,
-   review on fable/low). You will see "cross-checked against the chat" in the notice.
+1. Launch a general-purpose subagent **without `model`** whose first line is `kind: review, risk: critical`,
+   with the brief, the full design and the request for `passed / reason / issues`.
+2. The hook sends it to a model other than yours (for example, with the chat on Opus, the review runs on
+   fable/low). You will see "cross-checked against the chat" in the notice.
 3. If it fails, fix the design and repeat once; if it fails again, tell the user before running
    anything.
 

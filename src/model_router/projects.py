@@ -15,7 +15,7 @@ was last reset or applied by hand. From them the start cell of a kind and risk m
 own: up one step, when it keeps failing (MIN_N launches, MIN_FAILS relaunched, at least RAISE_RATE) with at least
 one relaunch on this machine (a raise on other installations' counts alone is only proposed). Moving down
 is only proposed, after DOWN_N launches with none relaunched, to the cell it was raised from or to one at least
-LOWER_SAVING cheaper, and applied by hand (`router project --apply`). A tuned cell remembers the cell it
+MIN_SAVING cheaper, and applied by hand (`router project --apply`). A tuned cell remembers the cell it
 replaced and is ignored when the table no longer gives that cell. The risk floors always
 hold. Tunings live in `<profile>/model-router/projects/`, never in the repository.
 """
@@ -34,19 +34,22 @@ from pathlib import Path
 from typing import Any, TypedDict  # Any: decoded JSON (subagent records, tunings, the decision log)
 
 from . import clock
-from .catalog import Cell, UnknownModelError, lattice, parse_cell, step_up
+from .catalog import MIN_SAVING, Cell, UnknownModelError, lattice, parse_cell, step_up
 from .classify import DECLARATION_LINE
-from .paths import home, locked
+from .paths import home, locked, read_json, read_jsonl, replace_file
 
 SIG_SIZE = 16
 SHINGLE_WORDS = 4
 SIGNATURE_HASH_BYTES = 8
 ALIKE = 0.6  # share of matching signature slots from which two prompts are the same task
 RELAUNCH_WINDOW = timedelta(minutes=30)  # a relaunch comes soon after the first one finished
-MIN_N, MIN_FAILS, RAISE_RATE = 6, 2, 0.30
+# A start cell is failing, and goes one step up, after MIN_N launches with MIN_FAILS relaunched, RAISE_RATE of them
+# at least; it is proposed one step down after DOWN_N launches with none relaunched.
+MIN_N = 6
+MIN_FAILS = 2
+RAISE_RATE = 0.30
 DOWN_N = 10
 WINDOW = timedelta(weeks=13)  # evidence older than this says little about the models of today
-LOWER_SAVING = 0.20  # a proposed cheaper start must cost at least this much less, unless it is the cell raised from
 PROJECTS_DIR = "projects"
 TUNING_HASH_CHARS = 12  # enough to tell apart two repositories with the same folder name
 SALT_FILE = "signature.salt"
@@ -56,7 +59,8 @@ SALT_ATTEMPTS = 3  # enough for one lost race with another hook and one damaged 
 
 Bucket = tuple[str, str, str]  # (kind, risk, start cell)
 Counts = dict[Bucket, dict[str, int]]  # per bucket, {"n": launches, "fails": relaunched higher}
-# one move of a start cell, as `router project` shows it and the tuning file keeps it
+# One move of a start cell, as `router project` shows it and the tuning file keeps it. The functional form because
+# `from` is a Python keyword.
 Change = TypedDict("Change", {"at": str, "what": str, "kind": str, "risk": str, "from": str, "to": str, "n": int,
                               "relaunched": int})
 
@@ -195,40 +199,10 @@ def find_relaunch(records: list[dict[str, Any]], session: str | None, *, prompt_
 
 def relaunched_ids(decision_log: Path) -> set[str]:
     """Return the agent ids the hook's decisions log marks as relaunched higher."""
-    try:
-        lines = decision_log.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return set()
-    out = set()
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(entry, dict) and entry.get("relaunch_of"):
-            out.add(str(entry["relaunch_of"]))
-    return out
+    return {str(entry["relaunch_of"]) for entry in read_jsonl(decision_log) if entry.get("relaunch_of")}
 
 
 # ---- weeks -------------------------------------------------------------------------------------------------------
-
-
-def week_of(moment: datetime) -> str:
-    """Return the ISO week of a moment, as `2026-W42`."""
-    year, week, _ = moment.astimezone(UTC).isocalendar()
-    return f"{year}-W{week:02d}"
-
-
-def week_start(label: str) -> datetime | None:
-    """Return the Monday 00:00 UTC a week label (`2026-W42`) starts on, or None for a bad label."""
-    match = re.fullmatch(r"(\d{4})-?W(\d{2})", label)
-    if not match:
-        return None
-    try:
-        day = date.fromisocalendar(int(match[1]), int(match[2]), 1)
-    except ValueError:
-        return None
-    return datetime(day.year, day.month, day.day, tzinfo=UTC)
 
 
 def window_start(now: datetime | None = None) -> datetime:
@@ -298,11 +272,8 @@ def load_tuning(project: str | None) -> dict[str, Any]:
     """
     if not project:
         return {}
-    try:
-        data = json.loads(tuning_path(project).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(data, dict):
+    data = read_json(tuning_path(project))
+    if not data:
         return {}
     start: dict[str, dict[str, dict[str, str]]] = {}
     raw = data.get("start")
@@ -327,10 +298,7 @@ def update_tuning(project: str, change: Callable[[dict[str, Any]], None]) -> Pat
         tuning = load_tuning(project) or {"start": {}, "changes": []}
         change(tuning)
         tuning.update(name=Path(project).name, project=project)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=path.name, suffix=".tmp",
-                                         delete=False) as temporary:
-            temporary.write(json.dumps(tuning, indent=1, ensure_ascii=False) + "\n")
-        Path(temporary.name).replace(path)
+        replace_file(path, json.dumps(tuning, indent=1, ensure_ascii=False) + "\n")
     return path
 
 
@@ -385,7 +353,7 @@ def propose_lower(project: str, counts: Counts, *, floors: dict[str, str],
                   current: Callable[[str, str], Cell]) -> list[Change]:
     """Return the cheaper starts the evidence supports, without applying them: for the cell in force of a (kind,
     risk) with DOWN_N launches or more and none relaunched, the cell it was raised from (when the last change
-    there was a raise), else the next one down the ladder if it costs at least LOWER_SAVING less; never below the
+    there was a raise), else the next one down the ladder if it costs at least MIN_SAVING less; never below the
     risk's floor, never to a cell whose own evidence is failing.
     """
     tuning = load_tuning(project)
@@ -416,9 +384,9 @@ def apply(project: str, changes: list[Change]) -> Path:
 
 
 def cheaper_below(cell: Cell, cells: list[Cell]) -> Cell | None:
-    """Return the most capable cell whose step up is `cell` and that costs at least LOWER_SAVING less, or None."""
+    """Return the most capable cell whose step up is `cell` and that costs at least MIN_SAVING less, or None."""
     below = [candidate for candidate in cells if candidate != cell and step_up(candidate, cells) == cell
-             and candidate.expected_cost() <= cell.expected_cost() * (1 - LOWER_SAVING)]
+             and candidate.expected_cost() <= cell.expected_cost() * (1 - MIN_SAVING)]
     return max(below, key=lambda candidate: (candidate.capability, -candidate.expected_cost())) if below else None
 
 

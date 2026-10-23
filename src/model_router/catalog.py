@@ -31,7 +31,8 @@ from .paths import read_config
 
 PRICES_AS_OF = "2026-10-06"
 CLAUDE = "anthropic"  # the provider of the models the router routes to
-TIER_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}  # a registered model's capability, by tier
+# A registered model's capability by its tier, since CAPABILITY_TIER names Claude models only.
+REGISTERED_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 # The efforts the router chooses on its own. `max` is left out: it costs far more output than `xhigh` for little more
@@ -44,6 +45,14 @@ CAPABILITY_EFFORT: dict[str, float] = {"low": -0.06, "medium": -0.03, "high": 0.
 # Reference request used to compare cells with each other (planning only).
 PLAN_INPUT_TOKENS = 2000
 PLAN_OUTPUT_TOKENS_AT_HIGH = 1500
+
+# Walking the lattice. One STEP of capability is what makes a cell clearly more (or only a little less) capable
+# than another; cells whose cost is within COST_TIE of the cheapest candidate compete on capability; a cheaper
+# cell is worth proposing only at MIN_SAVING less.
+STEP = 0.08
+COST_TIE = 0.10
+MIN_SAVING = 0.20
+EPSILON = 1e-9  # capabilities are sums of decimals: compare them with this much slack
 
 
 @dataclass(frozen=True)
@@ -261,7 +270,7 @@ class Cell:
 
     @property
     def capability(self) -> float:
-        base = CAPABILITY_TIER.get(self.spec.short, TIER_CAPABILITY[self.spec.tier])
+        base = CAPABILITY_TIER.get(self.spec.short, REGISTERED_CAPABILITY[self.spec.tier])
         return round(base + CAPABILITY_EFFORT[self.effort], 4)
 
     def claude_code(self) -> dict[str, str]:
@@ -330,40 +339,40 @@ def nearest_effort(effort: str, accepted: tuple[str, ...]) -> str:
     return below[-1] if below else min(accepted, key=EFFORTS.index)
 
 
-def step_up(current: Cell, cells: Iterable[Cell], *, min_gain: float = 0.08, tie: float = 0.10) -> Cell | None:
-    """Return the cheapest cell at least `min_gain` more capable than `current`. Cells whose expected cost
-    is within `tie` of that cheapest one compete on capability, so a frontier model at low effort
-    wins over a lower tier at max effort when they cost about the same.
+def step_up(current: Cell, cells: Iterable[Cell]) -> Cell | None:
+    """Return the cheapest cell at least one STEP more capable than `current`. Cells whose expected cost is within
+    COST_TIE of that cheapest one compete on capability, so a frontier model at low effort wins over a lower tier at
+    max effort when they cost about the same.
     """
-    cands = [c for c in cells if c.capability >= current.capability + min_gain - 1e-9]
+    cands = [c for c in cells if c.capability >= current.capability + STEP - EPSILON]
     if not cands:
         return None
     floor = min(c.expected_cost() for c in cands)
-    close = [c for c in cands if c.expected_cost() <= floor * (1 + tie)]
+    close = [c for c in cands if c.expected_cost() <= floor * (1 + COST_TIE)]
     return max(close, key=lambda c: (c.capability, -c.expected_cost()))
 
 
-def step_down(current: Cell, cells: Iterable[Cell], *, max_loss: float = 0.08, min_saving: float = 0.20) -> Cell | None:
-    """Return the most capable cell that gives up at most `max_loss` capability and saves at least
-    `min_saving` of the expected cost: the cheaper cell `router agents` advises.
+def step_down(current: Cell, cells: Iterable[Cell]) -> Cell | None:
+    """Return the most capable cell that gives up at most one STEP of capability and costs at least MIN_SAVING less:
+    the cheaper cell `router agents` advises.
     """
     cands = [
         c
         for c in cells
-        if current.capability - max_loss - 1e-9 <= c.capability < current.capability
-        and c.expected_cost() <= current.expected_cost() * (1 - min_saving)
+        if current.capability - STEP - EPSILON <= c.capability < current.capability
+        and c.expected_cost() <= current.expected_cost() * (1 - MIN_SAVING)
     ]
     if not cands:
         return None
     return max(cands, key=lambda c: (c.capability, -c.expected_cost()))
 
 
-def ladder(start: Cell, cells: Iterable[Cell], steps: int, *, min_gain: float = 0.08) -> list[Cell]:
+def ladder(start: Cell, cells: Iterable[Cell], *, steps: int) -> list[Cell]:
     """Return `start` followed by up to `steps - 1` escalations, each the cell `step_up` picks from `cells`."""
     cells = list(cells)
     out = [start]
     while len(out) < steps:
-        nxt = step_up(out[-1], cells, min_gain=min_gain)
+        nxt = step_up(out[-1], cells)
         if nxt is None:
             break
         out.append(nxt)

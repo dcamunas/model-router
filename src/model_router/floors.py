@@ -32,7 +32,7 @@ import json
 import re
 import signal
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -185,7 +185,7 @@ def _search(rule: FloorRule, text: str) -> bool | None:
 
 
 @contextlib.contextmanager
-def _timer(seconds: float) -> Iterator[bool]:
+def _timer(seconds: float) -> Generator[bool]:
     """Raise _OutOfTimeError in the main thread after `seconds`; yield False, setting nothing, where that is not
     possible (another thread, or a timer someone else already runs). The previous handler is put back.
     """

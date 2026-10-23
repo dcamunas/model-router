@@ -17,6 +17,7 @@ from .catalog import MODELS, Cell, Usage
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 NON_STREAMING_MAX_TOKENS = 16_000
+SERVER_ERROR_FROM = 500  # an HTTP status from here up is the API's fault: the backend is unavailable, not the request
 
 
 @dataclass
@@ -58,9 +59,6 @@ class ClaudeClient(Protocol):
 
 class ClientUnavailableError(RuntimeError):
     """The API could not serve the request after the SDK's own retries (rate limit, 5xx, network)."""
-
-
-ClientUnavailable = ClientUnavailableError  # name used up to 0.1.0
 
 
 class LiveClient:
@@ -120,7 +118,7 @@ class LiveClient:
         except a.APIConnectionError as exc:
             raise ClientUnavailableError(f"connection: {exc}") from exc
         except a.APIStatusError as exc:
-            if exc.status_code >= 500:
+            if exc.status_code >= SERVER_ERROR_FROM:
                 raise ClientUnavailableError(f"server {exc.status_code}: {exc}") from exc
             raise
         return to_completion(msg, time.monotonic() - t0)

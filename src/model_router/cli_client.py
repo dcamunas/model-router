@@ -35,10 +35,9 @@ from pydantic import BaseModel, ValidationError
 from . import limits
 from .catalog import MODELS, Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
-from .paths import CHILD_ENV, claude_profile
+from .paths import CHILD_ENV, NO_MCP, child_env, claude_profile
 
 DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
-NO_MCP = '{"mcpServers":{}}'
 NOT_LOGGED_IN = "not logged in"
 ERROR_DETAIL_CHARS = 300  # how much of the CLI's stderr/stdout an error message carries
 RATE_LIMITED = 429
@@ -77,10 +76,11 @@ class CliClient:
         self.binary = path
         self.config_dir = config_dir or claude_profile()
         self.timeout = timeout
+        # For a caller that reviews a repository: built-in tools the call may use ("Read,Grep,Glob"; none by
+        # default, and none pre-approved, so they only read inside `cwd`), where it runs, and any other flags.
         self.extra_args = list(extra_args)
-        self.tools = tools  # built-in tools the call may use, e.g. "Read,Grep,Glob"; none by default. Nothing is
-        # pre-approved: read-only tools work inside `cwd` and are denied outside it, as in any headless session
-        self.cwd = cwd  # where the call runs, so those tools see a repository; the caller's directory when None
+        self.tools = tools
+        self.cwd = cwd
 
     def complete(
         self,
@@ -98,14 +98,10 @@ class CliClient:
         ]
         if output_format is not None:
             args += ["--json-schema", json.dumps(output_format.model_json_schema())]
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        env["CLAUDE_CONFIG_DIR"] = str(self.config_dir)
-        env[CHILD_ENV] = "1"  # a session the router starts, not a person's turn: hooks that watch turns may skip it
-        env.setdefault("ENABLE_CLAUDEAI_MCP_SERVERS", "false")
         t0 = time.monotonic()
         try:
-            proc = subprocess.run(args, input=prompt, capture_output=True, text=True, env=env, timeout=self.timeout,
-                                  check=False, cwd=self.cwd)
+            proc = subprocess.run(args, input=prompt, capture_output=True, text=True, env=child_env(self.config_dir),
+                                  timeout=self.timeout, check=False, cwd=self.cwd)
         except subprocess.TimeoutExpired as exc:
             raise ClientUnavailableError(f"claude -p exceeded {self.timeout:.0f}s") from exc
         seconds = time.monotonic() - t0
@@ -118,7 +114,7 @@ class CliClient:
             raise ClientUnavailableError(f"claude -p exited with code {proc.returncode} and no JSON object: {detail}")
         if proc.returncode != 0 and not data.get("is_error"):
             raise ClientUnavailableError(f"claude -p exited with code {proc.returncode}: {detail}")
-        return self.to_completion(data, cell, output_format, seconds)
+        return self.to_completion(data, cell, output_format=output_format, seconds=seconds)
 
     def _note_limit(self, cell: Cell, text: str) -> None:
         """Keep the usage limit a refused call hit, with its exact reset (`limits.py`). The next plans skip that
@@ -132,8 +128,14 @@ class CliClient:
         with contextlib.suppress(OSError, ValueError):  # learning the reset must never hide the refusal itself
             limits.learn(text or cell.spec.short, models=models, config_dir=self.config_dir, binary=self.binary)
 
-    def to_completion(self, data: dict[str, Any], cell: Cell, output_format: type[BaseModel] | None,
+    def to_completion(self, data: dict[str, Any], cell: Cell, *, output_format: type[BaseModel] | None,
                       seconds: float) -> Completion:
+        """Turn the JSON `claude -p` printed for `cell` into a Completion. A usage limit it reports is kept with its
+        exact reset (`limits.py`) before the call fails.
+
+        Raises:
+            ClientUnavailableError: the CLI reported an error, a profile not logged in or a spent usage limit.
+        """
         text = str(data.get("result") or "")
         if data.get("is_error"):
             if NOT_LOGGED_IN in text.lower():

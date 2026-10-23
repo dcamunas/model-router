@@ -1,16 +1,13 @@
 """What each Claude Code subagent really spent. When a subagent finishes, Claude Code hands the hook its
 transcript (`SubagentStop`, `agent_transcript_path`); this module reads it and records, per subagent, the model
 that served it, its turns, the tokens of every turn (input, output, cache reads and writes), the list-price cost,
-the largest context it carried, its tool calls and its duration, next to the routing decision the hook took for
-it. `router stats` reads the records back.
+the largest context it carried and its duration, next to the routing decision the hook took for it. `router
+stats` reads the records back.
 
-The bill of a subagent is mostly its context read again on every turn (cache reads): a review on Opus with 36
-turns and 59 tool calls read 3.6M cached tokens and wrote 0.14M, 1.43 USD at list price for its context alone.
-So the numbers that matter are turns, peak context and cache reads per kind of task.
-
-Output tokens are a lower bound: every transcript entry keeps the usage snapshot taken when the message began
-to stream, so the output it reports is a few tokens per message. Input, cache reads and cache writes are exact.
-The recorded cost is therefore a floor (`cost_usd`), and `context_cost_usd` is the exact part, the context.
+The bill of a subagent is mostly its context read again on every turn (cache reads), so the numbers that matter
+are turns, peak context and cache reads per kind of task. Output tokens are a lower bound: every transcript entry
+keeps the usage snapshot taken when the message began to stream. Input, cache reads and cache writes are exact,
+so the recorded cost is a floor.
 
 A transcript repeats a message's usage on every entry that carries one of its content blocks: usage is counted
 once per message id. And when `SubagentStop` fires, the subagent's last message is not in the transcript yet: the
@@ -22,22 +19,23 @@ from __future__ import annotations
 
 import hashlib
 import json
-import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any  # Any: transcript entries and records are decoded JSON
 
 from . import clock
-from ._fmt import money
 from .catalog import MODELS, Usage, cost_usd
 from .classify import classify_rules
-from .paths import locked
+from .fmt import money
+from .paths import locked, read_jsonl, replace_file
 from .projects import project_of, signature
 
 LOG_FILE = "subagents.jsonl"
 PROMPT_HASH_CHARS = 16
 SETTLED_SECONDS = 30.0  # a transcript untouched for this long is complete
+RECENT_BYTES = 262_144  # the end of the log a relaunch can point at: a few hundred records, not months of history
+THOUSAND = 1000
 
 
 def prompt_hash(prompt: str) -> str:
@@ -56,7 +54,6 @@ class SubagentUsage:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     peak_context: int = 0  # the largest prompt of a single turn: input + cache read + cache write
-    tool_calls: int = 0
     seconds: float = 0.0
     prompt: str = ""
     by_model: dict[str, int] = field(default_factory=dict)  # output tokens per model, to name the one that served
@@ -65,24 +62,24 @@ class SubagentUsage:
     def usage(self) -> Usage:
         return Usage(self.input_tokens, self.output_tokens, self.cache_read_tokens, self.cache_write_tokens)
 
-    @property
-    def tokens(self) -> int:
-        """Every token the subagent's turns processed or wrote."""
-        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
-
     def cost(self) -> float | None:
         """Return the list-price cost in USD, or None when the model is not in the catalogue."""
         return cost_usd(self.model, self.usage) if self.model in MODELS else None
 
 
 def read_transcript(path: Path) -> SubagentUsage:
-    """Sum a subagent transcript's usage, one count per message id, with its first prompt, its tool calls and the
-    time between its first and last entries. An unreadable line is skipped.
+    """Sum a subagent transcript's usage, one count per message id, with its first prompt and the time between its
+    first and last entries. An unreadable line is skipped.
+
+    Raises:
+        OSError: the transcript cannot be read.
     """
     out = SubagentUsage()
     messages: dict[str, tuple[str, dict[str, Any]]] = {}
     moments: list[datetime] = []
-    for entry in _entries(path):
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    for entry in read_jsonl(path):
         moment = clock.parse_moment(entry.get("timestamp"))
         if moment is not None:
             moments.append(moment)
@@ -91,10 +88,8 @@ def read_transcript(path: Path) -> SubagentUsage:
             continue
         if message.get("role") == "user" and not out.prompt:
             out.prompt = _text(message.get("content"))
-        if message.get("role") == "assistant":
-            out.tool_calls += _tool_calls(message.get("content"))
-            if isinstance(message.get("usage"), dict):
-                messages[str(message.get("id") or len(messages))] = (str(message.get("model") or ""), message["usage"])
+        if message.get("role") == "assistant" and isinstance(message.get("usage"), dict):
+            messages[str(message.get("id") or len(messages))] = (str(message.get("model") or ""), message["usage"])
     for model, usage in messages.values():
         _add_turn(out, model, usage)
     if out.by_model:
@@ -102,23 +97,6 @@ def read_transcript(path: Path) -> SubagentUsage:
     if moments:
         out.seconds = max(0.0, (moments[-1] - moments[0]).total_seconds())
     return out
-
-
-def _entries(path: Path) -> list[dict[str, Any]]:
-    entries = []
-    with path.open(encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(entry, dict):
-                entries.append(entry)
-    return entries
-
-
-def _tool_calls(content: Any) -> int:
-    return sum(1 for c in content if isinstance(c, dict) and c.get("type") == "tool_use") if isinstance(content, list) else 0
 
 
 def _add_turn(out: SubagentUsage, model: str, usage: dict[str, Any]) -> None:
@@ -131,10 +109,10 @@ def _add_turn(out: SubagentUsage, model: str, usage: dict[str, Any]) -> None:
     out.cache_write_tokens += u["cache_creation_input_tokens"]
     out.peak_context = max(out.peak_context, u["input_tokens"] + u["cache_read_input_tokens"]
                            + u["cache_creation_input_tokens"])
-    out.by_model[model] = out.by_model.get(model, 0) + u["output_tokens"] + 1
+    out.by_model[model] = out.by_model.get(model, 0) + u["output_tokens"] + 1  # + 1: a turn counts with no output
 
 
-def record(event: dict[str, Any], usage: SubagentUsage, decision: dict[str, Any] | None) -> dict[str, Any]:
+def record(event: dict[str, Any], usage: SubagentUsage, *, decision: dict[str, Any] | None) -> dict[str, Any]:
     """Build the record of one finished subagent: who it was, what it spent, and how it was routed (the hook's
     decision on its prompt, or the kind and risk read from the prompt when the hook left it alone).
     """
@@ -156,20 +134,16 @@ def record(event: dict[str, Any], usage: SubagentUsage, decision: dict[str, Any]
         "prompt_hash": prompt_hash(usage.prompt) if usage.prompt else None,
         "sig": signature(usage.prompt) if usage.prompt else None,
         "project": project_of(str(event.get("cwd") or "") or None),
-        **{k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")},
-        "tokens": usage.tokens,
+        **_numbers(usage),
         "cost_usd": round(cost, 6) if cost is not None else None,
-        "context_cost_usd": _context_cost(usage),
         "transcript": str(event.get("agent_transcript_path") or ""),
         "final": False,
     }
 
 
-def _context_cost(usage: SubagentUsage) -> float | None:
-    """Return the exact part of the cost: input, cache reads and cache writes, without the output (a lower bound)."""
-    if usage.model not in MODELS:
-        return None
-    return round(cost_usd(usage.model, Usage(usage.input_tokens, 0, usage.cache_read_tokens, usage.cache_write_tokens)), 6)
+def _numbers(usage: SubagentUsage) -> dict[str, Any]:
+    """Return what a record keeps of a reading: its counts, without the prompt and the per-model tally."""
+    return {k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")}
 
 
 def append(log: Path, line: dict[str, Any]) -> None:
@@ -188,16 +162,13 @@ def finalize(log: Path, *, settled: float = SETTLED_SECONDS, now: float | None =
     with locked(log):
         records = load(log)
         moment = clock.now().timestamp() if now is None else now
-        changed = sum(_settle(r, moment, settled) for r in records)
+        changed = sum(_settle(r, moment=moment, settled=settled) for r in records)
         if changed:
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=log.parent, prefix=log.name, suffix=".tmp",
-                                             delete=False) as tmp:
-                tmp.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records))
-            Path(tmp.name).replace(log)
+            replace_file(log, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records))
     return changed
 
 
-def _settle(r: dict[str, Any], moment: float, settled: float) -> bool:
+def _settle(r: dict[str, Any], *, moment: float, settled: float) -> bool:
     """Read one record's transcript again when it has settled; True when the record changed. A transcript that is
     gone, is not a file or cannot be read leaves the first reading as final.
     """
@@ -205,8 +176,6 @@ def _settle(r: dict[str, Any], moment: float, settled: float) -> bool:
         return False
     path = Path(str(r.get("transcript") or ""))
     try:
-        if not path.is_file():
-            raise FileNotFoundError(path)
         if moment - path.stat().st_mtime < settled:
             return False
         usage = read_transcript(path)
@@ -214,73 +183,29 @@ def _settle(r: dict[str, Any], moment: float, settled: float) -> bool:
         r["final"] = True
         return True
     cost = usage.cost()
-    r.update({k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")})
-    r.update(tokens=usage.tokens, cost_usd=round(cost, 6) if cost is not None else None,
-             context_cost_usd=_context_cost(usage), final=True)
+    r.update(_numbers(usage), cost_usd=round(cost, 6) if cost is not None else None, final=True)
     return True
 
 
-def find_decision(log: Path, prompt: str, session: str | None) -> dict[str, Any] | None:
+def find_decision(log: Path, prompt: str, *, session: str | None) -> dict[str, Any] | None:
     """Return the hook's latest decision on `prompt` in `session` (the decisions log, newest last), or None."""
     if not prompt:
         return None
     wanted = prompt_hash(prompt)
-    found = None
-    try:
-        lines = log.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(entry, dict) and entry.get("prompt_hash") == wanted and entry.get("session_id") in (session, None):
-            found = entry
-    return found
+    return next((entry for entry in reversed(read_jsonl(log))
+                 if entry.get("prompt_hash") == wanted and entry.get("session_id") in (session, None)), None)
 
 
 def load(path: Path) -> list[dict[str, Any]]:
     """Read the subagent records; a line that is not a JSON object is skipped."""
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    out = []
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(entry, dict):
-            out.append(entry)
-    return out
+    return read_jsonl(path)
 
 
-def load_recent(path: Path, max_bytes: int = 256_000) -> list[dict[str, Any]]:
-    """Read only the end of the subagent records (the last `max_bytes`, a few hundred records): what a relaunch can
-    point at, without reading months of history on every launch. A cut first line is skipped.
+def load_recent(path: Path) -> list[dict[str, Any]]:
+    """Read only the end of the subagent records (RECENT_BYTES): what a relaunch can point at, without reading
+    months of history on every launch.
     """
-    try:
-        with path.open("rb") as fh:
-            fh.seek(0, 2)
-            size = fh.tell()
-            fh.seek(max(0, size - max_bytes))
-            chunk = fh.read().decode("utf-8", errors="replace")
-    except OSError:
-        return []
-    lines = chunk.splitlines()
-    if size > max_bytes and lines:
-        lines = lines[1:]
-    out = []
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(entry, dict):
-            out.append(entry)
-    return out
+    return read_jsonl(path, tail_bytes=RECENT_BYTES)
 
 
 def _text(content: Any) -> str:
@@ -315,4 +240,4 @@ def summary_rows(records: list[dict[str, Any]]) -> list[list[object]]:
 
 
 def _k(n: float) -> str:
-    return f"{n / 1000:.1f}K" if n >= 1000 else str(round(n))
+    return f"{n / THOUSAND:.1f}K" if n >= THOUSAND else str(round(n))

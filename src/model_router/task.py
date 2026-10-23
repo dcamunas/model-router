@@ -14,6 +14,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError
 
 from .catalog import PLAN_OUTPUT_TOKENS_AT_HIGH
+from .client import NON_STREAMING_MAX_TOKENS
 
 KINDS: tuple[str, ...] = (
     "classify", "extract", "summarize", "search", "chat", "write", "code", "review", "analysis", "agentic", "unknown",
@@ -23,7 +24,7 @@ VERIFY_MODES: tuple[str, ...] = ("none", "light", "full")  # what the verifier c
 VERIFIED_SOURCES: frozenset[str] = frozenset({"checker", "judge"})  # verdict sources that are evidence
 EXTERNAL_STOP = "external"  # the stop reason of an attempt whose answer was made outside the router (`router judge`)
 
-DEFAULT_MAX_TOKENS = 16_000  # equals client.NON_STREAMING_MAX_TOKENS, so the api backend never streams by default
+DEFAULT_MAX_TOKENS = NON_STREAMING_MAX_TOKENS  # so the api backend never streams by default
 CHARS_PER_TOKEN = 4  # rough average for Spanish and English prose and code; planning only
 PROMPT_OVERHEAD_TOKENS = 50  # message framing the API adds around prompt and system
 
@@ -95,13 +96,11 @@ def regex_checker(pattern: str, flags: int = re.IGNORECASE | re.DOTALL) -> Check
     return check
 
 
-def contains_checker(*needles: str, all_of: bool = True) -> Checker:
-    """Return a checker that passes when every needle (or any, with `all_of=False`) is in the answer, ignoring case."""
+def contains_checker(*needles: str) -> Checker:
+    """Return a checker that passes when every needle is in the answer, ignoring case."""
     def check(answer: str) -> CheckResult:
-        hits = [n for n in needles if n.lower() in answer.lower()]
-        ok = len(hits) == len(needles) if all_of else bool(hits)
-        missing = [n for n in needles if n not in hits]
-        return CheckResult(ok, "all present" if ok else f"missing: {', '.join(missing)}")
+        missing = [n for n in needles if n.lower() not in answer.lower()]
+        return CheckResult(not missing, f"missing: {', '.join(missing)}" if missing else "all present")
 
     return check
 

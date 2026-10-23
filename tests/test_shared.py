@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from model_router import projects, shared
+from model_router import clock, projects, shared
 from model_router.catalog import parse_cell
 from model_router.hook import decide, handle, start_in_force
 from model_router.paths import write_config
@@ -13,7 +13,7 @@ from model_router.task import Task
 
 NOW = datetime(2026, 10, 22, 12, tzinfo=UTC)  # a Thursday
 SETTLED = NOW - timedelta(days=14)  # a week that closed more than a day ago
-WEEK = projects.week_of(SETTLED)
+WEEK = clock.week_of(SETTLED)
 
 
 def STATE(tmp_path: Path) -> Path:  # noqa: N802 - reads as the folder it names
@@ -77,13 +77,13 @@ def test_each_settled_week_is_one_small_file_written_once(tmp_path, monkeypatch)
 
 def test_a_week_is_written_a_day_after_it_closes_and_deleted_when_it_leaves_the_window(tmp_path, monkeypatch):
     project = _repo(tmp_path, monkeypatch)
-    monday = projects.week_start(projects.week_of(NOW))
+    monday = clock.week_start(clock.week_of(NOW))
     assert monday is not None
     sunday_night = monday - timedelta(minutes=10)
     records = [_rec(project, "sonnet/low", 1, sunday_night)]
     assert shared.write_own(project, records, decision_log=tmp_path / "none", now=monday + timedelta(hours=1)) == []
     assert len(shared.write_own(project, records, decision_log=tmp_path / "none", now=monday + timedelta(days=1, hours=1))) == 1
-    old = _theirs(project, _mine(project), projects.week_of(NOW - timedelta(weeks=20)), {})
+    old = _theirs(project, _mine(project), clock.week_of(NOW - timedelta(weeks=20)), {})
     gone = _theirs(project, "abcdefabcdef", WEEK, {"analysis|medium|sonnet/low": [5, 5]})
     _used(project, "abcdefabcdef")  # an id this install used before for this path
     shared.prune(project)
@@ -115,7 +115,7 @@ def test_pooled_counts_skip_this_install_old_weeks_bad_data_and_cap_each_install
     _theirs(project, "aaaaaaaaaaaa", WEEK, {
         "analysis|medium|sonnet/low": [4, 1], "analysis|medium|nope/low": [9, 9], "bad|medium|sonnet/low": [9, 9],
         "analysis|medium|haiku/low": [1, 5], "review|high|opus/medium": [True, 0]})
-    _theirs(project, "aaaaaaaaaaaa", projects.week_of(NOW - timedelta(weeks=20)), {"analysis|medium|sonnet/low": [50, 50]})
+    _theirs(project, "aaaaaaaaaaaa", clock.week_of(NOW - timedelta(weeks=20)), {"analysis|medium|sonnet/low": [50, 50]})
     _theirs(project, "bbbbbbbbbbbb", WEEK, {"analysis|medium|sonnet/low": [2, 1]})
     _theirs(project, _mine(project), WEEK, {"analysis|medium|sonnet/low": [100, 100]})  # mine: counted locally
     _used(project, "cccccccccccc")
@@ -126,7 +126,7 @@ def test_pooled_counts_skip_this_install_old_weeks_bad_data_and_cap_each_install
     ev, installs = shared.pooled(project)
     assert ev == {("analysis", "medium", "sonnet/low"): {"n": 6, "fails": 2}} and installs == 2
     assert shared.pooled(project, since=NOW.isoformat()) == ({}, 0)  # a reset: earlier weeks were weighed
-    heavy = projects.week_of(NOW - timedelta(days=21))
+    heavy = clock.week_of(NOW - timedelta(days=21))
     _theirs(project, "ffffffffffff", WEEK, {"search|low|haiku/low": [100, 10]})
     _theirs(project, "ffffffffffff", heavy, {"search|low|haiku/low": [100, 10]})
     ev, _ = shared.pooled(project)
@@ -187,7 +187,7 @@ def test_another_clone_of_the_same_repository_is_a_teammate_and_old_weeks_go_who
     project = _repo(tmp_path, monkeypatch)
     _used(project + "-worktree", "121212121212")  # this machine wrote it from a worktree: other path, other log
     worktree = _theirs(project, "121212121212", WEEK, {"analysis|medium|sonnet/low": [2, 1]})
-    stale = _theirs(project, "343434343434", projects.week_of(NOW - timedelta(weeks=20)), {})  # someone who left
+    stale = _theirs(project, "343434343434", clock.week_of(NOW - timedelta(weeks=20)), {})  # someone who left
     shared.prune(project)
     shared.write_own(project, [_rec(project, "sonnet/low", 1, SETTLED)], decision_log=tmp_path / "none")
     assert worktree.exists() and not stale.exists()
@@ -249,7 +249,7 @@ def test_an_undeletable_entry_never_stops_sharing_nor_hides_a_raise(tmp_path, mo
 
 def test_a_week_just_out_of_the_window_is_kept_a_little_longer(tmp_path, monkeypatch):
     project = _repo(tmp_path, monkeypatch)
-    edge = projects.week_of(projects.window_start() - timedelta(days=3))
+    edge = clock.week_of(projects.window_start() - timedelta(days=3))
     kept = _theirs(project, "aaaaaaaaaaaa", edge, {"analysis|medium|sonnet/low": [1, 0]})
     shared.prune(project)
     shared.write_own(project, [], decision_log=tmp_path / "none")

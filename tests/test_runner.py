@@ -178,15 +178,17 @@ def test_the_summary_counts_each_judge_s_verdicts_and_the_record_names_the_versi
 
 
 def test_ask_takes_another_prompt_system_and_role_for_a_seat_of_someone_else_s():
-    from model_router.verify import Verifier
+    from model_router.verify import ask
 
     client = FakeClient(judge={"*": [ok("the second judge was right")]})
-    verifier = Verifier(client, Router(client).policy)
     task = Task(prompt="write the notice", kind="write", risk="critical")
-    result = verifier.ask(task, "the notice", parse_cell("sonnet/high"), prompt="<opinions>both</opinions>",
-                          system="You read two opinions and decide.", role="second-reader")
+    result = ask(client, task, "the notice", cell=parse_cell("sonnet/high"), prompt="<opinions>both</opinions>",
+                 system="You read two opinions and decide.", role="second-reader")
     assert result.passed and result.source == "judge" and result.verdicts[0].role == "second-reader"
     assert client.calls[0]["prompt"] == "<opinions>both</opinions>"
     assert client.calls[0]["system"] == "You read two opinions and decide."
-    plain = verifier.ask(task, "the notice", parse_cell("sonnet/high"))
+    plain = ask(client, task, "the notice", cell=parse_cell("sonnet/high"))
     assert "<task>" in client.calls[1]["prompt"] and plain.verdicts[0].role == "judge"
+    unsure = ask(FakeClient(judge={"*": [Reply(parsed=Verdict(passed=True, confidence=0.3, reason="maybe"))]}), task,
+                 "the notice", cell=parse_cell("sonnet/high"))
+    assert not unsure.passed  # a pass the judge is unsure of is a fail

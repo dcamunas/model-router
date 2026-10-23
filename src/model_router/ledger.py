@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: ledger records are JSON lines
 
-from ._fmt import money, table
+from .fmt import money, table
 from .task import EXTERNAL_STOP, VERIFY_MODES
 
 if TYPE_CHECKING:

@@ -227,7 +227,7 @@ class Policy:
                 start = floor_cell
         start = self._tuned(kind, risk, start=start, rationale=rationale)
         max_attempts = task.max_attempts if task.max_attempts is not None else MAX_ATTEMPTS_BY_RISK[risk]
-        cells = ladder(start, self.cells, max_attempts)
+        cells = ladder(start, self.cells, steps=max_attempts)
         first_attempt = start.expected_cost(task.estimated_input_tokens, task.planned_output_tokens)
         default_budget = max(BUDGET_USD_BY_RISK[risk], BUDGET_ATTEMPTS * first_attempt)
         budget = task.budget_usd if task.budget_usd is not None else default_budget

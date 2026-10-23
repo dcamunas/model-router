@@ -49,7 +49,7 @@ def test_escalation_prefers_frontier_low_effort_over_lower_tier_max_effort():
 
 
 def test_ladder_stops_when_nothing_is_more_capable():
-    steps = ladder(parse_cell("opus/high"), lattice(), 6)
+    steps = ladder(parse_cell("opus/high"), lattice(), steps=6)
     assert [c.label for c in steps] == ["opus/high", "fable/low", "fable/xhigh"]
 
 

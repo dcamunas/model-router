@@ -2,30 +2,17 @@
 
 A repository opts in by holding the directory `.claude/model-router/` (`router project --share` creates it; once it
 is committed, every teammate's installation takes part, unless MODEL_ROUTER_SHARE=0). Each installation adds there
-one small file per closed ISO week, `<id>-<year>W<week>.json`, and never changes it afterwards:
+one small file per closed ISO week, `<id>-<year>W<week>.json`, and never changes it afterwards: `c` counts the
+subagents the router started per kind, risk and start cell and how many were relaunched higher; `a` counts the
+runs of the agents committed in the repository and how many another subagent repeated (`agents.py`). Nothing else:
+no prompt, signature, path, cost or time of day. The file format is in docs/claude-code.md.
 
-    {"v":1,"c":{"review|high|opus/medium":[12,1]},"a":{"migration-curator|opus/xhigh":[9,0]}}
-
-`c`, per kind, risk and start cell: how many subagents the router started there that week and how many were
-relaunched higher. `a`, per agent fixed by hand and its cell: how many ran and how many another subagent repeated
-(`agents.py`), so `router agents` advises on the whole team's runs. Only agents committed in the repository
-(`agents.committed_agents`: a plain file in git's index, never a link or an untracked file) go in `a`, so their
-names are already in it, and an agent name the key pattern does not take stays on this machine. Which agents
-count is decided when the week's file is written, from the checkout at that moment. Nothing else: no prompt,
-signature, path, cost or time of day. Readers that predate `a` ignore it; a file that would pass MAX_FILE_BYTES
-is written without it. The id is a keyed hash of the
-repository's path with this installation's secret salt, so it tells nothing and links no two repositories.
-
-The counts are the same evidence `projects.evidence` counts on this machine, summed the same way. This
-installation's files (under any id it ever used for this repository path) are never read back, since its subagents
-already count from the local log. A week is written a day after it closes, so a late relaunch is in it, and only
-weeks inside the evidence window and after the project's last reset or applied change count. One installation weighs
-at most FILE_CAP launches per kind, risk and cell, scaled so its fail rate is kept, so an honest heavy user does not
-drown the rest (anyone can commit files under made-up ids; that is why the team's counts alone never raise a start
-on their own, and why `router agents` only advises: a person reads it and changes the agent). Files never change
-once written, so branches and merges never fight over them; any installation deletes the files a week after they
-left the window. Files are read and written without following links, and a shared directory that is a link
-elsewhere is not used.
+The id is a keyed hash of the repository's path with this installation's secret salt, so it tells nothing and
+links no two repositories. This installation's own files are never read back, since its subagents already count
+from the local log. A week is written a day after it closes, so a late relaunch is in it. One installation weighs
+at most FILE_CAP launches per bucket, at its own fail rate, and anyone can commit a file under a made-up id: that
+is why the team's counts alone never raise a start, and why `router agents` only advises. Files are read and
+written without following links, and a shared directory that is a link elsewhere is not used.
 """
 
 from __future__ import annotations
@@ -36,7 +23,6 @@ import json
 import os
 import re
 import stat
-import tempfile
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,7 +31,8 @@ from typing import Any  # Any: decoded JSON (subagent records, shared files)
 from . import clock
 from .agents import TeamRuns, committed_agents, latest, repeated_ids
 from .catalog import UnknownModelError, parse_cell
-from .paths import home, locked, read_regular
+from .clock import week_of, week_start
+from .paths import home, locked, read_json, read_regular, replace_file
 from .projects import (
     RELAUNCH_WINDOW,
     Bucket,
@@ -53,8 +40,6 @@ from .projects import (
     install_key,
     relaunched_ids,
     served_cell,
-    week_of,
-    week_start,
     window_start,
 )
 from .task import KINDS, RISKS
@@ -220,14 +205,7 @@ def write_own(project: str, records: list[dict[str, Any]], *, decision_log: Path
         if len(text.encode()) > MAX_FILE_BYTES:  # every reader would drop the whole file: keep the routing counts
             body.pop("a", None)
             text = json.dumps(body, sort_keys=True, separators=(",", ":")) + "\n"
-        # a fresh file under a random name: no link anyone planted is followed
-        descriptor, temporary_path = tempfile.mkstemp(dir=folder, prefix=".", suffix=".tmp")
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(text)
-            Path(temporary_path).replace(path)
-        finally:
-            Path(temporary_path).unlink(missing_ok=True)  # gone after the replace; left only by a failed write
+        replace_file(path, text)
         added.append(path)
     return added
 
@@ -313,10 +291,7 @@ def remember(project: str, install_id: str) -> set[str]:
         row = ids.setdefault(_ids_key(project), [])
         if install_id not in row:
             row.append(install_id)
-            descriptor, temporary_path = tempfile.mkstemp(dir=path.parent, prefix=".shared-ids", suffix=".tmp")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(ids, sort_keys=True) + "\n")
-            Path(temporary_path).replace(path)
+            replace_file(path, json.dumps(ids, sort_keys=True) + "\n")
         return set(row)
 
 
@@ -396,10 +371,5 @@ def _ids_key(project: str) -> str:
 
 
 def _all_ids() -> dict[str, list[str]]:
-    try:
-        data = json.loads((home() / IDS_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
+    data = read_json(home() / IDS_FILE)
     return {k: [i for i in v if isinstance(i, str)] for k, v in data.items() if isinstance(v, list)}

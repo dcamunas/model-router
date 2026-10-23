@@ -9,7 +9,7 @@ again on the same cell is not a repeat: a loop over files with one template brie
 
     measuring  fewer than MIN_N runs: nothing to say yet
     raise      at least MIN_FAILS repeats and RAISE_RATE of the runs: one step up the ladder (`step_up`)
-    lower      DOWN_N runs or more and none repeated: the most capable cell that costs LOWER_SAVING less
+    lower      DOWN_N runs or more and none repeated: the most capable cell that costs MIN_SAVING less
                while giving up little capability (`step_down`)
     keep       anything else
 
@@ -41,7 +41,6 @@ from .catalog import MODELS, Cell, UnknownModelError, Usage, cost_usd, parse_cel
 from .projects import (
     ALIKE,
     DOWN_N,
-    LOWER_SAVING,
     MIN_FAILS,
     MIN_N,
     RAISE_RATE,
@@ -54,7 +53,6 @@ from .projects import (
 # Not fixed by hand: the router's own choices, Claude Code's built-in agents, the read-only agent, workflow agents.
 NOT_FIXED_BY_HAND = frozenset({"", "general-purpose", "claude", "workflow-subagent", "Explore", "Plan",
                                "claude-code-guide", "statusline-setup"})
-LOWER_MAX_LOSS = 0.08  # the capability a lower cell may give up
 TeamRuns = dict[tuple[str, str], dict[str, int]]  # (agent, cell label) -> {"n": runs, "fails": repeated}, from teammates
 AGENTS_DIR = (".claude", "agents")
 REGULAR_MODES = frozenset({"100644", "100755"})  # git's modes for a plain file; 120000 is a link
@@ -226,7 +224,7 @@ def _advice(agent: str, cell: Cell, records: list[dict[str, Any]], *, cells: lis
         up = step_up(cell, cells)
         return _with(base, "raise", to=up, records=records) if up else base
     if runs >= DOWN_N and fails == 0:
-        down = step_down(cell, cells, max_loss=LOWER_MAX_LOSS, min_saving=LOWER_SAVING)
+        down = step_down(cell, cells)
         return _with(base, "lower", to=down, records=records) if down else base
     return base
 
@@ -248,5 +246,5 @@ def _usage(record: dict[str, Any]) -> Usage:
 
 def agent_file(project: str, agent: str) -> Path | None:
     """Return the repository's definition of `agent` (`.claude/agents/<name>.md`), or None when it is not there."""
-    path = Path(project) / ".claude" / "agents" / f"{agent}.md"
+    path = Path(project, *AGENTS_DIR) / f"{agent}.md"
     return path if path.is_file() else None

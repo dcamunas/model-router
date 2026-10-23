@@ -9,10 +9,8 @@ Paths under `~/.claude/model-router` are those of the default Claude profile; a 
 its own `model-router/` folder.
 
 A subagent's bill is mostly its context, read again on every turn: the tools, the MCP servers, the
-skills and the conversation so far. A review subagent on Opus measured in this repository took 36
-turns and read 3.6M cached tokens: 1.43 USD at list price for its context alone. So the plugin
-works on the model, the agent and the measurement of every subagent, and learns from what it measures.
-All of it on Claude models.
+skills and the conversation so far. So the plugin works on the model, the agent and the measurement of
+every subagent, and learns from what it measures. All of it on Claude models.
 
 ## Model and effort
 
@@ -40,7 +38,7 @@ WebSearch: no edits, no shell, no MCP servers.
 ## Measurement
 
 `SubagentStop` reads each finished subagent's transcript and records its model,
-turns, tokens (cache reads and writes included), peak context, tool calls and duration, next to the
+turns, tokens (cache reads and writes included), peak context and duration, next to the
 routing decision. `router stats` shows it per agent and model. Context tokens are exact; output
 tokens are a lower bound (a transcript keeps the usage taken when each message began), so the cost
 shown is a floor, and almost all of it is context anyway.

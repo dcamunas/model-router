@@ -26,7 +26,6 @@ again, and the next failure probes it anew.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from collections.abc import Iterable
@@ -36,14 +35,13 @@ from pathlib import Path
 from typing import Any  # Any: decoded JSON (the limits file, the CLI's events)
 
 from . import clock
-from .paths import CHILD_ENV, home, locked
+from .paths import NO_MCP, child_env, home, locked, read_json, replace_file
 
 LIMITS_FILE = "limits.json"
 ALL_MODELS = "*"  # a window that covers every model (five hours, seven days) is spent
 RECHECK = timedelta(minutes=10)  # how long a limit with no known reset holds before it is probed again
 PROBE_SECONDS = 30.0
 PROBE_SYSTEM = "Answer with the single word ok."
-NO_MCP = '{"mcpServers":{}}'
 ACCOUNT_WINDOWS = ("five_hour", "seven_day")  # the windows that cover every model
 # "You've reached your Fable limit" names a model; a limit message that names none ("weekly limit", "usage limit
 # reached", "hit your limit") is the whole account.
@@ -89,19 +87,11 @@ def limits_path() -> Path:
     return home() / LIMITS_FILE
 
 
-def _read() -> dict[str, Any]:
-    try:
-        data = json.loads(limits_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 def active(now: datetime | None = None) -> dict[str, Limit]:
     """Return the limits that hold now, by model short name (`*` for the whole account)."""
     moment = now or clock.now()
     out = {}
-    models = _read().get("models")
+    models = read_json(limits_path()).get("models")
     for name, entry in (models if isinstance(models, dict) else {}).items():
         limit = _limit(str(name), entry)
         if limit is not None and limit.active(moment):
@@ -121,13 +111,13 @@ def _limit(name: str, entry: object) -> Limit | None:
 
 def windows() -> dict[str, dict[str, Any]]:
     """Return the account's windows as the last probe saw them: use from 0 to 1 and the reset, by window name."""
-    data = _read().get("windows")
+    data = read_json(limits_path()).get("windows")
     return data if isinstance(data, dict) else {}
 
 
 def checked() -> str | None:
     """Return when the windows were last seen (an ISO moment), or None before any probe."""
-    value = _read().get("checked")
+    value = read_json(limits_path()).get("checked")
     return str(value) if value else None
 
 
@@ -153,7 +143,7 @@ def _store(model: str, probe: Probe, *, hold_unknown: bool) -> Limit | None:
     key = ALL_MODELS if rejected and probe.window in ACCOUNT_WINDOWS else model
     path = limits_path()
     with locked(path):
-        data = _read()
+        data = read_json(path)
         stored = data.get("models")
         models: dict[str, Any] = stored if isinstance(stored, dict) else {}
         known = _limit(key, models.get(key))
@@ -168,7 +158,7 @@ def _store(model: str, probe: Probe, *, hold_unknown: bool) -> Limit | None:
         if probe.windows:
             data["windows"] = probe.windows
             data["checked"] = now.isoformat(timespec="seconds")
-        _write(path, data)
+        replace_file(path, json.dumps(data, indent=1))
     held = _limit(key, data["models"].get(key))
     return held if held is not None and held.active(now) else None
 
@@ -180,12 +170,6 @@ def _entry(until: datetime | None, window: str, now: datetime) -> dict[str, Any]
 def _worth_keeping(limit: Limit | None, now: datetime) -> bool:
     """Keep a limit that still holds, and one with no known reset until it is probed again; drop what has passed."""
     return limit is not None and (limit.until is None or limit.active(now))
-
-
-def _write(path: Path, data: dict[str, Any]) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    tmp.replace(path)
 
 
 def model_in_failure(text: str, models: Iterable[str]) -> str | None:
@@ -222,14 +206,9 @@ def probe(model_id: str, *, config_dir: Path | None = None, binary: str = "claud
     args = [binary, "-p", "--model", model_id, "--effort", "low", "--output-format", "stream-json", "--verbose",
             "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
             "--system-prompt", PROBE_SYSTEM]
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    env[CHILD_ENV] = "1"  # the router's own session: its StopFailure hook must not probe again (`hook.handle`)
-    env["MODEL_TRIBUNAL"] = "0"
-    if config_dir is not None:
-        env["CLAUDE_CONFIG_DIR"] = str(config_dir)
-    try:
-        proc = subprocess.run(args, input="ok", capture_output=True, text=True, errors="replace", env=env,
-                              timeout=timeout, check=False)
+    try:  # a child session: its own StopFailure hook must not probe again (`hook.handle`)
+        proc = subprocess.run(args, input="ok", capture_output=True, text=True, errors="replace",
+                              env=child_env(config_dir), timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:  # retries can outlast the timeout; the event is printed before them
         partial = exc.stdout or b""
         return parse_events(partial.decode("utf-8", "replace") if isinstance(partial, bytes) else partial)

@@ -30,7 +30,7 @@ hook that can change its own model.
 Rules: explicit beats automatic. A `model` chosen by Claude is kept, unless its usage limit is spent. Custom agents from
 `.claude/agents/*.md` are skipped (their frontmatter is their routing), and so are forks (the Agent
 tool ignores model and effort for them). Apart from that one denial the hook never blocks: on any error it
-exits 0 silently.
+exits 0 with one line on stderr.
 
 Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the decisions log
 (<profile>/model-router/hook.jsonl), the measurements and with them all learning; MODEL_ROUTER_HOOK_QUIET=1
@@ -51,7 +51,7 @@ from typing import Any  # Any: hook events and log records are decoded JSON
 from . import clock, floors, limits
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
-from .paths import CHILD_ENV, HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, home, read_config
+from .paths import CHILD_ENV, DECISION_LOG, HOOK_ENV, home, logging_on, quiet, read_config, read_jsonl
 from .policy import VERIFY_BY_RISK, Policy
 from .projects import (
     combine,
@@ -75,7 +75,6 @@ from .task import Task
 ROUTED_SUBAGENTS = frozenset({"", "general-purpose", "claude"})
 PLUGIN_NAME = "model-router"
 PLUGIN_AGENT = Path("agents") / "reader.md"  # inside the plugin's root
-PROMPT_HEAD_CHARS = 60
 TRANSCRIPT_TAIL_BYTES = 262_144  # enough for the last few assistant entries of a long session
 
 SESSION_CONTEXT = (
@@ -100,21 +99,8 @@ def main_model(transcript_path: str | None) -> str | None:
     """
     if not transcript_path:
         return None
-    try:
-        with Path(transcript_path).open("rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            fh.seek(max(0, fh.tell() - TRANSCRIPT_TAIL_BYTES))
-            tail = fh.read().decode("utf-8", errors="ignore")
-    except OSError:
-        return None
-    for line in reversed(tail.splitlines()):
-        if '"assistant"' not in line:
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:  # the first line of the tail is usually cut
-            continue
-        if not isinstance(entry, dict) or entry.get("type") != "assistant" or entry.get("isSidechain"):
+    for entry in reversed(read_jsonl(Path(transcript_path), tail_bytes=TRANSCRIPT_TAIL_BYTES)):
+        if entry.get("type") != "assistant" or entry.get("isSidechain"):
             continue
         message = entry.get("message")
         model_id = str(message.get("model") or "") if isinstance(message, dict) else ""
@@ -158,7 +144,6 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
         fields.append("effort")
     record = {
         "kind": cls.kind, "risk": risk, "cell": cell.label, "set": fields, "why": cls.reason,
-        "subagent": subagent or "general-purpose", "prompt_head": prompt.strip()[:PROMPT_HEAD_CHARS],
         "prompt_hash": prompt_hash(prompt), "project": project,
         # model and effort both the router's, on the table's cell: evidence about its tables (a cross-checked review
         # runs another cell than the start, so its outcome says nothing about the start)
@@ -213,10 +198,15 @@ def lean_agent() -> str | None:
     return f"{PLUGIN_NAME}:reader"
 
 
+def _cwd(event: dict[str, Any]) -> str | None:
+    """Return the directory the event's session works in, or None when the event does not say."""
+    return str(event.get("cwd") or "") or None
+
+
 def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
-    if os.environ.get(HOOK_LOG_ENV, "1") == "0":
+    if not logging_on():
         return
-    path = home() / "hook.jsonl"
+    path = home() / DECISION_LOG
     path.parent.mkdir(parents=True, exist_ok=True)
     line = {"at": clock.now().isoformat(timespec="seconds"), "session_id": event.get("session_id"),
             "cwd": event.get("cwd"), **record}
@@ -228,12 +218,12 @@ def _measure(event: dict[str, Any]) -> None:
     """Record what a finished subagent spent (see `subagents.py`) next to the hook's decision on its prompt; a
     transcript that cannot be read, or a log that cannot be written, is skipped quietly.
     """
-    if os.environ.get(HOOK_LOG_ENV, "1") == "0" or not event.get("agent_transcript_path"):
+    if not logging_on() or not event.get("agent_transcript_path"):
         return
     try:
         usage = read_transcript(Path(str(event["agent_transcript_path"])))
-        decision = find_decision(home() / "hook.jsonl", usage.prompt, event.get("session_id"))
-        append_subagent(home() / SUBAGENT_LOG, subagent_record(event, usage, decision))
+        decision = find_decision(home() / DECISION_LOG, usage.prompt, session=event.get("session_id"))
+        append_subagent(home() / SUBAGENT_LOG, subagent_record(event, usage, decision=decision))
     except OSError as exc:
         sys.stderr.write(f"router-hook: subagent not measured: {exc}\n")
 
@@ -244,7 +234,7 @@ def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], *, updated: 
     None. The new launch's cell is the model and effort it will really run on: the hook's, or Claude's own.
     """
     prompt = str(tool_input.get("prompt") or "")
-    if not prompt.strip() or os.environ.get(HOOK_LOG_ENV, "1") == "0":
+    if not prompt.strip() or not logging_on():
         return None
     final = updated or tool_input
     spec = MODELS.get(SHORT_TO_ID.get(str(final.get("model") or ""), str(final.get("model") or "")))
@@ -268,14 +258,14 @@ def _tune(event: dict[str, Any]) -> list[str]:
     the evidence since the project's last reset or applied change (this machine's, plus the other installations'
     counts when the repository shares them), and return one line per change; nothing is ever lowered here.
     """
-    project = project_of(str(event.get("cwd") or "") or None)
-    if not project or os.environ.get(HOOK_LOG_ENV, "1") == "0":
+    project = project_of(_cwd(event))
+    if not project or not logging_on():
         return []
     try:
         tuning = load_tuning(project)
         since = tuning.get("since")
-        mine = evidence(project, load_subagents(home() / SUBAGENT_LOG), relaunched=relaunched_ids(home() / "hook.jsonl"),
-                        since=since)
+        mine = evidence(project, load_subagents(home() / SUBAGENT_LOG),
+                        relaunched=relaunched_ids(home() / DECISION_LOG), since=since)
         changes = raise_failing(project, combine(mine, pooled(project, since=since)[0]),
                                 current=start_in_force(tuning), local=mine)
     except Exception as exc:  # noqa: BLE001 - tuning is a side task: it must never cost the session its context
@@ -287,12 +277,12 @@ def _tune(event: dict[str, Any]) -> list[str]:
 
 def _share(event: dict[str, Any]) -> None:
     """Prune the repository's shared counts and add this installation's settled weeks, when it shares them."""
-    project = project_of(str(event.get("cwd") or "") or None)
-    if not project or os.environ.get(HOOK_LOG_ENV, "1") == "0":
+    project = project_of(_cwd(event))
+    if not project or not logging_on():
         return
     try:
         prune(project)
-        write_own(project, load_subagents(home() / SUBAGENT_LOG), decision_log=home() / "hook.jsonl")
+        write_own(project, load_subagents(home() / SUBAGENT_LOG), decision_log=home() / DECISION_LOG)
     except Exception as exc:  # noqa: BLE001 - sharing is a side task: it must not cost the session nor hide a raise
         sys.stderr.write(f"router-hook: shared counts not written: {type(exc).__name__}: {exc}\n")
 
@@ -328,7 +318,7 @@ def _session_start(event: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
     raised = _tune(event)
     _share(event)
-    if raised and os.environ.get(HOOK_QUIET_ENV) != "1":
+    if raised and not quiet():
         out["systemMessage"] = "router: " + "; ".join(raised) + " (`router project` shows why; `--reset` undoes it)"
     return out
 
@@ -353,7 +343,7 @@ def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
         return None  # in a session the router started (its own probe, say), asking again would never end
     text = str(event.get("last_assistant_message") or event.get("error_details") or "")
     limit = limits.learn(text, models={s.short: s.id for s in MODELS.values() if s.claude})
-    if limit is None or os.environ.get(HOOK_QUIET_ENV) == "1":
+    if limit is None or quiet():
         return None
     who = "every model" if limit.model == limits.ALL_MODELS else limit.model
     return {"systemMessage": f"router: {who} limited until {limit.when()} ({limit.window}); subagents go to the next "
@@ -380,8 +370,7 @@ def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
     refused = _limited_explicit(tool_input)
     if refused is not None:
         return refused
-    updated, record = decide(tool_input, main_model(event.get("transcript_path")),
-                             cwd=str(event.get("cwd") or "") or None)
+    updated, record = decide(tool_input, main_model(event.get("transcript_path")), cwd=_cwd(event))
     try:
         relaunch = _relaunch_of(event, tool_input, updated=updated, record=record)
     except OSError:  # learning is a side task: it never costs the routing
@@ -398,7 +387,7 @@ def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
     except OSError as exc:  # a log that cannot be written must not cost the routing
         sys.stderr.write(f"router-hook: decision not logged: {exc}\n")
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": updated}}
-    if os.environ.get(HOOK_QUIET_ENV) != "1":
+    if not quiet():
         out["systemMessage"] = f"router: {record['cell']} ({record['kind']}/{record['risk']})" + (
             " · cross-checked against the chat" if record.get("cross") else "") + (
             f" · {record['limited']}" if record.get("limited") else "")

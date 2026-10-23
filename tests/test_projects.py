@@ -113,7 +113,7 @@ def test_reset_keeps_raises_from_coming_back_and_bad_tunings_are_ignored(tmp_pat
     again = projects.evidence(project, records, relaunched={"a0", "a1", "a2"}, since=tuning["since"])
     assert projects.raise_failing(project, again, current=lambda kind, risk: parse_cell("haiku/medium"), local=again) == []
     projects.tuning_path(project).write_text(json.dumps({"start": {
-        "review": {"medium": {"cell": "gpt-9/low"}, "high": "opus"}, "code": "x", "write": {"low": {"cell": 5}}}}))
+        "review": {"medium": {"cell": "vendor-9/low"}, "high": "opus"}, "code": "x", "write": {"low": {"cell": 5}}}}))
     assert projects.load_tuning(project)["start"] == {}  # nothing usable: nothing applied, nothing crashes
     junk = projects.evidence(project, _records(project, "review", "medium", "gone-model/low", 6, "z"), relaunched={"z0", "z1"})
     assert projects.raise_failing(project, junk, current=lambda kind, risk: parse_cell("haiku/medium"), local=junk) == []
@@ -214,7 +214,7 @@ def test_router_project_shows_the_evidence_proposes_applies_and_resets(tmp_path,
     (tmp_path / "home" / "model-router").mkdir(parents=True)
     lines = [{**r, "final": True} for r in _records(project, "search", "low", "fable/low", 10, "b")]
     (tmp_path / "home" / "model-router" / "subagents.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
-    monkeypatch.setattr("model_router.hook.start_in_force", lambda tuning: lambda kind, risk: parse_cell("fable/low"))
+    monkeypatch.setattr("model_router.cli.start_in_force", lambda tuning: lambda kind, risk: parse_cell("fable/low"))
     assert main(["project", str(repo)]) == 0
     out = capsys.readouterr().out
     assert "search" in out and "fable/low" in out and "not applied" in out
