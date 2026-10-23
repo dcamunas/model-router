@@ -44,6 +44,8 @@ The plugin is the product: what a plugin user never runs is gone, and every sett
   left out of the shared counts. One frontmatter reader now, quotes and comments dropped.
 - The skill and the hook's docstring said a declaration in the Agent description counts; only the first lines
   of the prompt do.
+- `router config` read a `config.json` that is not a JSON object as empty and wrote over it, losing the rest. It
+  now refuses and says so; the hook routes with the defaults meanwhile.
 
 ## [0.19.0] - 2026-10-23
 

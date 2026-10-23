@@ -6,7 +6,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from model_router.paths import home
+import pytest
+
+from model_router.paths import config_path, home, read_config, write_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,6 +21,17 @@ def test_the_state_lives_in_the_profile_in_use_and_two_profiles_share_nothing(tm
     monkeypatch.delenv("CLAUDE_CONFIG_DIR")
     monkeypatch.setenv("HOME", str(tmp_path))
     assert home() == tmp_path / ".claude" / "model-router"
+
+
+def test_a_config_that_is_not_json_is_read_as_empty_but_never_overwritten():
+    write_config(models=["opus"], judge="opus/high")
+    write_config(judge=None)
+    assert read_config() == {"models": ["opus"]}  # None removes a key
+    config_path().write_text('{"models": ["opus"], "judge": ')  # cut short by hand
+    assert read_config() == {}  # the hook routes with the defaults
+    with pytest.raises(ValueError, match="not a JSON object"):
+        write_config(models=["haiku"])
+    assert config_path().read_text() == '{"models": ["opus"], "judge": '
 
 
 def _cached_plugin(profile: Path) -> Path:

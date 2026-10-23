@@ -72,9 +72,8 @@ def read_config() -> dict[str, Any]:
 
 def write_config(**values: Any) -> Path:
     """Merge `values` into config.json (a None value removes its key) and return its path."""
-    data = {k: v for k, v in {**read_config(), **values}.items() if v is not None}
     path = config_path()
-    replace_file(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    merge_json(path, values)
     return path
 
 
@@ -85,6 +84,19 @@ def read_json(path: Path) -> dict[str, Any]:
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def merge_json(path: Path, values: dict[str, Any]) -> None:
+    """Merge `values` into the JSON object in `path`, creating it; a None value removes its key.
+
+    Raises:
+        ValueError: `path` holds something that is not a JSON object, which a merge would throw away.
+    """
+    data = read_json(path)
+    if not data and path.exists() and path.read_text(encoding="utf-8").strip() not in ("", "{}"):
+        raise ValueError(f"{path} is not a JSON object: fix it or delete it, then run the command again")
+    merged = {k: v for k, v in {**data, **values}.items() if v is not None}
+    replace_file(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
 
 
 def read_jsonl(path: Path, *, tail_bytes: int | None = None) -> list[dict[str, Any]]:
