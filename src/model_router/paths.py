@@ -101,7 +101,8 @@ def merge_json(path: Path, values: dict[str, Any]) -> None:
 
 def read_jsonl(path: Path, *, tail_bytes: int | None = None) -> list[dict[str, Any]]:
     """Return the JSON objects of a log, one per line, in file order: only the last `tail_bytes` when given (its
-    first line, cut in half, is dropped). A missing file is empty; a line cut short by two writers is skipped.
+    first line, cut in half, is dropped). Lines end at a newline only: JSON written with `ensure_ascii=False` keeps
+    U+2028 or U+0085 inside a string. A missing file is empty; a line cut short by two writers is skipped.
     """
     cut = False
     try:
@@ -113,7 +114,7 @@ def read_jsonl(path: Path, *, tail_bytes: int | None = None) -> list[dict[str, A
             raw = fh.read().decode("utf-8", errors="replace")
     except OSError:
         return []
-    lines = raw.splitlines()[1:] if cut else raw.splitlines()
+    lines = raw.split("\n")[1:] if cut else raw.split("\n")
     out = []
     for line in lines:
         try:

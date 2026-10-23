@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from model_router.paths import config_path, home, read_config, write_config
+from model_router.paths import config_path, home, read_config, read_jsonl, write_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,6 +21,13 @@ def test_the_state_lives_in_the_profile_in_use_and_two_profiles_share_nothing(tm
     monkeypatch.delenv("CLAUDE_CONFIG_DIR")
     monkeypatch.setenv("HOME", str(tmp_path))
     assert home() == tmp_path / ".claude" / "model-router"
+
+
+def test_a_log_line_holding_a_unicode_line_separator_is_one_record(tmp_path):
+    log = tmp_path / "log.jsonl"
+    log.write_text('{"reason": "a\u2028b\u0085c"}\n{"reason": "plain"}\n', encoding="utf-8")
+    assert [r["reason"] for r in read_jsonl(log)] == ["a\u2028b\u0085c", "plain"]
+    assert [r["reason"] for r in read_jsonl(log, tail_bytes=10_000)] == ["a\u2028b\u0085c", "plain"]
 
 
 def test_a_config_that_is_not_json_is_read_as_empty_but_never_overwritten():
