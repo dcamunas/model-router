@@ -96,12 +96,12 @@ def _head(prompt: str) -> str:
     return "\n".join([line for line in prompt.splitlines() if line.strip()][:DECLARATION_LINES])
 
 
-def classify_rules(prompt: str) -> Classification:
-    """Classify `prompt`: a declared kind or risk first (see `declared`); then the first kind rule that
-    matches; the risk from the high-risk keywords, else low for cheap kinds with short prompts, else
-    medium. Critical is never inferred.
+def classify_rules(prompt: str, *, description: str = "") -> Classification:
+    """Classify `prompt`: a declared kind or risk first (see `declared`, the prompt's head only); then the first
+    kind rule that matches the prompt or the `description` (the Agent tool's few words); the risk from the
+    high-risk keywords, else low for cheap kinds with short prompts, else medium. Critical is never inferred.
     """
-    text = prompt.lower()
+    text = f"{prompt}\n{description}".lower()
     kind, risk = declared(prompt)
     why, risk_why = "declared", "declared"
     if kind is None:

@@ -92,7 +92,7 @@ The full rules, the ladder and who judges: [How it decides](docs/how-it-decides.
 | Install, upgrade or remove it | [Install](docs/install.md) |
 | Set it up for a whole team in one repository | [In a team repository](docs/install.md#in-a-team-repository) |
 | Know what the plugin does to my subagents | [Inside Claude Code](docs/claude-code.md) |
-| Turn the hooks off, or keep subagents off the read-only agent | [Environment variables](docs/claude-code.md#environment-variables) |
+| Turn the hooks off, or keep subagents off the read-only agent | [Environment variables](docs/claude-code.md#environment-variables), [Commands](docs/claude-code.md#commands) |
 | Know what happens when a model's usage limit is spent | [Usage limits](docs/claude-code.md#usage-limits) |
 | Run tasks from the command line or from Python | [Command line and library](docs/cli.md) |
 | Use it with my Claude account, without an API key | [Without an API key](docs/cli.md#without-an-api-key-with-your-claude-account) |

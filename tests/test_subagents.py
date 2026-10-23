@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from model_router.hook import decide, handle
 from model_router.subagents import load, prompt_hash, read_transcript, record, summary_rows
 
@@ -135,6 +137,16 @@ def test_an_old_config_naming_unknown_models_never_stops_the_router(tmp_path, mo
     assert main(["plan", "review the payment code", "--risk", "high"]) == 0
     out = capsys.readouterr().out
     assert "judge setting cannot be used" in out and "opus/xhigh instead" in out
+
+
+def test_an_unreadable_transcript_is_not_measured_as_zero(tmp_path):
+    path = _transcript(tmp_path / "t.jsonl", "Review it", [_turn("m1")])
+    path.chmod(0)
+    try:
+        with pytest.raises(OSError):
+            read_transcript(path)
+    finally:
+        path.chmod(0o600)
 
 
 def test_a_log_s_tail_is_read_without_the_line_cut_in_half(tmp_path):

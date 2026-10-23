@@ -126,7 +126,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     if not prompt.strip():
         return None, {"skipped": "empty prompt"}
     description = str(tool_input.get("description") or "")
-    cls = classify_rules(f"{prompt}\n{description}")
+    cls = classify_rules(prompt, description=description)
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
     project = project_of(cwd)
     raised = floors.apply(cls.risk, floors.head(prompt, description), floors=floors.load(project))
@@ -246,7 +246,7 @@ def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], *, updated: 
         return None
     kind, risk = record.get("kind"), record.get("risk")
     if not kind or not risk:  # a launch the hook left alone: its kind and risk as the hook would read them
-        cls = classify_rules(f"{prompt}\n{tool_input.get('description') or ''}")
+        cls = classify_rules(prompt, description=str(tool_input.get("description") or ""))
         kind, risk = cls.kind, cls.risk
     found = find_relaunch(load_recent(home() / SUBAGENT_LOG), event.get("session_id"),
                           prompt_signature=signature(prompt), cell=cell, kind=kind, risk=risk)

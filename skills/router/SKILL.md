@@ -61,8 +61,7 @@ router run --file brief.md --check-json name,date,amount     # programmatic chec
 router run "..." --json                                      # answer + attempts as JSON
 ```
 
-It uses the Claude account of this session's profile (or the one `router config` recorded), with no API
-key. The plugin brings the `router` command; until the first session has built its environment it says
+It uses the Claude account of this session's profile, with no API key. The plugin brings the `router` command; until the first session has built its environment it says
 "not ready yet", and after that `router doctor` explains anything that fails.
 
 ## When to step in yourself

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -77,7 +78,7 @@ def read_transcript(path: Path) -> SubagentUsage:
     out = SubagentUsage()
     messages: dict[str, tuple[str, dict[str, Any]]] = {}
     moments: list[datetime] = []
-    if not path.is_file():
+    if not path.is_file() or not os.access(path, os.R_OK):  # read_jsonl reads an unreadable file as empty
         raise FileNotFoundError(path)
     for entry in read_jsonl(path):
         moment = clock.parse_moment(entry.get("timestamp"))

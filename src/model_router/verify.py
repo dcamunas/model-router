@@ -62,7 +62,7 @@ def judge_prompt(task: Task, answer: str) -> str:
 
 @dataclass(frozen=True)
 class JudgeVerdict:
-    """One judge's own verdict, kept apart from the attempt's final verdict for the scoreboard."""
+    """One judge's own verdict, kept apart from the attempt's final verdict."""
 
     cell: Cell
     passed: bool

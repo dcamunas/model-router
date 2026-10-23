@@ -59,6 +59,12 @@ def test_a_declaration_quoted_in_the_material_or_glued_to_a_word_is_not_one():
     assert classify_rules("Review it.\nrisk: high\nMaterial:\nrisk: low").risk == "high"  # second line still counts
 
 
+def test_the_agent_description_feeds_the_rules_but_never_declares():
+    one_line = classify_rules("Look at the billing change", description="kind: review, risk: critical")
+    assert one_line.risk == "medium" and not one_line.reason.startswith("declared")  # its words count as a rule's
+    assert classify_rules("Look at the billing change", description="Review billing").kind == "review"
+
+
 def test_the_reason_names_the_rule_and_the_risk_signal_in_spanish():
     cls = classify_rules("Revisa este script SQL antes de producción")
     assert cls.reason == "rule 'revisa'; risk: high-risk keyword"

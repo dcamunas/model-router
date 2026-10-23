@@ -353,9 +353,12 @@ def test_a_week_with_agent_runs_waits_while_git_cannot_say_which_agents_are_comm
     project = _repo(tmp_path, monkeypatch)
     _agent_file(project, "curator")
     records = [_agent_run(project, "curator", i, SETTLED) for i in range(2)]
+    routed_only = SETTLED - timedelta(weeks=1)
+    records.append(_rec(project, "sonnet/low", 9, routed_only))  # a week with no agent runs
     with monkeypatch.context() as patch:
         patch.setattr("model_router.shared.committed_agents", lambda project: None)  # git missing, refused, slow
-        assert shared.write_own(project, records, decision_log=STATE(tmp_path) / "hook.jsonl") == []
+        [other] = shared.write_own(project, records, decision_log=STATE(tmp_path) / "hook.jsonl")
+    assert clock.week_of(routed_only).replace("-", "") in other.name  # that week does not wait for git
     [path] = shared.write_own(project, records, decision_log=STATE(tmp_path) / "hook.jsonl")
     assert json.loads(path.read_text())["a"] == {"curator|opus/xhigh": [2, 0]}  # written whole, the next time
 
