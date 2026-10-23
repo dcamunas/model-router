@@ -57,7 +57,10 @@ router project --team    # writes the two keys below into .claude/settings.json,
 Claude Code reads them once a teammate trusts the folder, but it does not install a plugin hosted
 elsewhere on its own: each person runs, once, in that repository,
 `claude plugin install model-router@dcamunas --scope project`, and starts a new session. They need
-`uv`. `router doctor` run in the repository says whether it is installed in that profile. Then, if you
+`uv`. The plugin alone does not put the `router` command on the PATH; whoever wants `router doctor`,
+`router agents` or `router limits` installs the CLI as well
+(`uv tool install git+https://github.com/dcamunas/model-router@v0.18.0`). `router doctor` run in the
+repository says whether the plugin is installed in that profile. Then, if you
 want them: [risk floors](claude-code.md#risk-floors-per-repository) in `.claude/model-router.json` and
 [shared counts](claude-code.md#shared-with-your-team-optional) with `router project --share`.
 
