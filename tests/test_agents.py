@@ -85,6 +85,14 @@ def test_agents_that_inherit_the_model_or_are_built_in_get_no_advice(tmp_path):
     assert sorted(a.agent for a in agents.advise(records, str(repo), cells=lattice())) == ["fixed", "plugin:x"]
 
 
+def test_the_frontmatter_reader_drops_quotes_and_trailing_comments():
+    from model_router.agents import frontmatter
+
+    assert frontmatter('---\nname: x\nmodel: "opus"  # QA wants depth\neffort: \'high\'\n---\nbody') == {
+        "model": "opus", "effort": "high"}
+    assert frontmatter("---\nmodel:\n---\n") == {"model": ""} and frontmatter("no frontmatter") == {}
+
+
 def test_router_agents_prints_the_advice_and_where_the_agent_lives(tmp_path, monkeypatch, capsys):
     home = tmp_path / "profile" / "model-router"
     home.mkdir(parents=True)

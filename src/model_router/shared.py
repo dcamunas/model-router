@@ -122,9 +122,10 @@ def own_counts(project: str, records: list[dict[str, Any]], *, relaunched: set[s
 
 
 def own_agent_counts(project: str, records: list[dict[str, Any]], *,
-                     now: datetime | None = None) -> dict[str, dict[str, list[int]]]:
+                     now: datetime | None = None) -> dict[str, dict[str, list[int]]] | None:
     """Return this installation's runs of the repository's agents fixed by hand, per settled week: per
     `agent|cell`, [runs, repeated]. An agent defined outside the repository (a plugin's, a profile's) never goes in.
+    None when there are runs to count and git cannot say which agents the repository commits.
     """
     moment = now or clock.now()
     first = window_start(moment)
@@ -137,6 +138,8 @@ def own_agent_counts(project: str, records: list[dict[str, Any]], *,
         if cell is not None and week is not None and not record.get("routed") and AGENT_KEY.match(f"{agent}|{cell.label}"):
             candidates.append((week, agent, cell.label, str(record.get("agent_id"))))
     committed = committed_agents(project) if candidates else {}
+    if committed is None:
+        return None
     if not committed:
         return {}
     repeated = repeated_ids(recent)
@@ -190,7 +193,8 @@ def prune(project: str, now: datetime | None = None) -> list[Path]:
 def write_own(project: str, records: list[dict[str, Any]], *, decision_log: Path,
               now: datetime | None = None) -> list[Path]:
     """In a repository that shares counts, add a file for each settled week this installation has counts for and
-    has not written yet, and return the files added. A file once written is never changed.
+    has not written yet, and return the files added. A file once written is never changed, so when git cannot say
+    which agents the repository commits nothing is written, and the next session tries again.
     """
     if not sharing(project):
         return []
@@ -203,6 +207,8 @@ def write_own(project: str, records: list[dict[str, Any]], *, decision_log: Path
     added = []
     routed = own_counts(project, records, relaunched=relaunched_ids(decision_log), now=now)
     fixed = own_agent_counts(project, records, now=now)
+    if fixed is None:
+        return []
     for week in sorted(routed.keys() | fixed.keys()):
         path = folder / f"{mine}-{week.replace('-', '')}.json"
         if os.path.lexists(path):

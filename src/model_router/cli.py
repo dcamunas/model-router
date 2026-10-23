@@ -326,7 +326,7 @@ def _cmd_agents(args: argparse.Namespace) -> int:
         raise SystemExit(f"not inside a git repository: {where}. Agents are advised per repository")
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)
-    committed = agents.committed_agents(project)
+    committed = agents.committed_agents(project) or {}
     pooled, teammates = shared.pooled_agents(
         project, keep=lambda agent, label: agent in committed and agents.names_cell(committed[agent], parse_cell(label)))
     advice = agents.advise(load_subagents(home() / SUBAGENT_LOG), project, cells=lattice(), team=pooled)

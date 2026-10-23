@@ -4,7 +4,7 @@ spent, and learns per repository where each kind of task should start.
 Events handled (one entry point, dispatch on `hook_event_name`):
 
 * PreToolUse, matcher Agent: when Claude launches a general-purpose subagent without choosing a
-  `model`, the hook takes kind and risk from a declaration in the description or the prompt
+  `model`, the hook takes kind and risk from a declaration on the first lines of the prompt
   (`risk: high`, `kind: review`), else infers them from the text, asks the Policy for the start
   cell (with the repository's tuning) and returns `hookSpecificOutput.updatedInput` with `model`
   (and `effort` when unset). The repository's floors (`.claude/model-router.json`, see `floors.py`) can

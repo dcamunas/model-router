@@ -54,13 +54,13 @@ from .projects import (
 # Not fixed by hand: the router's own choices, Claude Code's built-in agents, the read-only agent, workflow agents.
 NOT_FIXED_BY_HAND = frozenset({"", "general-purpose", "claude", "workflow-subagent", "Explore", "Plan",
                                "claude-code-guide", "statusline-setup"})
-INHERITS = re.compile(r"^model:\s*(inherit\s*)?$", re.M)  # frontmatter that leaves the model to the session
 LOWER_MAX_LOSS = 0.08  # the capability a lower cell may give up
 TeamRuns = dict[tuple[str, str], dict[str, int]]  # (agent, cell label) -> {"n": runs, "fails": repeated}, from teammates
 AGENTS_DIR = (".claude", "agents")
 REGULAR_MODES = frozenset({"100644", "100755"})  # git's modes for a plain file; 120000 is a link
 GIT_SECONDS = 10.0
-FRONTMATTER_FIELD = re.compile(r"^(model|effort):\s*(\S+)\s*$", re.M)
+FRONTMATTER_PARTS = 3  # what splitting a file on its first two `---` gives: before, the frontmatter, the body
+FRONTMATTER_FIELD = re.compile(r"^(model|effort)\s*:(.*)$", re.M)
 Fixed = tuple[str, str | None]  # the model's short name and the effort an agent file names (None: not set)
 
 
@@ -102,23 +102,31 @@ def fixed_by_hand(record: dict[str, Any], project: str) -> bool:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return True
+    return frontmatter(text).get("model", "") not in ("", "inherit")
+
+
+def frontmatter(text: str) -> dict[str, str]:
+    """Return the `model` and `effort` an agent file's frontmatter sets, as written but without quotes or a trailing
+    comment (`model: "opus"  # why` is `opus`); empty when the file has no frontmatter.
+    """
     parts = text.split("---", 2)
-    frontmatter = parts[1] if text.startswith("---") and len(parts) == 3 else ""
-    return "model:" in frontmatter and not INHERITS.search(frontmatter)
+    if not text.startswith("---") or len(parts) != FRONTMATTER_PARTS:
+        return {}
+    return {key: value.split(" #")[0].strip().strip("'\"") for key, value in FRONTMATTER_FIELD.findall(parts[1])}
 
 
-def committed_agents(project: str) -> dict[str, Fixed]:
+def committed_agents(project: str) -> dict[str, Fixed] | None:
     """Return the agents committed in the repository that fix a model, by name, with the model and effort their
     file names now: `.claude/agents/<name>.md` in git's index as a plain file and a plain file on disk too. A link,
     an untracked or ignored file, a file in a subfolder or one that says `inherit` is left out, so an agent from a
-    profile or a plugin never reaches the shared counts. Empty when git cannot tell.
+    profile or a plugin never reaches the shared counts. None when git cannot tell (missing, refused, too slow).
     """
     folder = "/".join(AGENTS_DIR)
     try:
         listed = subprocess.run(["git", "-C", project, "ls-files", "-s", "-z", "--", folder], capture_output=True,
                                 text=True, timeout=GIT_SECONDS, check=True).stdout
     except (OSError, subprocess.SubprocessError):
-        return {}
+        return None
     out = {}
     for entry in filter(None, listed.split("\0")):
         meta, _, path = entry.partition("\t")
@@ -139,10 +147,9 @@ def _fixed(path: Path) -> Fixed | None:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-    parts = text.split("---", 2)
-    fields = dict(FRONTMATTER_FIELD.findall(parts[1])) if text.startswith("---") and len(parts) == 3 else {}
+    fields = frontmatter(text)
     model = next((spec.short for spec in MODELS.values() if fields.get("model") in (spec.short, spec.id)), None)
-    return (model, fields.get("effort")) if model else None
+    return (model, fields.get("effort") or None) if model else None
 
 
 def names_cell(fixed: Fixed, cell: Cell) -> bool:
@@ -182,7 +189,7 @@ def advise(records: list[dict[str, Any]], project: str, *, cells: list[Cell], te
         cell = served_cell(r)
         if r.get("project") == project and cell is not None and fixed_by_hand(r, project):
             groups.setdefault((str(r["agent_type"]), cell), []).append(r)
-    committed = committed_agents(project) if team or groups else {}
+    committed = (committed_agents(project) or {}) if team or groups else {}
     theirs: dict[tuple[str, Cell], dict[str, int]] = {}
     for (agent, label), tally in (team or {}).items():
         try:

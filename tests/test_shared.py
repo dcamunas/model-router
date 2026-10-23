@@ -349,6 +349,17 @@ def test_the_week_file_carries_the_repository_s_own_agents_and_nothing_from_else
     assert not any(name in text for name in ("my-profile-agent", "untracked", "client-secret", project))
 
 
+def test_a_week_with_agent_runs_waits_while_git_cannot_say_which_agents_are_committed(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    _agent_file(project, "curator")
+    records = [_agent_run(project, "curator", i, SETTLED) for i in range(2)]
+    with monkeypatch.context() as patch:
+        patch.setattr("model_router.shared.committed_agents", lambda project: None)  # git missing, refused, slow
+        assert shared.write_own(project, records, decision_log=STATE(tmp_path) / "hook.jsonl") == []
+    [path] = shared.write_own(project, records, decision_log=STATE(tmp_path) / "hook.jsonl")
+    assert json.loads(path.read_text())["a"] == {"curator|opus/xhigh": [2, 0]}  # written whole, the next time
+
+
 def test_teammates_agent_runs_are_pooled_capped_and_checked(tmp_path, monkeypatch):
     project = _repo(tmp_path, monkeypatch)
     def theirs(install, week, runs):
