@@ -24,7 +24,7 @@ CARRIED_REASON_CHARS = 600  # how much of a failed verdict's reason the next att
 REFUSALS_TO_STOP = 2  # a task refused this many times is refused: another cell would only spend more
 
 
-def with_failure(prompt: str, cell: Cell, reason: str) -> str:
+def with_failure(prompt: str, *, cell: Cell, reason: str) -> str:
     """Return `prompt` with a note on why the previous attempt (on `cell`) failed verification, so the next
     cell does not repeat the mistake. The note names the model, not the effort: the next worker needs the
     mistake, not the lattice.
@@ -162,7 +162,7 @@ class Router:
             ledger = Ledger(None)
         self.ledger = ledger
 
-    def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop; splitting it would hide the stop conditions
+    def run(self, task: Task) -> TaskResult:  # noqa: C901 - the attempt loop: its stop conditions read best together, which is also why it runs past 50 statements
         """Run `task` through its plan, append the result to the ledger and return it. A judge that cannot be
         reached ends the task with status `error`. After a verified fail, the next attempt's prompt carries the
         reason (`with_failure`).
@@ -184,14 +184,15 @@ class Router:
             if attempts and spent + cell.expected_cost(est_input, min(PLAN_OUTPUT_TOKENS_AT_HIGH, max_tokens)) > plan.budget_usd:
                 status = "budget"
                 break
-            prompt = with_failure(task.prompt, *failure) if failure else task.prompt
+            prompt = with_failure(task.prompt, cell=failure[0], reason=failure[1]) if failure else task.prompt
             try:
                 completion = self.client.complete(
                     cell, prompt=prompt, system=task.system, max_tokens=max_tokens, output_format=task.output_schema
                 )
             except ClientUnavailableError as exc:
-                attempts.append(Attempt(n, cell, Usage(), 0.0, 0.0, "error", cell.model, None, False, None, "error", str(exc),
-                                        carried_reason=failure is not None))
+                attempts.append(Attempt(n, cell, Usage(), cost_usd=0.0, seconds=0.0, stop_reason="error",
+                                        served_model=cell.model, request_id=None, refused=False, verdict=None,
+                                        verdict_source="error", reason=str(exc), carried_reason=failure is not None))
                 status = "error"
                 break
             cost = cost_usd(cell.model, completion.usage)
@@ -248,8 +249,9 @@ class Router:
         mode = mode or plan.verify
         started_at = clock.stamp()
         t0 = time.monotonic()
-        base = Attempt(1, worker, Usage(), 0.0, 0.0, EXTERNAL_STOP, worker.model, None, refused=False, verdict=None,
-                       verdict_source="", reason="")
+        base = Attempt(1, worker, Usage(), cost_usd=0.0, seconds=0.0, stop_reason=EXTERNAL_STOP,
+                       served_model=worker.model, request_id=None, refused=False, verdict=None, verdict_source="",
+                       reason="")
         try:
             verdict = self.verifier.verify(task, answer, mode=mode, worker=worker)
         except ClientUnavailableError as exc:

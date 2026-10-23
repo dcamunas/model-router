@@ -112,11 +112,9 @@ def test_judge_command_verifies_a_file_and_exits_1_on_a_fail(home, monkeypatch, 
     assert data["status"] == "unsolved" and data["attempts"][0]["verdicts"][0]["passed"] is False
     main(["stats"])
     assert "tasks 2 · solved 1" in capsys.readouterr().out
-    with pytest.raises(SystemExit, match="cannot access"):
-        main(["judge", "x", "--answer", str(home / "nope.md")])
+    assert main(["judge", "x", "--answer", str(home / "nope.md")]) == 2 and "cannot access" in capsys.readouterr().err
     answer.write_text("   ")
-    with pytest.raises(SystemExit, match="answer is empty"):
-        main(["judge", "x", "--answer", str(answer)])
+    assert main(["judge", "x", "--answer", str(answer)]) == 2 and "answer is empty" in capsys.readouterr().err
 
 
 def _verdict(passed: bool):
@@ -125,11 +123,9 @@ def _verdict(passed: bool):
     return Verdict(passed=passed, confidence=0.9, reason="because")
 
 
-def test_a_missing_task_or_system_file_is_a_one_line_error(home):
-    with pytest.raises(SystemExit, match="cannot access"):
-        main(["plan", "--file", str(home / "nope.md")])
-    with pytest.raises(SystemExit, match="cannot access"):
-        main(["plan", "x", "--system", str(home / "nope.txt")])
+def test_a_missing_task_or_system_file_is_a_one_line_error(home, capsys):
+    assert main(["plan", "--file", str(home / "nope.md")]) == 2 and "cannot access" in capsys.readouterr().err
+    assert main(["plan", "x", "--system", str(home / "nope.txt")]) == 2 and "cannot access" in capsys.readouterr().err
 
 
 def test_doctor_survives_a_profile_whose_settings_have_an_odd_shape(capsys):
@@ -177,8 +173,7 @@ def test_an_unknown_model_is_said_in_the_plan_and_the_doctor_and_refused_by_conf
     main(["doctor"])
     out = capsys.readouterr().out
     assert "available models: haiku" in out and "does not know, ignored: sonet" in out
-    with pytest.raises(SystemExit, match="unknown model 'opsu'"):
-        main(["config", "--models", "opsu"])
+    assert main(["config", "--models", "opsu"]) == 2 and "unknown model 'opsu'" in capsys.readouterr().err
     assert json.loads((home / "config.json").read_text())["models"] == ["haiku", "sonet"]
 
 
@@ -209,10 +204,8 @@ def test_config_shows_and_sets_the_models_the_judge_and_the_reader(home, capsys)
     assert json.loads((home / "config.json").read_text())["judge"] == "opus/max"
     main(["doctor"])  # exits 1 here because the plugin is not installed; the judge line is what matters
     assert "judge for full verification: opus/xhigh (via config.json)" in capsys.readouterr().out  # capped at xhigh
-    with pytest.raises(SystemExit, match="unknown model 'opsu'"):
-        main(["config", "--models", "opsu"])
-    with pytest.raises(SystemExit, match="unknown effort"):
-        main(["config", "--judge", "opus/turbo"])
+    assert main(["config", "--models", "opsu"]) == 2 and "unknown model 'opsu'" in capsys.readouterr().err
+    assert main(["config", "--judge", "opus/turbo"]) == 2 and "unknown effort" in capsys.readouterr().err
     assert not (home / "settings.json").exists()
 
 

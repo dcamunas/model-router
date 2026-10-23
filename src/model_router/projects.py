@@ -29,7 +29,7 @@ import re
 import secrets
 import tempfile
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, TypedDict  # Any: decoded JSON (subagent records, tunings, the decision log)
 
@@ -209,9 +209,7 @@ def window_start(now: datetime | None = None) -> datetime:
     """Return where evidence starts counting: the first whole ISO week inside WINDOW, the same here and in the
     shared counts, so both sources weigh the same weeks.
     """
-    year, week, _ = ((now or clock.now()) - WINDOW).astimezone(UTC).isocalendar()
-    monday = date.fromisocalendar(year, week, 1)
-    return datetime(monday.year, monday.month, monday.day, tzinfo=UTC) + timedelta(weeks=1)
+    return clock.monday_of((now or clock.now()) - WINDOW) + timedelta(weeks=1)
 
 
 # ---- evidence ----------------------------------------------------------------------------------------------------

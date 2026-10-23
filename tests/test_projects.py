@@ -222,10 +222,8 @@ def test_router_project_shows_the_evidence_proposes_applies_and_resets(tmp_path,
     assert "applied:" in capsys.readouterr().out and projects.load_tuning(project)["start"]["search"]["low"]
     assert main(["project", str(repo), "--reset"]) == 0
     assert projects.load_tuning(project)["start"] == {}
-    import pytest
 
-    with pytest.raises(SystemExit, match="not inside a git repository"):
-        main(["project", str(tmp_path)])
+    assert main(["project", str(tmp_path)]) == 2 and "not inside a git repository" in capsys.readouterr().err
 
 
 def test_a_cheaper_start_needs_ten_clean_launches_not_nine(tmp_path, monkeypatch):

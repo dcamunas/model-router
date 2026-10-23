@@ -39,7 +39,7 @@ DECLARED_KIND = re.compile(r"(?:^|[\s,;(\[])(?:kind|tipo)\s*[:=]\s*(" + _KIND_VA
 DECLARED_RISK = re.compile(r"(?:^|[\s,;(\[])(?:risk|riesgo)\s*[:=]\s*(" + _RISK_VALUES + r")(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
 # A line made of declarations only, e.g. `kind: review, risk: low, access: read`: where `access: read` counts.
 DECLARATION_LINE = re.compile(
-    r"^\s*(?:(?:kind|tipo|risk|riesgo|access|acceso|qa)\s*[:=]\s*[\w-]+\s*[,;.]?\s*)+$", re.I)
+    r"^\s*(?:(?:kind|tipo|risk|riesgo|access|acceso)\s*[:=]\s*[\w-]+\s*[,;.]?\s*)+$", re.I)
 DECLARED_ACCESS = re.compile(r"(?:^|[\s,;(\[])(?:access|acceso)\s*[:=]\s*(read|write|lectura|escritura)(?=\s*(?:$|[,;.)\]]))",
                              re.I | re.M)
 
@@ -57,7 +57,7 @@ def declared_access(prompt: str) -> str | None:
     """Return the access the head of the text declares (`access: read` or `access: write`, also `acceso: lectura`
     or `escritura`), as `read` or `write`, or None.
     """
-    m = DECLARED_ACCESS.search(_head(prompt))
+    m = DECLARED_ACCESS.search(head(prompt))
     if not m:
         return None
     return "write" if m.group(1).lower() in ("write", "escritura") else "read"
@@ -84,14 +84,14 @@ def declared(prompt: str) -> tuple[str | None, str | None]:
     `riesgo: alto`), None for each one it does not. Only the first DECLARATION_LINES non-empty lines count,
     so a declaration quoted in the material (a URL, a pasted report, an eval file) never sets the risk.
     """
-    head = _head(prompt)
-    kind = DECLARED_KIND.search(head)
-    risk = DECLARED_RISK.search(head)
+    lines = head(prompt)
+    kind = DECLARED_KIND.search(lines)
+    risk = DECLARED_RISK.search(lines)
     risk_value = risk.group(1).lower() if risk else None
     return (kind.group(1).lower() if kind else None), (SPANISH_RISK.get(risk_value, risk_value) if risk_value else None)
 
 
-def _head(prompt: str) -> str:
+def head(prompt: str) -> str:
     """Return the first DECLARATION_LINES non-empty lines of `prompt`, where a declaration counts."""
     return "\n".join([line for line in prompt.splitlines() if line.strip()][:DECLARATION_LINES])
 
@@ -121,4 +121,3 @@ def classify_rules(prompt: str, *, description: str = "") -> Classification:
         else:
             risk, risk_why = "medium", "default"
     return Classification(kind, risk, f"{why}; risk: {risk_why}")
-

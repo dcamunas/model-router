@@ -256,14 +256,13 @@ def test_a_week_just_out_of_the_window_is_kept_a_little_longer(tmp_path, monkeyp
     assert kept.exists() and shared.pooled(project) == ({}, 0)  # not counted, but not deleted yet
 
 
-def test_share_refuses_a_claude_directory_that_is_a_link(tmp_path, monkeypatch):
+def test_share_refuses_a_claude_directory_that_is_a_link(tmp_path, monkeypatch, capsys):
     from model_router.cli import main
 
     project = _repo(tmp_path, monkeypatch, share=False)
     (tmp_path / "tools").mkdir()
     (Path(project) / ".claude").symlink_to(tmp_path / "tools")
-    with pytest.raises(SystemExit, match="through a link"):
-        main(["project", project, "--share"])
+    assert main(["project", project, "--share"]) == 2 and "through a link" in capsys.readouterr().err
     assert list((tmp_path / "tools").iterdir()) == []
 
 
@@ -298,13 +297,12 @@ def test_shared_counts_are_written_even_when_tuning_fails(tmp_path, monkeypatch)
     assert (shared.shared_dir(project) / f"{_mine(project)}-{WEEK.replace('-', '')}.json").exists()
 
 
-def test_share_says_what_to_do_when_this_installation_is_kept_out(tmp_path, monkeypatch):
+def test_share_says_what_to_do_when_this_installation_is_kept_out(tmp_path, monkeypatch, capsys):
     from model_router.cli import main
 
     project = _repo(tmp_path, monkeypatch, share=False)
     monkeypatch.setenv("MODEL_ROUTER_SHARE", "0")
-    with pytest.raises(SystemExit, match="Unset it and run"):
-        main(["project", project, "--share"])
+    assert main(["project", project, "--share"]) == 2 and "Unset it and run" in capsys.readouterr().err
 
 
 def _agent_run(project, agent, i, at, *, cell=("opus", "xhigh"), session="s", sig=None, seconds=60):

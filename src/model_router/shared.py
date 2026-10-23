@@ -56,7 +56,7 @@ IDS_KEY_CHARS = 16
 SETTLE = timedelta(days=1)  # a week is written this long after it closes, so a late relaunch is in it
 DELETE_MARGIN = timedelta(weeks=1)  # a machine whose clock runs ahead must not delete weeks the others still count
 ENTRY_FIELDS = 2  # [launches, fails]
-FILE_NAME = re.compile(r"^([0-9a-f]{12})-(\d{4})W(\d{2})\.json$")
+FILE_NAME = re.compile(rf"^([0-9a-f]{{{2 * ID_BYTES}}})-(\d{{4}})W(\d{{2}})\.json$")
 BUCKET_KEY = re.compile(r"^([a-z]+)\|([a-z]+)\|([^|]+)$")  # kind|risk|cell
 AGENT_KEY = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\|([^|]+)$")  # agent|cell, an agent file's name
 

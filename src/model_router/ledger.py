@@ -5,20 +5,17 @@ solved task.
 from __future__ import annotations
 
 import json
-import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: ledger records are JSON lines
 
 from .fmt import money, table
+from .paths import append_jsonl
 from .task import EXTERNAL_STOP, VERIFY_MODES
 
 if TYPE_CHECKING:
     from .runner import TaskResult
-
-_LOCK = threading.Lock()
-
 
 class Ledger:
     """Append-only JSON-lines file of task results; with `path=None` it lives in memory (tests)."""
@@ -33,9 +30,7 @@ class Ledger:
         record = {"type": "task", **result.to_dict()}
         self._memory.append(record)
         if self.path is not None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with _LOCK, self.path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            append_jsonl(self.path, record)
 
     def load(self) -> list[dict[str, Any]]:
         """Return every record in file order. Lines that are not UTF-8 JSON objects (a write cut short by

@@ -51,6 +51,9 @@ router config --models haiku,sonnet,opus --judge opus/xhigh --lean on
 router doctor
 ```
 
+Exit codes: 0 when the command did its job (a task solved, a verdict passed), 1 when a task was not solved or a
+verdict failed, 2 when the command could not run, with one line on stderr saying why.
+
 ## Without an API key: with your Claude account
 
 `router run` and `router judge` do not need `ANTHROPIC_API_KEY`. Without it they use the `cli`

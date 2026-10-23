@@ -35,13 +35,14 @@ from pathlib import Path
 from typing import Any  # Any: decoded JSON (the limits file, the CLI's events)
 
 from . import clock
-from .paths import NO_MCP, child_env, home, locked, read_json, replace_file
+from .paths import NO_MCP, child_env, home, locked, parse_jsonl, read_json, replace_file
 
 LIMITS_FILE = "limits.json"
 ALL_MODELS = "*"  # a window that covers every model (five hours, seven days) is spent
 RECHECK = timedelta(minutes=10)  # how long a limit with no known reset holds before it is probed again
 PROBE_SECONDS = 30.0
 PROBE_SYSTEM = "Answer with the single word ok."
+PROBE_MODEL = "haiku"  # the model asked when the whole account is limited: the cheapest answer, if any
 ACCOUNT_WINDOWS = ("five_hour", "seven_day")  # the windows that cover every model
 # "You've reached your Fable limit" names a model; a limit message that names none ("weekly limit", "usage limit
 # reached", "hit your limit") is the whole account.
@@ -151,9 +152,9 @@ def _store(model: str, probe: Probe, *, hold_unknown: bool) -> Limit | None:
             models.pop(model, None)
             models.pop(ALL_MODELS, None)  # an answered call: the account is not spent
         elif rejected:
-            models[key] = _entry(probe.until, probe.window or "unknown", now)
+            models[key] = _entry(probe.until, window=probe.window or "unknown", now=now)
         elif hold_unknown and not (known is not None and known.until is not None and known.active(now)):
-            models[key] = _entry(None, probe.window or "unknown", now)
+            models[key] = _entry(None, window=probe.window or "unknown", now=now)
         data["models"] = {k: v for k, v in models.items() if _worth_keeping(_limit(k, v), now)}
         if probe.windows:
             data["windows"] = probe.windows
@@ -163,7 +164,7 @@ def _store(model: str, probe: Probe, *, hold_unknown: bool) -> Limit | None:
     return held if held is not None and held.active(now) else None
 
 
-def _entry(until: datetime | None, window: str, now: datetime) -> dict[str, Any]:
+def _entry(until: datetime | None, *, window: str, now: datetime) -> dict[str, Any]:
     return {"until": until.isoformat() if until else None, "window": window, "seen": now.isoformat(timespec="seconds")}
 
 
@@ -192,7 +193,7 @@ def learn(text: str, *, models: dict[str, str], config_dir: Path | None = None, 
     name = model_in_failure(text, models)
     if name is None:
         return None
-    model_id = models.get("haiku" if name == ALL_MODELS else name)
+    model_id = models.get(PROBE_MODEL if name == ALL_MODELS else name)
     if model_id is None:
         return None
     return record_failure(name, probe(model_id, config_dir=config_dir, binary=binary))
@@ -206,7 +207,7 @@ def probe(model_id: str, *, config_dir: Path | None = None, binary: str = "claud
     args = [binary, "-p", "--model", model_id, "--effort", "low", "--output-format", "stream-json", "--verbose",
             "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
             "--system-prompt", PROBE_SYSTEM]
-    try:  # a child session: its own StopFailure hook must not probe again (`hook.handle`)
+    try:  # a child session: its own StopFailure hook must not probe again (`hook._stop_failure`)
         proc = subprocess.run(args, input="ok", capture_output=True, text=True, errors="replace",
                               env=child_env(config_dir), timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:  # retries can outlast the timeout; the event is printed before them
@@ -220,12 +221,8 @@ def probe(model_id: str, *, config_dir: Path | None = None, binary: str = "claud
 def parse_events(stream: str) -> Probe:
     """Read the rate-limit events of a `stream-json` output: rejected with its reset, allowed, or unknown."""
     allowed: Probe | None = None
-    for line in stream.splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        info = event.get("rate_limit_info") if isinstance(event, dict) and event.get("type") == "rate_limit_event" else None
+    for event in parse_jsonl(stream):
+        info = event.get("rate_limit_info") if event.get("type") == "rate_limit_event" else None
         if not isinstance(info, dict):
             continue
         status = str(info.get("status") or "")

@@ -191,7 +191,7 @@ hook cannot do: verify a subagent's result, escalate, and send text-only subtask
 run`, which carries no session context at all. A launch takes the hook about 50 milliseconds, and the
 hooks call no API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
 word (a `claude -p` call of up to 30 seconds) to learn its reset. They block only a launch that names a
-model over its limit; on any error they exit quietly. Agents defined in `.claude/agents/*.md` and forks are
+model over its limit; on any error they exit with one line on stderr. Agents defined in `.claude/agents/*.md` and forks are
 left alone; they are still measured. A session opened before a plugin update keeps routing with the
 environment the update installed, and never puts the older version back.
 

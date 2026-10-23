@@ -1,7 +1,7 @@
 """Backend without an API key: Claude through the `claude` CLI in headless mode (`claude -p`), so
 the router runs on a Claude.ai subscription. Each completion is one short-lived CLI process with a
-fresh context, the cell's model and effort, no tools, no MCP servers and a minimal system prompt
-(without `--system-prompt` the CLI sends its own prompt of about 100K tokens on every call).
+fresh context, the cell's model and effort, no MCP servers, a minimal system prompt (without `--system-prompt`
+the CLI sends its own prompt of about 100K tokens on every call) and no tools unless the caller names some.
 
 What differs from the API backend (`client.LiveClient`):
 
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import shutil
 import subprocess
 import time
@@ -35,9 +34,10 @@ from pydantic import BaseModel, ValidationError
 from . import limits
 from .catalog import MODELS, Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
-from .paths import CHILD_ENV, NO_MCP, child_env, claude_profile
+from .paths import NO_MCP, child_env, claude_profile, is_child
 
 DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
+TIMEOUT_SECONDS = 900.0  # a long answer at high effort takes minutes; past this the call is taken for lost
 NOT_LOGGED_IN = "not logged in"
 ERROR_DETAIL_CHARS = 300  # how much of the CLI's stderr/stdout an error message carries
 RATE_LIMITED = 429
@@ -58,14 +58,18 @@ def _served_model(model_usage: Any, requested: str) -> str:
 
 
 class CliClient:
-    """Completions through `claude -p`. Satisfies `client.ClaudeClient`."""
+    """Completions through `claude -p`. Satisfies `client.ClaudeClient`.
+
+    Raises:
+        ClientUnavailableError: the `claude` executable is not on the PATH.
+    """
 
     def __init__(
         self,
         *,
         binary: str = "claude",
         config_dir: Path | None = None,
-        timeout: float = 900.0,
+        timeout: float = TIMEOUT_SECONDS,
         extra_args: Sequence[str] = (),
         tools: str = "",
         cwd: Path | None = None,
@@ -120,7 +124,7 @@ class CliClient:
         """Keep the usage limit a refused call hit, with its exact reset (`limits.py`). The next plans skip that
         model until then.
         """
-        if os.environ.get(CHILD_ENV) == "1":
+        if is_child():
             return  # a session the router started: whoever started it learns the limit
         if self.config_dir.resolve() != claude_profile().resolve():
             return  # another profile's account: its own sessions learn its limits, in its own folder

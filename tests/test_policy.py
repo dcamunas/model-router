@@ -33,26 +33,26 @@ def test_budget_grows_with_the_size_of_the_task():
 
 def test_light_verifier_is_the_nearest_other_model_at_low_effort():
     cells = lattice()
-    light = choose_verifier(parse_cell("haiku/medium"), "light", cells)
+    light = choose_verifier(parse_cell("haiku/medium"), "light", cells=cells)
     assert light is not None and light.label == "sonnet/low"  # the tier above first
-    light = choose_verifier(parse_cell("fable/max"), "light", cells)
+    light = choose_verifier(parse_cell("fable/max"), "light", cells=cells)
     assert light is not None and light.label == "opus/low"  # nothing above Fable: the tier below
     write_config(models=["opus"])
-    light = choose_verifier(parse_cell("opus/max"), "light", lattice())
+    light = choose_verifier(parse_cell("opus/max"), "light", cells=lattice())
     assert light is not None and light.label == "opus/xhigh"  # one model only: its own cell, effort capped
 
 
 def test_full_verifier_is_the_fixed_judge_on_another_model_than_the_worker():
     cells = lattice()
-    v = choose_verifier(parse_cell("sonnet/medium"), "full", cells)
+    v = choose_verifier(parse_cell("sonnet/medium"), "full", cells=cells)
     assert v is not None and v.label == "opus/xhigh"  # the default judge
-    v = choose_verifier(parse_cell("fable/xhigh"), "full", cells)
+    v = choose_verifier(parse_cell("fable/xhigh"), "full", cells=cells)
     assert v is not None and v.label == "opus/xhigh"  # a judge does not have to outrank the worker
-    v = choose_verifier(parse_cell("opus/low"), "full", cells)
+    v = choose_verifier(parse_cell("opus/low"), "full", cells=cells)
     assert v is not None and v.label == "fable/low"  # worker on the judge's model: next model up, low effort
-    v = choose_verifier(parse_cell("opus/low"), "full", cells, judge=parse_cell("fable/max"))
+    v = choose_verifier(parse_cell("opus/low"), "full", cells=cells, judge=parse_cell("fable/max"))
     assert v is not None and v.label == "fable/xhigh"  # an explicit judge is capped at xhigh
-    assert choose_verifier(parse_cell("opus/low"), "none", cells) is None
+    assert choose_verifier(parse_cell("opus/low"), "none", cells=cells) is None
 
 
 def test_judge_comes_from_the_config_then_the_default():
@@ -73,24 +73,24 @@ def test_judge_comes_from_the_config_then_the_default():
 def test_judge_on_a_single_model_falls_back_to_the_model_below_or_another_cell():
     write_config(models=["sonnet", "opus"])
     cells = lattice()
-    v = choose_verifier(parse_cell("opus/medium"), "full", cells)
+    v = choose_verifier(parse_cell("opus/medium"), "full", cells=cells)
     assert v is not None and v.label == "sonnet/xhigh"  # nothing above opus here: the model below at the judge's effort
     write_config(models=["opus"])
     cells = lattice()
-    assert choose_verifier(parse_cell("opus/medium"), "full", cells) == parse_cell("opus/xhigh")
-    assert choose_verifier(parse_cell("opus/xhigh"), "full", cells) == parse_cell("opus/high")
+    assert choose_verifier(parse_cell("opus/medium"), "full", cells=cells) == parse_cell("opus/xhigh")
+    assert choose_verifier(parse_cell("opus/xhigh"), "full", cells=cells) == parse_cell("opus/high")
 
 
 def test_light_judge_stays_within_a_tier_and_falls_back_to_the_worker():
     write_config(models=["haiku", "opus"])
     cells = lattice()
-    light = choose_verifier(parse_cell("opus/high"), "light", cells)
+    light = choose_verifier(parse_cell("opus/high"), "light", cells=cells)
     assert light is not None and light.label == "opus/high"  # Haiku is two tiers down: no check, itself instead
     write_config(models=["opus", "fable"])
     cells = lattice()
-    light = choose_verifier(parse_cell("opus/high"), "light", cells)
+    light = choose_verifier(parse_cell("opus/high"), "light", cells=cells)
     assert light is not None and light.label == "fable/low"  # the tier above, at low effort
-    full = choose_verifier(parse_cell("fable/low"), "full", cells)
+    full = choose_verifier(parse_cell("fable/low"), "full", cells=cells)
     assert full is not None and full.label == "opus/xhigh"  # the configured judge: another model than the worker
 
 
@@ -137,7 +137,7 @@ def test_judges_for_lists_the_one_judge():
     policy = Policy()
     cell = parse_cell("opus/high")
     assert policy.judges_for(cell, "none") == []
-    assert policy.judges_for(cell, "full") == [choose_verifier(cell, "full", policy.cells)]
+    assert policy.judges_for(cell, "full") == [choose_verifier(cell, "full", cells=policy.cells)]
 
 
 def test_the_router_never_chooses_max_effort_on_its_own():

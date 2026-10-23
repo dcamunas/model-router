@@ -82,5 +82,4 @@ def test_router_project_team_and_doctor_say_what_each_person_does(tmp_path, monk
     main(["doctor"])
     out = capsys.readouterr().out
     assert "ok     plugin turned on for the team" in out and f"ok     plugin {team.PLUGIN_ID} enabled in" in out
-    with pytest.raises(SystemExit):
-        main(["project", str(tmp_path / "nowhere"), "--team"])
+    assert main(["project", str(tmp_path / "nowhere"), "--team"]) == 2

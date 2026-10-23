@@ -6,10 +6,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import (  # Any: the Anthropic SDK client and its replies, swappable for a fake; structured output of any shape
-    Any,
-    Protocol,
-)
+from typing import Any, Protocol  # Any: the SDK client and its replies, and structured output of any shape
 
 from pydantic import BaseModel
 
@@ -74,7 +71,7 @@ class LiveClient:
 
     def __init__(self, client: Any = None, *, server_fallbacks: bool = True, timeout: float = 600.0,
                  max_retries: int = 2) -> None:
-        import anthropic
+        import anthropic  # here, not at the top: only the api backend needs the SDK, and the hook never does
 
         self._anthropic = anthropic
         self._client = client or anthropic.Anthropic(timeout=timeout, max_retries=max_retries)

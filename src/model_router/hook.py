@@ -51,7 +51,7 @@ from typing import Any  # Any: hook events and log records are decoded JSON
 from . import clock, floors, limits
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
-from .paths import CHILD_ENV, DECISION_LOG, HOOK_ENV, home, logging_on, quiet, read_config, read_jsonl
+from .paths import DECISION_LOG, HOOK_ENV, append_jsonl, home, is_child, logging_on, quiet, read_config, read_jsonl
 from .policy import VERIFY_BY_RISK, Policy
 from .projects import (
     combine,
@@ -65,7 +65,6 @@ from .projects import (
 )
 from .shared import pooled, prune, write_own
 from .subagents import LOG_FILE as SUBAGENT_LOG
-from .subagents import append as append_subagent
 from .subagents import finalize as finalize_subagents
 from .subagents import find_decision, load_recent, prompt_hash, read_transcript
 from .subagents import load as load_subagents
@@ -133,7 +132,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     risk = raised.risk
     policy = Policy(cells=claude, tuning=load_tuning(project))
     plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=risk))
-    cell, cross = _cross_review(cls.kind, risk, worker_cell(plan.start, [c.model for c in claude]),
+    cell, cross = _cross_review(worker_cell(plan.start, [c.model for c in claude]), kind=cls.kind, risk=risk,
                                 chat_model=chat_model, policy=policy)
     cc = cell.claude_code()
     updated = dict(tool_input)
@@ -176,7 +175,7 @@ def _notes(declared: str, raised: floors.Raised) -> dict[str, Any]:
     return notes
 
 
-def _cross_review(kind: str, risk: str, cell: Cell, *, chat_model: str | None, policy: Policy) -> tuple[Cell, str | None]:
+def _cross_review(cell: Cell, *, kind: str, risk: str, chat_model: str | None, policy: Policy) -> tuple[Cell, str | None]:
     """Return the cell a review runs on, and why it moved: a review that gets a full judge (critical) does not run
     on the chat's own model when a Claude model at least as capable is there to take it.
     """
@@ -206,12 +205,8 @@ def _cwd(event: dict[str, Any]) -> str | None:
 def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
     if not logging_on():
         return
-    path = home() / DECISION_LOG
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = {"at": clock.now().isoformat(timespec="seconds"), "session_id": event.get("session_id"),
-            "cwd": event.get("cwd"), **record}
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+    append_jsonl(home() / DECISION_LOG, {"at": clock.now().isoformat(timespec="seconds"),
+                                         "session_id": event.get("session_id"), "cwd": event.get("cwd"), **record})
 
 
 def _measure(event: dict[str, Any]) -> None:
@@ -223,7 +218,7 @@ def _measure(event: dict[str, Any]) -> None:
     try:
         usage = read_transcript(Path(str(event["agent_transcript_path"])))
         decision = find_decision(home() / DECISION_LOG, usage.prompt, session=event.get("session_id"))
-        append_subagent(home() / SUBAGENT_LOG, subagent_record(event, usage, decision=decision))
+        append_jsonl(home() / SUBAGENT_LOG, subagent_record(event, usage, decision=decision))
     except OSError as exc:
         sys.stderr.write(f"router-hook: subagent not measured: {exc}\n")
 
@@ -339,7 +334,7 @@ def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
     """Read a usage-limit failure of a turn or a subagent: find the model, ask it for its exact reset and keep it.
     The next launches go elsewhere until then.
     """
-    if "rate_limit" not in str(event.get("error") or "") or os.environ.get(CHILD_ENV) == "1":
+    if "rate_limit" not in str(event.get("error") or "") or is_child():
         return None  # in a session the router started (its own probe, say), asking again would never end
     text = str(event.get("last_assistant_message") or event.get("error_details") or "")
     limit = limits.learn(text, models={s.short: s.id for s in MODELS.values() if s.claude})

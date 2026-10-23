@@ -58,6 +58,11 @@ CLAUDE_VERSION_SECONDS = 20  # `claude --version` answers in well under a second
 MINUTE_CHARS = 16  # an ISO moment cut to the minute: 2026-10-23T12:13
 CHANGES_SHOWN = 5  # the last changes of a project's tuning `router project` prints
 ANSWER_SHOWN_CHARS = 20  # how much of the live check's answer doctor prints
+CANNOT_RUN = 2  # the exit code of a command that could not run; 1 is a task not solved or a verdict failed
+
+
+class CommandError(ValueError):
+    """A command that cannot run as asked: `main` prints the message and exits with CANNOT_RUN."""
 
 
 def _here() -> str | None:
@@ -65,14 +70,12 @@ def _here() -> str | None:
     return projects.project_of(str(Path.cwd()))
 
 
-def _add_task_args(p: argparse.ArgumentParser, *, with_prompt: bool = True, with_verify: bool = True) -> None:
-    if with_prompt:
-        p.add_argument("prompt", nargs="?", help="the task; or use --file")
-        p.add_argument("--file", "-f", help="file with the task")
+def _add_task_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("prompt", nargs="?", help="the task; or use --file")
+    p.add_argument("--file", "-f", help="file with the task")
     p.add_argument("--kind", "-k", choices=KINDS, help="task kind (inferred by rules when missing)")
     p.add_argument("--risk", "-r", choices=RISKS, help="how bad a wrong answer is (inferred when missing)")
-    if with_verify:
-        p.add_argument("--verify", choices=VERIFY_MODES, help="force the verification mode")
+    p.add_argument("--verify", choices=VERIFY_MODES, help="force the verification mode")
     p.add_argument("--budget", type=float, help="spending cap in USD for the task")
     p.add_argument("--max-attempts", type=int, help="maximum attempts")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
@@ -90,7 +93,7 @@ def _prompt_from(args: argparse.Namespace) -> str:
         return args.prompt
     if not sys.stdin.isatty():
         return sys.stdin.read()
-    raise SystemExit("no task given: pass it as an argument, with --file or on stdin")
+    raise CommandError("no task given: pass it as an argument, with --file or on stdin")
 
 
 def _task_from(args: argparse.Namespace, prompt: str) -> tuple[Task, Classification | None]:
@@ -116,7 +119,7 @@ def _task_from(args: argparse.Namespace, prompt: str) -> tuple[Task, Classificat
         checker = json_checker(tuple(k.strip() for k in args.check_json.split(",") if k.strip()))
     system = Path(args.system).read_text(encoding="utf-8") if args.system else None
     task = Task(prompt=prompt, kind=kind, risk=risk, system=system, checker=checker, max_tokens=args.max_tokens,
-                budget_usd=args.budget, max_attempts=args.max_attempts, verify=getattr(args, "verify", None))
+                budget_usd=args.budget, max_attempts=args.max_attempts, verify=args.verify)
     return task, cls
 
 
@@ -211,7 +214,7 @@ def _cmd_judge(args: argparse.Namespace) -> int:
     prompt = _prompt_from(args)
     answer = sys.stdin.read() if args.answer == "-" else Path(args.answer).read_text(encoding="utf-8")
     if not answer.strip():
-        raise SystemExit("the answer is empty")
+        raise CommandError("the answer is empty")
     client = _live_client(args)
     task, cls = _task_from(args, prompt)
     router = Router(client, ledger=Ledger(home() / MAIN_LEDGER))
@@ -255,8 +258,8 @@ def _cmd_project(args: argparse.Namespace) -> int:
     where = args.path or Path.cwd()
     project = projects.project_of(str(where.expanduser()))
     if project is None:
-        raise SystemExit(f"not inside a git repository: {where}. The router learns per repository: run it inside "
-                         "one, or pass a path inside one")
+        raise CommandError(f"not inside a git repository: {where}. The router learns per repository: run it inside "
+                           "one, or pass a path inside one")
     if args.team:
         return _turn_on_for_team(project)
     if args.reset:
@@ -285,13 +288,13 @@ def _cmd_project(args: argparse.Namespace) -> int:
 def _cmd_limits(args: argparse.Namespace) -> int:
     if args.check is not None:
         held = [n for n in limits.active() if n != limits.ALL_MODELS and n in SHORT_TO_ID]
-        names = args.check or sorted({"haiku", *held})
+        names = args.check or sorted({limits.PROBE_MODEL, *held})
         config_dir = claude_profile()
         for name in names:
             spec = MODELS.get(SHORT_TO_ID.get(name, name))
             if spec is None or not spec.claude:
                 known = ", ".join(s.short for s in MODELS.values() if s.claude)
-                raise SystemExit(f"unknown Claude model: {name}; try one of {known}")
+                raise CommandError(f"unknown Claude model: {name}; try one of {known}")
             limit = limits.record_check(spec.short, limits.probe(spec.id, config_dir=config_dir))
             print(f"{spec.short}: " + (f"limited until {limit.when()} ({limit.window})" if limit else "available"))
     held = limits.active()
@@ -319,7 +322,7 @@ def _cmd_agents(args: argparse.Namespace) -> int:
     where = args.path or Path.cwd()
     project = projects.project_of(str(where.expanduser()))
     if project is None:
-        raise SystemExit(f"not inside a git repository: {where}. Agents are advised per repository")
+        raise CommandError(f"not inside a git repository: {where}. Agents are advised per repository")
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)
     committed = agents.committed_agents(project) or {}
@@ -361,7 +364,7 @@ def _turn_on_for_team(project: str) -> int:
     try:
         changed = team.enable(project)
     except team.SettingsError as exc:
-        raise SystemExit(str(exc)) from exc
+        raise CommandError(str(exc)) from exc
     settings = team.settings_path(project)
     print(f"{settings}: " + ("; ".join(changed) if changed else "the plugin was already on for the team"))
     print(f"Commit it. Each person, once, in this repository: `{team.INSTALL_COMMAND}` (needs uv), then a new session.")
@@ -384,13 +387,13 @@ def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
     """Create the repository's shared-counts directory, prune it, and add this installation's settled weeks."""
     folder = shared.shared_dir(project)
     if folder.parent.is_symlink() or folder.is_symlink():
-        raise SystemExit(f"{folder} is reached through a link: shared counts need a plain directory in the "
-                         "repository. Replace the link with a directory and run `router project --share` again")
+        raise CommandError(f"{folder} is reached through a link: shared counts need a plain directory in the "
+                           "repository. Replace the link with a directory and run `router project --share` again")
     folder.mkdir(parents=True, exist_ok=True)
     (folder / ".gitkeep").touch()  # git keeps no empty directory, and the directory is the opt-in
     if not shared.sharing(project):
-        raise SystemExit(f"{folder} cannot be used for shared counts because {shared.SHARE_ENV}=0 keeps this "
-                         "installation out. Unset it and run `router project --share` again")
+        raise CommandError(f"{folder} cannot be used for shared counts because {shared.SHARE_ENV}=0 keeps this "
+                           "installation out. Unset it and run `router project --share` again")
     shared.prune(project)
     written = shared.write_own(project, records, decision_log=home() / DECISION_LOG)
     print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
@@ -680,7 +683,8 @@ def build_parser() -> argparse.ArgumentParser:
     ss.add_argument("--ledger", help="another ledger file")
     ss.set_defaults(func=_cmd_stats)
 
-    sd = sub.add_parser("doctor", help="check claude, profile, hooks, skill and state; --live makes one call")
+    sd = sub.add_parser("doctor", help="check claude, the profile, the plugin, settings, limits, floors and state; "
+                                       "--live makes one call")
     sd.add_argument("--live", action="store_true",
                     help="also make one real cheap call on Claude")
     sd.set_defaults(func=_cmd_doctor)
@@ -723,19 +727,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run `router` with `argv` (the process arguments when None) and return the exit code. Bad input
-    values become one-line messages with exit code 1 instead of tracebacks.
+    """Run `router` with `argv` (the process arguments when None) and return the exit code: 0 done (a task solved,
+    a verdict passed), 1 a task not solved or a verdict failed, CANNOT_RUN when the command could not run, said in
+    one line on stderr instead of a traceback.
     """
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args) or 0)
     except UnknownModelError as exc:
-        raise SystemExit(f"unknown model {exc.name!r}; valid: {', '.join(exc.known)} "
-                         "(check config.json or --models)") from exc
+        message = f"unknown model {exc.name!r}; valid: {', '.join(exc.known)} (check config.json or --models)"
+    except CommandError as exc:
+        message = str(exc)
     except ValueError as exc:
-        raise SystemExit(f"invalid value: {exc}") from exc
+        message = f"invalid value: {exc}"
     except OSError as exc:
-        raise SystemExit(f"cannot access {exc.filename or 'a file'}: {exc.strerror or exc}") from exc
+        message = f"cannot access {exc.filename or 'a file'}: {exc.strerror or exc}"
+    print(f"router: {message}", file=sys.stderr)
+    return CANNOT_RUN
 
 
 if __name__ == "__main__":

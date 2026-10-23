@@ -197,20 +197,20 @@ def advise(records: list[dict[str, Any]], project: str, *, cells: list[Cell], te
         if agent in committed and tally.get("n", 0) > 0:
             theirs[(agent, cell)] = tally
             groups.setdefault((agent, cell), [])
-    out = [_advice(agent, cell, rs, cells=cells, repeated=repeated, team=theirs.get((agent, cell)))
+    out = [_advice(agent, cell, records=rs, cells=cells, repeated=repeated, team=theirs.get((agent, cell)))
            for (agent, cell), rs in groups.items() if agent not in committed or names_cell(committed[agent], cell)]
     return sorted(out, key=lambda a: (-a.runs, -a.total_cost))
 
 
 def latest(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep one record per subagent: a resumed one, or one measured twice, counts once (its last record)."""
-    latest: dict[object, dict[str, Any]] = {}
+    last: dict[object, dict[str, Any]] = {}
     for i, r in enumerate(records):
-        latest[(r.get("session"), r.get("agent_id")) if r.get("agent_id") else i] = r
-    return list(latest.values())
+        last[(r.get("session"), r.get("agent_id")) if r.get("agent_id") else i] = r
+    return list(last.values())
 
 
-def _advice(agent: str, cell: Cell, records: list[dict[str, Any]], *, cells: list[Cell], repeated: set[str],
+def _advice(agent: str, cell: Cell, *, records: list[dict[str, Any]], cells: list[Cell], repeated: set[str],
             team: dict[str, int] | None) -> Advice:
     team_runs, team_fails = (team or {}).get("n", 0), (team or {}).get("fails", 0)
     runs = len(records) + team_runs

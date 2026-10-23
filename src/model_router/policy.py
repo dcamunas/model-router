@@ -135,7 +135,10 @@ def _light_judge(worker: Cell, cells: list[Cell]) -> Cell:
     return _at(first, "low") if first else _cap_effort(worker)
 
 
-def _full_judge(worker: Cell, judge: Cell, cells: list[Cell]) -> Cell:
+def _full_judge(worker: Cell, *, judge: Cell, cells: list[Cell]) -> Cell:
+    """Return `judge` when the worker is on another model; else the next model up at low effort, else the model
+    below at the judge's effort, else another cell of the worker's model at or under it, else the worker's own.
+    """
     if worker.model != judge.model:
         return judge
     models = _by_tier(cells)
@@ -151,7 +154,7 @@ def _full_judge(worker: Cell, judge: Cell, cells: list[Cell]) -> Cell:
     return max(same, key=lambda c: c.effort_rank)
 
 
-def choose_verifier(worker: Cell, mode: str, cells: list[Cell], *, judge: Cell | None = None) -> Cell | None:
+def choose_verifier(worker: Cell, mode: str, *, cells: list[Cell], judge: Cell | None = None) -> Cell | None:
     """Return the judge for `mode`, or None for `none`. light: the nearest other model at low effort (the
     tier above first; see `_light_judge`). full: `judge` (the configured one when None) in a fresh context;
     when the worker is on the judge's model, so that the check stays a cross-check between models, the
@@ -163,7 +166,7 @@ def choose_verifier(worker: Cell, mode: str, cells: list[Cell], *, judge: Cell |
     if mode == "light":
         return _light_judge(worker, cells)
     judge = _cap_effort(judge) if judge else default_judge({c.model for c in cells})
-    return _full_judge(worker, judge, cells)
+    return _full_judge(worker, judge=judge, cells=cells)
 
 
 class Policy:
@@ -180,7 +183,7 @@ class Policy:
     ) -> None:
         self.cells = cells or lattice()
         self.tuning = tuning or {}  # a project's own start cells (`projects.py`), on top of the table
-        self.models = sorted({c.model for c in self.cells}, key=lambda m: Cell(m, "low").tier)
+        self.models = sorted({c.model for c in self.cells}, key=lambda m: MODELS[m].tier)
         self.notes: list[str] = []
         note = models_note()
         if note:
@@ -266,7 +269,7 @@ class Policy:
 
     def verifier_for(self, worker: Cell, mode: str) -> Cell | None:
         """Return the cell that verifies `worker`'s answer in `mode`, or None for `none`."""
-        return choose_verifier(worker, mode, self.cells, judge=self.judge)
+        return choose_verifier(worker, mode, cells=self.cells, judge=self.judge)
 
     def judges_for(self, worker: Cell, mode: str) -> list[Cell]:
         """Return the judges `mode` consults on `worker`'s answer: none for `none`, one for `light` and `full`."""

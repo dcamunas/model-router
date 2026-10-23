@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any  # Any: transcript entries and records are decoded JSON
 
 from . import clock
+from .agents import latest
 from .catalog import MODELS, Usage, cost_usd
 from .classify import classify_rules
 from .fmt import money
@@ -36,7 +37,7 @@ LOG_FILE = "subagents.jsonl"
 PROMPT_HASH_CHARS = 16
 SETTLED_SECONDS = 30.0  # a transcript untouched for this long is complete
 RECENT_BYTES = 262_144  # the end of the log a relaunch can point at: a few hundred records, not months of history
-THOUSAND = 1000
+TOKENS_PER_K = 1000
 
 
 def prompt_hash(prompt: str) -> str:
@@ -92,7 +93,7 @@ def read_transcript(path: Path) -> SubagentUsage:
         if message.get("role") == "assistant" and isinstance(message.get("usage"), dict):
             messages[str(message.get("id") or len(messages))] = (str(message.get("model") or ""), message["usage"])
     for model, usage in messages.values():
-        _add_turn(out, model, usage)
+        _add_turn(out, model=model, usage=usage)
     if out.by_model:
         out.model = max(out.by_model, key=lambda m: out.by_model[m])
     if moments:
@@ -100,7 +101,7 @@ def read_transcript(path: Path) -> SubagentUsage:
     return out
 
 
-def _add_turn(out: SubagentUsage, model: str, usage: dict[str, Any]) -> None:
+def _add_turn(out: SubagentUsage, *, model: str, usage: dict[str, Any]) -> None:
     u = {k: int(usage.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
                                              "cache_creation_input_tokens")}
     out.turns += 1
@@ -145,12 +146,6 @@ def record(event: dict[str, Any], usage: SubagentUsage, *, decision: dict[str, A
 def _numbers(usage: SubagentUsage) -> dict[str, Any]:
     """Return what a record keeps of a reading: its counts, without the prompt and the per-model tally."""
     return {k: v for k, v in asdict(usage).items() if k not in ("prompt", "by_model", "model")}
-
-
-def append(log: Path, line: dict[str, Any]) -> None:
-    """Append one record to `log` under the lock."""
-    with locked(log), log.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def finalize(log: Path, *, settled: float = SETTLED_SECONDS, now: float | None = None) -> int:
@@ -222,9 +217,8 @@ def summary_rows(records: list[dict[str, Any]]) -> list[list[object]]:
     first: how many, mean turns, mean peak context, mean cache reads, and the mean and total cost at list price
     (formatted; a floor, since output tokens are a lower bound).
     """
-    latest = {(r.get("session"), r.get("agent_id")) if r.get("agent_id") else (None, i): r for i, r in enumerate(records)}
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for r in latest.values():  # a resumed subagent, or one measured by two installs, counts once: its last record
+    for r in latest(records):  # a resumed subagent, or one measured by two installs, counts once: its last record
         key = (str(r.get("agent_type") or "?"), f"{r.get('model') or '?'}/{r.get('effort') or '?'}")
         groups.setdefault(key, []).append(r)
     rows = []
@@ -241,4 +235,4 @@ def summary_rows(records: list[dict[str, Any]]) -> list[list[object]]:
 
 
 def _k(n: float) -> str:
-    return f"{n / THOUSAND:.1f}K" if n >= THOUSAND else str(round(n))
+    return f"{n / TOKENS_PER_K:.1f}K" if n >= TOKENS_PER_K else str(round(n))

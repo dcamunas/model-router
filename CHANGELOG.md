@@ -34,7 +34,11 @@ The plugin is the product: what a plugin user never runs is gone, and every sett
 - `verify.ask` is a function: one judge, one verdict, for a package that seats its own judges. `Verifier`
   takes no judge instructions or confidence of its own. `ladder(..., steps=)` and `Verifier.verify(..., mode=,
   worker=)` take keywords. `model_router.fmt` (money, tables) is public.
-- `config.json` and `limits.json` are written in one step, as the other state files already were.
+- `config.json` and `limits.json` are written in one step, as the other state files already were; every log
+  line (decisions, measurements, the ledger) is appended under the log's lock, the ledger's too.
+- A command that cannot run (no task, a bad value, a missing file, not in a repository) exits 2 with one line on
+  stderr; 1 stays for a task not solved or a verdict failed. It used to exit 1 for both.
+- A line of declarations no longer takes the tribunal's `qa:` key: the router reads only its own.
 
 ### Fixed
 

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+CENT = 0.01  # below a cent, four decimals; below a dollar, three; else two
+DOLLAR = 1.0
+
 
 def money(value: float | None) -> str:
     """Format a USD amount with the precision its size needs; '-' for None."""
@@ -11,9 +14,9 @@ def money(value: float | None) -> str:
         return "-"
     if value == 0:
         return "$0"
-    if value < 0.01:
+    if value < CENT:
         return f"${value:.4f}"
-    if value < 1:
+    if value < DOLLAR:
         return f"${value:.3f}"
     return f"${value:,.2f}"
 

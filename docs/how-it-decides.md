@@ -119,9 +119,9 @@ the mistake. `router stats` counts the retries that repeat it anyway.
   `xhigh`. Verifying is easier than producing, so the judge does not have to outrank the worker; it
   has to be independent and good enough.
 
-`light` is the nearest other model at low effort, the tier above before the one below. Until 0.11.0
-it was the worker's own cell in a fresh context. On a private eval of 28 real tasks, Haiku and Sonnet
-passed themselves on 89 % and 93 % of first attempts. An Opus judge passed 64 % and 68 % of the same
+`light` is the nearest other model at low effort, the tier above before the one below, and never the worker's
+own model when another is there. On a private eval of 28 real tasks, Haiku and Sonnet judging their own answers
+in a fresh context passed 89 % and 93 % of first attempts. An Opus judge passed 64 % and 68 % of the same
 answers, for word limits broken, formats ignored and facts invented. A model does not see its own
 blind spots in a fresh context either.
 

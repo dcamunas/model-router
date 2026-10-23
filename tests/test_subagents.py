@@ -110,7 +110,8 @@ def test_a_first_reading_is_completed_once_the_transcript_settles(tmp_path, monk
 
 
 def test_finalize_keeps_records_appended_meanwhile_survives_bad_ones_and_counts_a_subagent_once(tmp_path):
-    from model_router.subagents import append, finalize, summary_rows
+    from model_router.paths import append_jsonl as append
+    from model_router.subagents import finalize, summary_rows
 
     log = tmp_path / "model-router" / "subagents.jsonl"
     agent = _transcript(tmp_path / "agent.jsonl", "Review", [_turn("m1"), _turn("m2")])

@@ -5,7 +5,7 @@ time zones and weeks.
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 WEEK_LABEL = re.compile(r"(\d{4})-?W(\d{2})")
 
@@ -32,6 +32,13 @@ def parse_moment(text: object) -> datetime | None:
     except ValueError:
         return None
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def monday_of(moment: datetime) -> datetime:
+    """Return the Monday 00:00 UTC that starts the ISO week of `moment`."""
+    day = moment.astimezone(UTC).date()
+    monday = day - timedelta(days=day.weekday())
+    return datetime(monday.year, monday.month, monday.day, tzinfo=UTC)
 
 
 def week_of(moment: datetime) -> str:
