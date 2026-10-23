@@ -13,6 +13,12 @@ again on the same cell is not a repeat: a loop over files with one template brie
                while giving up little capability (`step_down`)
     keep       anything else
 
+In a repository that shares counts (`shared.py`), the teammates' runs of the same agent on the same cell count
+too: their runs and repeats add to this machine's before the thresholds apply. Only agents committed in the
+repository (`committed_agents`) are shared or read back. Turns, spend and a saving come from this machine's runs
+only, since the shared files carry no tokens or cost. A cell the agent's file no longer names gets no advice:
+it would point at a change already made.
+
 It never edits an agent: the advice is for a person to apply. When the advice changes the model, the saving or
 extra cost is the measured tokens repriced at the new model's list prices; a change of effort also changes how
 many tokens are spent, and that is not estimated. Both sides of a saving are priced from the same tokens, so the
@@ -22,6 +28,8 @@ difference is the model's price alone.
 from __future__ import annotations
 
 import re
+import subprocess
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -29,7 +37,7 @@ from pathlib import Path
 from typing import Any  # Any: measured subagent records, decoded JSON
 
 from . import clock
-from .catalog import Cell, Usage, cost_usd, step_down, step_up
+from .catalog import MODELS, Cell, UnknownModelError, Usage, cost_usd, parse_cell, step_down, step_up
 from .projects import (
     ALIKE,
     DOWN_N,
@@ -48,6 +56,12 @@ NOT_FIXED_BY_HAND = frozenset({"", "general-purpose", "claude", "workflow-subage
                                "claude-code-guide", "statusline-setup"})
 INHERITS = re.compile(r"^model:\s*(inherit\s*)?$", re.M)  # frontmatter that leaves the model to the session
 LOWER_MAX_LOSS = 0.08  # the capability a lower cell may give up
+TeamRuns = dict[tuple[str, str], dict[str, int]]  # (agent, cell label) -> {"n": runs, "fails": repeated}, from teammates
+AGENTS_DIR = (".claude", "agents")
+REGULAR_MODES = frozenset({"100644", "100755"})  # git's modes for a plain file; 120000 is a link
+GIT_SECONDS = 10.0
+FRONTMATTER_FIELD = re.compile(r"^(model|effort):\s*(\S+)\s*$", re.M)
+Fixed = tuple[str, str | None]  # the model's short name and the effort an agent file names (None: not set)
 
 
 @dataclass(frozen=True)
@@ -62,11 +76,14 @@ class Advice:
     total_cost: float
     action: str  # measuring, raise, lower or keep
     to: Cell | None = None
-    saving: float | None = None  # USD over the measured runs; negative when the advice costs more
+    saving: float | None = None  # USD over this machine's runs; negative when the advice costs more
+    team_runs: int = 0  # of `runs`, how many teammates measured (shared counts)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"agent": self.agent, "cell": self.cell.label, "runs": self.runs, "repeated": self.repeated,
-                "mean_turns": round(self.mean_turns, 1), "total_cost_usd": round(self.total_cost, 4),
+        local = self.runs > self.team_runs
+        return {"agent": self.agent, "cell": self.cell.label, "runs": self.runs, "team_runs": self.team_runs,
+                "repeated": self.repeated,
+                "mean_turns": round(self.mean_turns, 1) if local else None, "total_cost_usd": round(self.total_cost, 4),
                 "action": self.action, "to": self.to.label if self.to else None,
                 "saving_usd": round(self.saving, 4) if self.saving is not None else None}
 
@@ -90,20 +107,64 @@ def fixed_by_hand(record: dict[str, Any], project: str) -> bool:
     return "model:" in frontmatter and not INHERITS.search(frontmatter)
 
 
+def committed_agents(project: str) -> dict[str, Fixed]:
+    """Return the agents committed in the repository that fix a model, by name, with the model and effort their
+    file names now: `.claude/agents/<name>.md` in git's index as a plain file and a plain file on disk too. A link,
+    an untracked or ignored file, a file in a subfolder or one that says `inherit` is left out, so an agent from a
+    profile or a plugin never reaches the shared counts. Empty when git cannot tell.
+    """
+    folder = "/".join(AGENTS_DIR)
+    try:
+        listed = subprocess.run(["git", "-C", project, "ls-files", "-s", "-z", "--", folder], capture_output=True,
+                                text=True, timeout=GIT_SECONDS, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out = {}
+    for entry in filter(None, listed.split("\0")):
+        meta, _, path = entry.partition("\t")
+        name = path.removeprefix(folder + "/").removesuffix(".md")
+        if meta.split(" ")[0] not in REGULAR_MODES or "/" in name or not path.endswith(".md"):
+            continue
+        fixed = _fixed(Path(project) / path)
+        if fixed is not None:
+            out[name] = fixed
+    return out
+
+
+def _fixed(path: Path) -> Fixed | None:
+    """Return the model and effort an agent file fixes, or None (a link, unreadable, `inherit`, an unknown model)."""
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    parts = text.split("---", 2)
+    fields = dict(FRONTMATTER_FIELD.findall(parts[1])) if text.startswith("---") and len(parts) == 3 else {}
+    model = next((spec.short for spec in MODELS.values() if fields.get("model") in (spec.short, spec.id)), None)
+    return (model, fields.get("effort")) if model else None
+
+
+def names_cell(fixed: Fixed, cell: Cell) -> bool:
+    """Say whether `cell` is the one an agent file now fixes (its model, and its effort when the file sets one)."""
+    model, effort = fixed
+    return cell.spec.short == model and effort in (None, cell.effort)
+
+
 def repeated_ids(records: list[dict[str, Any]]) -> set[str]:
     """Return the agent ids of the finished subagents that another subagent repeated (see the module docstring)."""
-    starts = []
+    starts: dict[str, list[tuple[Any, Cell, dict[str, Any]]]] = defaultdict(list)  # by session: no pair across two
     for r in records:
         end, cell = clock.parse_moment(r.get("at")), served_cell(r)
         if end is not None and cell is not None and r.get("sig") and r.get("session"):
-            starts.append((end - timedelta(seconds=float(r.get("seconds") or 0)), cell, r))
+            starts[str(r["session"])].append((end - timedelta(seconds=float(r.get("seconds") or 0)), cell, r))
     out: set[str] = set()
     for r in records:
         end, cell = clock.parse_moment(r.get("at")), served_cell(r)
         if end is None or cell is None or not r.get("sig") or not r.get("agent_id") or not r.get("session"):
             continue
-        for start, later_cell, later in starts:
-            if (later["session"] == r["session"] and later.get("agent_id") != r["agent_id"]
+        for start, later_cell, later in starts.get(str(r["session"]), []):
+            if (later.get("agent_id") != r["agent_id"]
                     and timedelta(0) <= start - end <= RELAUNCH_WINDOW and higher(cell, later_cell)
                     and alike(r["sig"], later["sig"]) >= ALIKE):
                 out.add(str(r["agent_id"]))
@@ -111,19 +172,32 @@ def repeated_ids(records: list[dict[str, Any]]) -> set[str]:
     return out
 
 
-def advise(records: list[dict[str, Any]], project: str, *, cells: list[Cell]) -> list[Advice]:
-    """Return the advice for every agent fixed by hand that ran in `project`, the most spent first."""
+def advise(records: list[dict[str, Any]], project: str, *, cells: list[Cell], team: TeamRuns | None = None) -> list[Advice]:
+    """Return the advice for every agent fixed by hand that ran in `project`, here or on a teammate's machine
+    (`team`, from the shared counts), the most runs first.
+    """
     repeated = repeated_ids([r for r in records if r.get("project") == project])
     groups: dict[tuple[str, Cell], list[dict[str, Any]]] = {}
-    for r in _latest(records):
+    for r in latest(records):
         cell = served_cell(r)
         if r.get("project") == project and cell is not None and fixed_by_hand(r, project):
             groups.setdefault((str(r["agent_type"]), cell), []).append(r)
-    out = [_advice(agent, cell, rs, cells=cells, repeated=repeated) for (agent, cell), rs in groups.items()]
-    return sorted(out, key=lambda a: -a.total_cost)
+    committed = committed_agents(project) if team or groups else {}
+    theirs: dict[tuple[str, Cell], dict[str, int]] = {}
+    for (agent, label), tally in (team or {}).items():
+        try:
+            cell = parse_cell(label)
+        except (UnknownModelError, ValueError):
+            continue
+        if agent in committed and tally.get("n", 0) > 0:
+            theirs[(agent, cell)] = tally
+            groups.setdefault((agent, cell), [])
+    out = [_advice(agent, cell, rs, cells=cells, repeated=repeated, team=theirs.get((agent, cell)))
+           for (agent, cell), rs in groups.items() if agent not in committed or names_cell(committed[agent], cell)]
+    return sorted(out, key=lambda a: (-a.runs, -a.total_cost))
 
 
-def _latest(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def latest(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep one record per subagent: a resumed one, or one measured twice, counts once (its last record)."""
     latest: dict[object, dict[str, Any]] = {}
     for i, r in enumerate(records):
@@ -131,12 +205,14 @@ def _latest(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(latest.values())
 
 
-def _advice(agent: str, cell: Cell, records: list[dict[str, Any]], *, cells: list[Cell], repeated: set[str]) -> Advice:
-    runs = len(records)
-    fails = sum(1 for r in records if str(r.get("agent_id")) in repeated)
+def _advice(agent: str, cell: Cell, records: list[dict[str, Any]], *, cells: list[Cell], repeated: set[str],
+            team: dict[str, int] | None) -> Advice:
+    team_runs, team_fails = (team or {}).get("n", 0), (team or {}).get("fails", 0)
+    runs = len(records) + team_runs
+    fails = sum(1 for r in records if str(r.get("agent_id")) in repeated) + team_fails
     total = sum(float(r.get("cost_usd") or 0.0) for r in records)
-    turns = sum(int(r.get("turns") or 0) for r in records) / runs
-    base = Advice(agent, cell, runs, fails, turns, total, "keep")
+    turns = sum(int(r.get("turns") or 0) for r in records) / len(records) if records else 0.0
+    base = Advice(agent, cell, runs, fails, turns, total, "keep", team_runs=team_runs)
     if runs < MIN_N:
         return _with(base, "measuring")
     if fails >= MIN_FAILS and fails / runs >= RAISE_RATE:
@@ -151,10 +227,11 @@ def _advice(agent: str, cell: Cell, records: list[dict[str, Any]], *, cells: lis
 def _with(base: Advice, action: str, *, to: Cell | None = None, records: list[dict[str, Any]] | None = None) -> Advice:
     """Return `base` with its action, the cell it advises and, when the model changes, the measured tokens repriced."""
     saving = None
-    if to is not None and records is not None and to.model != base.cell.model:
+    if to is not None and records and to.model != base.cell.model:
         usages = [_usage(r) for r in records]
         saving = sum(cost_usd(base.cell.model, u) - cost_usd(to.model, u) for u in usages)
-    return Advice(base.agent, base.cell, base.runs, base.repeated, base.mean_turns, base.total_cost, action, to, saving)
+    return Advice(base.agent, base.cell, base.runs, base.repeated, base.mean_turns, base.total_cost, action, to, saving,
+                  team_runs=base.team_runs)
 
 
 def _usage(record: dict[str, Any]) -> Usage:

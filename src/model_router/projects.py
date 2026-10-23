@@ -2,7 +2,7 @@
 
 Each measured subagent carries its project (the git repository the session works in; a directory that is not
 in one is no project and teaches nothing) and a signature of its prompt: sixteen numbers from its word
-shingles, hashed with a salt kept in `~/.model-router`, so they tell two prompts alike or apart on this machine
+shingles, hashed with a salt kept in `<profile>/model-router`, so they tell two prompts alike or apart on this machine
 and cannot be checked against a guessed text anywhere else.
 
 The quality signal is a relaunch: Claude launches again, soon after the first one finished, in the same
@@ -17,7 +17,7 @@ one relaunch on this machine (a raise on other installations' counts alone is on
 is only proposed, after DOWN_N launches with none relaunched, to the cell it was raised from or to one at least
 LOWER_SAVING cheaper, and applied by hand (`router project --apply`). A tuned cell remembers the cell it
 replaced and is ignored when the table or the calibration no longer gives that cell. The risk floors always
-hold. Tunings live in `~/.model-router/projects/`, never in the repository.
+hold. Tunings live in `<profile>/model-router/projects/`, never in the repository.
 """
 
 from __future__ import annotations
@@ -285,7 +285,7 @@ def failing(tally: dict[str, int]) -> bool:
 
 
 def tuning_path(project: str) -> Path:
-    """Return where a project's tuning lives: `~/.model-router/projects/<name>-<hash>.json`, never in the repo."""
+    """Return where a project's tuning lives: `<profile>/model-router/projects/<name>-<hash>.json`, never in the repo."""
     digest = hashlib.sha256(project.encode()).hexdigest()[:TUNING_HASH_CHARS]
     name = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(project).name) or "root"
     return home() / PROJECTS_DIR / f"{name}-{digest}.json"

@@ -33,7 +33,7 @@ tool ignores model and effort for them). Apart from that one denial the hook nev
 exits 0 silently.
 
 Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the decisions log
-(~/.model-router/hook.jsonl), the measurements and with them all learning; MODEL_ROUTER_HOOK_QUIET=1
+(<profile>/model-router/hook.jsonl), the measurements and with them all learning; MODEL_ROUTER_HOOK_QUIET=1
 hides the one-line notices in the UI; MODEL_ROUTER_SHARE=0 keeps this installation out of shared counts.
 """
 
@@ -51,7 +51,7 @@ from . import clock, floors, limits
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .feedback import FeedbackStore
-from .paths import CHILD_ENV, HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, home, read_config
+from .paths import CHILD_ENV, HOOK_ENV, HOOK_LOG_ENV, HOOK_QUIET_ENV, LEAN_ENV, claude_profile, home, read_config
 from .policy import DEFAULT_JUDGE, VERIFY_BY_RISK, Policy
 from .projects import (
     combine,
@@ -220,7 +220,7 @@ def lean_agent(cwd: str | None = None) -> str | None:
     root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if root and (Path(root) / PLUGIN_AGENT).is_file():
         return f"{PLUGIN_NAME}:reader"
-    profile = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
+    profile = claude_profile()
     places = [Path(cwd) / ".claude" / "agents"] if cwd else []
     if any((place / f"{PROFILE_AGENT}.md").is_file() for place in [*places, profile / "agents"]):
         return PROFILE_AGENT

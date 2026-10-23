@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
-from . import agents, floors, team
+from . import agents, floors, shared, team
 from ._fmt import money, table
 from .calibration import (
     BUILTIN,
@@ -57,8 +57,11 @@ from .ledger import Ledger, summarize
 from .paths import (
     CALIBRATION_ENV,
     CONFIG_DIR_ENV,
+    HOME_ENV,
     JUDGE_ENV,
+    LEGACY_HOME,
     MAIN_LEDGER,
+    claude_profile,
     config_path,
     home,
     read_config,
@@ -614,17 +617,23 @@ def _cmd_agents(args: argparse.Namespace) -> int:
         raise SystemExit(f"not inside a git repository: {where}. Agents are advised per repository")
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)
-    advice = agents.advise(load_subagents(home() / SUBAGENT_LOG), project, cells=lattice())
+    committed = agents.committed_agents(project)
+    pooled, teammates = shared.pooled_agents(
+        project, keep=lambda agent, label: agent in committed and agents.names_cell(committed[agent], parse_cell(label)))
+    advice = agents.advise(load_subagents(home() / SUBAGENT_LOG), project, cells=lattice(), team=pooled)
     if args.json:
         print(json.dumps([a.to_dict() for a in advice], indent=2))
         return 0
     if not advice:
         print(f"no agent with a fixed model has been measured in {project} yet")
         return 0
-    rows = [[a.agent, a.cell.label, a.runs, a.repeated, f"{a.mean_turns:.1f}", money(a.total_cost),
-             _advice_text(a)] for a in advice]
-    print(f"agents with a fixed model in {project} (measured; list price, at least)")
-    print(table(["agent", "cell", "runs", "repeated", "turns", "spent", "advice"], rows))
+    rows = [[a.agent, a.cell.label, a.runs, a.team_runs, a.repeated, f"{a.mean_turns:.1f}" if a.runs > a.team_runs
+             else "-", money(a.total_cost), _advice_text(a)] for a in advice]
+    shared_from = (f"; runs include {teammates} teammate installation{'s' if teammates != 1 else ''} through the "
+                   "shared counts" if teammates else "")
+    print(f"agents with a fixed model in {project} (measured; turns and spend from this machine, list price at "
+          f"least{shared_from})")
+    print(table(["agent", "cell", "runs", "team", "repeated", "turns", "spent", "advice"], rows))
     for a in advice:
         if a.to is not None and (path := agents.agent_file(project, a.agent)):
             print(f"  {a.agent}: {path}")
@@ -668,8 +677,6 @@ class _Evidence:
 
 def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
     """Create the repository's shared-counts directory, prune it, and add this installation's settled weeks."""
-    from . import shared
-
     folder = shared.shared_dir(project)
     if folder.parent.is_symlink() or folder.is_symlink():
         raise SystemExit(f"{folder} is reached through a link: shared counts need a plain directory in the "
@@ -688,7 +695,7 @@ def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
 
 def _project_evidence(project: str, records: list[dict[str, Any]], *, since: str | None) -> _Evidence:
     """Return a project's evidence since `since`: this machine's and, when the repository shares, the team's."""
-    from . import projects, shared
+    from . import projects
 
     mine = projects.evidence(project, records, relaunched=projects.relaunched_ids(home() / "hook.jsonl"), since=since)
     others, installs = shared.pooled(project, since=since)
@@ -697,8 +704,6 @@ def _project_evidence(project: str, records: list[dict[str, Any]], *, since: str
 
 def _print_evidence(project: str, evidence: _Evidence, *, since: str | None) -> None:
     """Print where a project's evidence comes from and its counts per kind, risk and start cell."""
-    from . import shared
-
     print(f"project {project}" + (f" (evidence since {since[:16]})" if since else ""))
     if shared.sharing(project):
         print(f"shared counts: on, {evidence.installs} other installation(s) with evidence in "
@@ -911,6 +916,27 @@ def _profile_checks(profile: Path, *, enabled_by: Path | None = None) -> list[tu
     return checks
 
 
+def _legacy_checks() -> list[tuple[bool, str]]:
+    """Report what the move to per-profile state left behind: the old shared folder, a move into a folder that
+    already existed (which nests it), and a profile recorded in this folder that is not its owner.
+    """
+    checks = []
+    legacy, state = Path(LEGACY_HOME).expanduser(), home()
+    if legacy.is_dir() and legacy.resolve() != state.resolve():
+        how = (f"`mv {legacy} {state}`" if not state.exists() else
+               f"{state} exists already, so merge by hand (`cp -Rn {legacy}/ {state}/` keeps what is there) and delete it")
+        checks.append((False, f"{legacy} is no longer read (state is per Claude profile): move it into the profile it "
+                              f"belongs to, for this one {how}"))
+    nested = state / Path(LEGACY_HOME).name
+    if nested.is_dir():
+        checks.append((False, f"{nested} is an old state folder moved inside the new one: move its contents up a level"))
+    recorded = read_config().get("claude_config_dir")
+    if recorded and not os.environ.get(HOME_ENV) and Path(str(recorded)).expanduser().resolve() != claude_profile().resolve():
+        checks.append((False, f"{config_path()} records the profile {recorded}, not the one that owns this folder "
+                              f"({claude_profile()}): it is ignored; delete the key claude_config_dir"))
+    return checks
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checklist of independent checks
     """Check that everything is in place: claude binary, profile, hooks, skill, models and state; `--live`
     adds one real Haiku call. Print one line per check and return 1 when any failed.
@@ -965,6 +991,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:  # noqa: C901 - a flat checkli
     ledger_n = len(Ledger(home() / "ledger.jsonl").tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / "hook.jsonl"))
     checks.append((True, f"state in {home()}: {ledger_n} tasks in the ledger, {hook_n} hook decisions"))
+    checks += _legacy_checks()
     if args.live and claude and profile is not None:
         checks.append(_live_check("claude", lambda: CliClient(config_dir=profile).complete(
             parse_cell("haiku/low"), prompt="Answer only OK.", system="Answer only what is asked.")))
@@ -1183,7 +1210,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="read the SQLite index (synced with the ledger first) or the JSON-lines file directly")
     ss.set_defaults(func=_cmd_stats)
 
-    sdb = sub.add_parser("db", help="the SQLite index of the ledger (~/.model-router/router.db): status, or rebuild it")
+    sdb = sub.add_parser("db", help="the SQLite index of the ledger (<profile>/model-router/router.db): status, or rebuild it")
     sdb.add_argument("action", nargs="?", choices=("status", "rebuild"), default="status")
     sdb.set_defaults(func=_cmd_db)
 

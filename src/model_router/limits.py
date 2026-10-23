@@ -11,7 +11,7 @@ prints a `rate_limit_event` with the window that decided (`rateLimitType`), its 
 tools and no context: refused, it costs nothing and gives the exact reset; allowed, it costs one tiny call and
 says the limit is gone.
 
-What is known goes to `~/.model-router/limits.json`, one entry per model short name (`fable`), or `*` when a window
+What is known goes to `<profile>/model-router/limits.json`, one entry per model short name (`fable`), or `*` when a window
 that covers every model is spent:
 
     {"models": {"fable": {"until": "2026-10-24T13:00:00+00:00", "window": "seven_day_overage_included",

@@ -298,3 +298,85 @@ def test_share_says_what_to_do_when_this_installation_is_kept_out(tmp_path, monk
     monkeypatch.setenv("MODEL_ROUTER_SHARE", "0")
     with pytest.raises(SystemExit, match="Unset it and run"):
         main(["project", project, "--share"])
+
+
+def _agent_run(project, agent, i, at, *, cell=("opus", "xhigh"), session="s", sig=None, seconds=60):
+    return {"project": project, "agent_type": agent, "agent_id": f"{agent}-{i}", "session": f"{session}{i}",
+            "model": cell[0], "effort": cell[1], "routed": None, "at": at.isoformat(), "seconds": seconds,
+            "sig": sig or [i, i + 1, i + 2], "turns": 5, "cost_usd": 1.0}
+
+
+def _agent_file(project, name, model="opus", *, commit=True):
+    """Write an agent file into the repository and, unless `commit` is False, add it to git's index."""
+    import subprocess
+
+    folder = Path(project) / ".claude" / "agents"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.md").write_text(f"---\nname: {name}\nmodel: {model}\neffort: xhigh\n---\n")
+    if not (Path(project) / ".git" / "HEAD").exists():
+        subprocess.run(["git", "init", "-q", project], check=True)
+    if commit:
+        subprocess.run(["git", "-C", project, "add", f".claude/agents/{name}.md"], check=True)
+
+
+def test_the_week_file_carries_the_repository_s_own_agents_and_nothing_from_elsewhere(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    _agent_file(project, "curator")
+    _agent_file(project, "helper", model="inherit")
+    records = [_agent_run(project, "curator", i, SETTLED) for i in range(3)]
+    records += [_agent_run(project, "helper", 9, SETTLED)]  # inherits the session's model: not fixed by hand
+    records += [_agent_run(project, "my-profile-agent", 8, SETTLED)]  # defined outside the repository
+    _agent_file(project, "untracked", commit=False)  # on disk, never added: a private agent
+    records += [_agent_run(project, "untracked", 10, SETTLED)]
+    profile_agent = tmp_path / "profile-agents" / "client-secret.md"
+    profile_agent.parent.mkdir()
+    profile_agent.write_text("---\nmodel: opus\neffort: xhigh\n---\n")
+    (Path(project) / ".claude" / "agents" / "client-secret.md").symlink_to(profile_agent)
+    import subprocess
+    subprocess.run(["git", "-C", project, "add", ".claude/agents/client-secret.md"], check=True)  # a link, even committed
+    records += [_agent_run(project, "client-secret", 11, SETTLED)]
+    records += [_agent_run(project, "curator", 7, NOW)]  # this week is still open
+    [path] = shared.write_own(project, records, decision_log=tmp_path / "home" / "hook.jsonl")
+    assert json.loads(path.read_text()) == {"v": 1, "c": {}, "a": {"curator|opus/xhigh": [3, 0]}}
+    text = path.read_text()
+    assert not any(name in text for name in ("my-profile-agent", "untracked", "client-secret", project))
+
+
+def test_teammates_agent_runs_are_pooled_capped_and_checked(tmp_path, monkeypatch):
+    project = _repo(tmp_path, monkeypatch)
+    def theirs(install, week, runs):
+        path = shared.shared_dir(project) / f"{install}-{week.replace('-', '')}.json"
+        path.write_text(json.dumps({"v": 1, "c": {}, "a": runs}))
+    theirs("aaaaaaaaaaaa", WEEK, {"curator|opus/xhigh": [4, 1], "bad name|opus/xhigh": [9, 9],
+                                  "curator|nope/low": [9, 9], "curator|opus/high": [1, 5]})
+    theirs("bbbbbbbbbbbb", WEEK, {"curator|opus/xhigh": [100, 10]})
+    theirs(_mine(project), WEEK, {"curator|opus/xhigh": [50, 50]})  # mine: counted from the local log
+    runs, installs = shared.pooled_agents(project, keep=lambda agent, label: True)
+    assert runs == {("curator", "opus/xhigh"): {"n": 4 + shared.FILE_CAP, "fails": 1 + 3}} and installs == 2
+    theirs("cccccccccccc", WEEK, {"gone|opus/high": [5, 0], "curator|opus/xhigh": [0, 0]})
+    _, installs = shared.pooled_agents(project, keep=lambda agent, label: agent == "curator")
+    assert installs == 2  # a file with only a gone agent or an empty entry is no teammate's contribution
+
+
+def test_router_agents_advises_on_the_whole_team_s_runs(tmp_path, monkeypatch, capsys):
+    from model_router.agents import advise
+    from model_router.catalog import lattice
+    from model_router.cli import main
+
+    project = _repo(tmp_path, monkeypatch)
+    _agent_file(project, "curator")
+    _agent_file(project, "documenter", model="sonnet")
+    mine = [_agent_run(project, "curator", i, SETTLED) for i in range(4)]
+    team = {("curator", "opus/xhigh"): {"n": 6, "fails": 0}, ("documenter", "sonnet/xhigh"): {"n": 3, "fails": 0},
+            ("gone", "opus/high"): {"n": 20, "fails": 0},  # no longer in the repository: no advice
+            ("curator", "opus/high"): {"n": 20, "fails": 0}}  # a cell the file no longer names: no advice
+    advice = {a.agent: a for a in advise(mine, project, cells=lattice(), team=team)}
+    assert set(advice) == {"curator", "documenter"}
+    assert advice["curator"].runs == 10 and advice["curator"].team_runs == 6 and advice["curator"].action == "lower"
+    assert advice["documenter"].action == "measuring" and advice["documenter"].mean_turns == 0
+    (tmp_path / "home" / "subagents.jsonl").write_text("".join(json.dumps({**r, "final": True}) + "\n" for r in mine))
+    path = shared.shared_dir(project) / f"aaaaaaaaaaaa-{WEEK.replace('-', '')}.json"
+    path.write_text(json.dumps({"v": 1, "c": {}, "a": {"curator|opus/xhigh": [6, 0]}}))
+    assert main(["agents", project]) == 0
+    out = capsys.readouterr().out
+    assert "1 teammate installation" in out and "lower to opus/" in out

@@ -13,9 +13,10 @@ What differs from the API backend (`client.LiveClient`):
 * Dollar amounts in the ledger are list-price equivalents: a subscription is billed by quota, not
   per token, so read them as a proxy for quota consumption.
 
-Profile: the subprocess runs on the Claude profile named by MODEL_ROUTER_CLAUDE_CONFIG_DIR, else the
-one recorded by `router install`, else CLAUDE_CONFIG_DIR, else it refuses to start, so the router
-never uses another profile by accident.
+Profile: the subprocess runs on the Claude profile named by MODEL_ROUTER_CLAUDE_CONFIG_DIR, else the profile in
+use, whose folder holds the router's state. Only with the state moved elsewhere (MODEL_ROUTER_HOME) does it read
+the profile `router install` recorded, then CLAUDE_CONFIG_DIR; with none of them it refuses to start, so the
+router never uses another profile by accident.
 CLAUDECODE is dropped from the environment so the CLI does not think it is nested in a session.
 """
 
@@ -36,7 +37,7 @@ from pydantic import BaseModel, ValidationError
 from . import limits
 from .catalog import MODELS, Cell, Usage
 from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
-from .paths import CHILD_ENV, CONFIG_DIR_ENV, config_path, read_config
+from .paths import CHILD_ENV, CONFIG_DIR_ENV, HOME_ENV, claude_profile, config_path, read_config
 
 DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
 NO_MCP = '{"mcpServers":{}}'
@@ -47,12 +48,15 @@ RATE_LIMITED = 429
 
 def resolve_profile() -> tuple[Path, str]:
     """Return the Claude profile directory for the cli backend and where it came from: the
-    MODEL_ROUTER_CLAUDE_CONFIG_DIR variable, then `config.json` (written by `router install`), then the
-    ambient CLAUDE_CONFIG_DIR. Nothing else: the router must never land on another profile by accident.
+    MODEL_ROUTER_CLAUDE_CONFIG_DIR variable, else the profile in use, which owns the state folder. With the state
+    moved by MODEL_ROUTER_HOME, `config.json` (written by `router install`), then the ambient CLAUDE_CONFIG_DIR.
+    Nothing else: the router must never land on another profile by accident.
     """
     value = os.environ.get(CONFIG_DIR_ENV)
     if value:
         return Path(value).expanduser(), CONFIG_DIR_ENV
+    if not os.environ.get(HOME_ENV):  # a profile recorded in this folder never points away from its owner
+        return claude_profile(), "the profile in use, which holds the router's state"
     value = read_config().get("claude_config_dir")
     if value:
         return Path(str(value)).expanduser(), str(config_path())
@@ -152,6 +156,8 @@ class CliClient:
         """
         if os.environ.get(CHILD_ENV) == "1":
             return  # a session the router started: whoever started it learns the limit
+        if not os.environ.get(HOME_ENV) and self.config_dir.resolve() != claude_profile().resolve():
+            return  # another profile's account: its own sessions learn its limits, in its own folder
         models = {spec.short: spec.id for spec in MODELS.values() if spec.claude}
         with contextlib.suppress(OSError, ValueError):  # learning the reset must never hide the refusal itself
             limits.learn(text or cell.spec.short, models=models, config_dir=self.config_dir, binary=self.binary)

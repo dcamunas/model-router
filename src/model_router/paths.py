@@ -1,9 +1,11 @@
 """Where the router keeps its state and the environment variables that configure it.
 
-State lives in ~/.model-router (MODEL_ROUTER_HOME moves it). `config.json` holds what `router
-install` or `router config` decide for this machine: the Claude profile the cli backend uses and,
-optionally, the models this installation may route to, the judge cell and the active calibration. Every
-variable the router reads is named here, all under the MODEL_ROUTER_ prefix.
+State lives in the Claude profile in use, `<profile>/model-router`, where the profile is $CLAUDE_CONFIG_DIR or
+~/.claude. Two profiles on one machine (a personal one and a work one, say) never share decisions,
+measurements, limits or settings. MODEL_ROUTER_HOME moves it. `config.json` holds what `router install` or
+`router config` decide for that profile: the Claude profile the cli backend uses and, optionally, the models
+this installation may route to, the judge cell and the active calibration. Every variable the router reads is
+named here, all under the MODEL_ROUTER_ prefix.
 """
 
 from __future__ import annotations
@@ -30,9 +32,18 @@ HOOK_QUIET_ENV = "MODEL_ROUTER_HOOK_QUIET"  # "1" hides the hook's one-line noti
 CHILD_ENV = "MODEL_ROUTER_CHILD"  # "1" in every session the router starts itself (a worker, a judge): not a person's turn
 
 
+LEGACY_HOME = "~/.model-router"  # where every profile shared its state before 0.19.0; doctor reports it
+
+
+def claude_profile() -> Path:
+    """Return the Claude Code profile in use: $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser().absolute()
+
+
 def home() -> Path:
-    """Return the state directory: $MODEL_ROUTER_HOME or ~/.model-router."""
-    return Path(os.environ.get(HOME_ENV, "~/.model-router")).expanduser()
+    """Return the state directory: $MODEL_ROUTER_HOME, else `model-router` inside the Claude profile in use."""
+    value = os.environ.get(HOME_ENV)
+    return Path(value).expanduser() if value else claude_profile() / "model-router"
 
 
 def config_path() -> Path:

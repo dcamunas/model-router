@@ -97,7 +97,7 @@ An answer cut by `max_tokens` is retried once on the same cell with twice the ro
 
 **Every attempt, with what it really cost.**
 
-- `~/.model-router/ledger.jsonl` (`MODEL_ROUTER_HOME` moves it) keeps every attempt with its real
+- `ledger.jsonl` in the router's folder of the Claude profile (`~/.claude/model-router` by default; `MODEL_ROUTER_HOME` moves it) keeps every attempt with its real
   tokens and cost, the model that served it (when a fallback ran), the verdict and the reason.
 - It also keeps the router version, the calibration that decided, the task's fingerprint (a hash of
   kind, risk and prompt, so the same task can be compared across strategies and versions) and, for

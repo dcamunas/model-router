@@ -4,7 +4,7 @@ gave its verdict, and computes per kind and cell the first-attempt pass rate wit
 interval, the mean cost of an attempt and the expected cost per solved task; from those it proposes a
 start cell per kind and risk, and changes the current table only on evidence: a cheaper cell that was
 measured and passes, or a current cell that was measured and loses. `router calibrate` prints the
-report; `--apply` saves the calibration under `~/.model-router/calibrations/` and names it in
+report; `--apply` saves the calibration under `<profile>/model-router/calibrations/` and names it in
 config.json; `Policy` loads the active one over the tables in the code, and every record it decides
 carries its id. Without a calibration everything decides as before. The ladder still climbs by the
 catalogue's assumed capability: a calibration moves where a task starts, not how it escalates.

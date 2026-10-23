@@ -2,7 +2,7 @@
 
 Idempotent. `install` adds four hooks (PreToolUse on Agent, SessionStart, SubagentStop, StopFailure) that run the `router-hook`
 entry point installed next to this interpreter, copies the `router` skill into the profile's skills
-directory (or links it, for development), and records in ~/.model-router/config.json the profile
+directory (or links it, for development), and records in <profile>/model-router/config.json the profile
 that `router run` will use and, when asked, the models this installation may route to. `uninstall`
 removes the hooks and the skill and leaves config.json alone. Other settings are preserved and
 previous router entries are replaced. Everything is validated before anything is written.
@@ -11,14 +11,13 @@ previous router entries are replaced. Everything is validated before anything is
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
 from typing import Any  # Any: settings.json, decoded
 
 from .catalog import MODELS, parse_models
-from .paths import CONFIG_DIR_ENV, read_config, save_config
+from .paths import CONFIG_DIR_ENV, claude_profile, read_config, save_config
 
 SKILL_SRC = Path(__file__).resolve().parent / "claude_code" / "router"
 HOOK_NAME = "router-hook"
@@ -27,8 +26,7 @@ HOOK_EVENTS = ("PreToolUse", "SessionStart", "SubagentStop", "StopFailure")
 
 def default_settings() -> Path:
     """Return the settings.json of the active Claude Code profile ($CLAUDE_CONFIG_DIR or ~/.claude)."""
-    base = Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")).expanduser()
-    return base / "settings.json"
+    return claude_profile() / "settings.json"
 
 
 def hook_binary() -> Path | None:

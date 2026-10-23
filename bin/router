@@ -1,0 +1,41 @@
+#!/bin/sh
+# The `router` command for sessions with the plugin: Claude Code puts this folder on the PATH of its Bash tool.
+#
+# It runs the CLI from the virtualenv the plugin's SessionStart hook builds (see hooks/router-hook.sh), so every
+# Claude profile uses the router version its own plugin pinned, and nobody installs anything else. The data
+# directory comes from CLAUDE_PLUGIN_DATA when Claude Code sets it, else from where Claude Code caches a
+# marketplace plugin: <profile>/plugins/cache/<marketplace>/<plugin>/<version> keeps its data in
+# <profile>/plugins/data/<plugin>-<marketplace>. A plugin loaded from a folder (--plugin-dir) uses its .venv.
+set -u
+self=$0
+while [ -L "$self" ]; do  # called through a link: find the real file, whose folder says where the plugin is
+    target=$(readlink -- "$self")
+    case $target in
+        /*) self=$target ;;
+        *) self=$(dirname -- "$self")/$target ;;
+    esac
+done
+root=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd -P)
+data="${CLAUDE_PLUGIN_DATA:-}"
+cached=""
+if [ -z "$data" ]; then
+    plugin_dir=$(dirname -- "$root")
+    marketplace_dir=$(dirname -- "$plugin_dir")
+    if [ "$(basename -- "$(dirname -- "$marketplace_dir")")" = cache ]; then
+        cached=1
+        plugins=$(dirname -- "$(dirname -- "$marketplace_dir")")
+        id=$(printf '%s@%s' "$(basename -- "$plugin_dir")" "$(basename -- "$marketplace_dir")" | tr -c 'A-Za-z0-9_\n-' '-')
+        data="$plugins/data/$id"
+    fi
+fi
+for cli in "${data:+$data/venv/bin/router}" "$root/.venv/bin/router"; do
+    if [ -n "$cli" ] && [ -x "$cli" ]; then
+        exec "$cli" "$@"
+    fi
+done
+if [ -n "$data" ] || [ -n "$cached" ]; then
+    echo "router: the plugin environment is not ready yet: start a new Claude Code session, which builds it with uv (install uv if it is missing)" >&2
+else
+    echo "router: no environment for the plugin in $root: run \`uv sync\` there, or install the plugin from its marketplace" >&2
+fi
+exit 1

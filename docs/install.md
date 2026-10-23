@@ -29,14 +29,22 @@ afterwards; with every new plugin version it rebuilds it on its own. `uv` has to
 (`MODEL_ROUTER_UV=/path/to/uv` when it is not on the PATH). The only change to `settings.json` is
 the plugin being enabled.
 
-If your plan or your account lacks a model (no Fable, say), or you want `router run`, install the
-CLI too and tell it once:
+The plugin also puts the `router` command on the PATH of the shell Claude Code runs commands in, so in a
+session `router doctor`, `router config`, `router agents` or `router limits` work with nothing else
+installed. Each Claude profile has its own plugin, its own `router` and its own state, in `model-router/`
+inside the profile: a personal profile and a work profile on one machine share nothing.
+
+If your plan or your account lacks a model (no Fable, say), tell it once, in a session (ask Claude to run
+it) or from a terminal with the CLI:
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.18.0
 router config --models haiku,sonnet,opus    # touches neither hooks nor skill
 router doctor                               # claude, profile, plugin or hooks, available models, state
 ```
+
+For `router` in a terminal, outside Claude Code, install the CLI:
+`uv tool install git+https://github.com/dcamunas/model-router@v0.19.0`. It works on the profile in
+`CLAUDE_CONFIG_DIR`, `~/.claude` when that is not set.
 
 ## In a team repository
 
@@ -57,10 +65,8 @@ router project --team    # writes the two keys below into .claude/settings.json,
 Claude Code reads them once a teammate trusts the folder, but it does not install a plugin hosted
 elsewhere on its own: each person runs, once, in that repository,
 `claude plugin install model-router@dcamunas --scope project`, and starts a new session. They need
-`uv`. The plugin alone does not put the `router` command on the PATH; whoever wants `router doctor`,
-`router agents` or `router limits` installs the CLI as well
-(`uv tool install git+https://github.com/dcamunas/model-router@v0.18.0`). `router doctor` run in the
-repository says whether the plugin is installed in that profile. Then, if you
+`uv`. `router doctor`, asked for in a session in the repository, says whether the plugin is installed in
+that profile. Then, if you
 want them: [risk floors](claude-code.md#risk-floors-per-repository) in `.claude/model-router.json` and
 [shared counts](claude-code.md#shared-with-your-team-optional) with `router project --share`.
 
@@ -71,7 +77,7 @@ the same hooks into the profile's `settings.json` and copies the skill and the r
 (as `router-reader`) into the profile.
 
 ```bash
-uv tool install git+https://github.com/dcamunas/model-router@v0.18.0
+uv tool install git+https://github.com/dcamunas/model-router@v0.19.0
 router install                              # hooks + skill in the active profile ($CLAUDE_CONFIG_DIR or ~/.claude)
 router install --models haiku,sonnet,opus   # without Fable
 router doctor

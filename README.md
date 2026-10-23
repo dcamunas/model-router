@@ -44,9 +44,10 @@ The kind is one of `classify`, `extract`, `summarize`, `search`, `chat`, `write`
 `analysis` or `agentic`; the risk is `low`, `medium`, `high` or `critical`
 ([what each means](docs/how-it-decides.md#by-risk-at-a-glance)).
 
-For the `router` command (stats, plans, text-only tasks) install the CLI too:
-`uv tool install git+https://github.com/dcamunas/model-router@v0.18.0`, then `router doctor`. Other
-setups are in [Install](docs/install.md).
+The plugin brings the `router` command (stats, plans, limits, text-only tasks) to Claude Code's shell, and
+each Claude profile keeps its own state. For `router` in a terminal:
+`uv tool install git+https://github.com/dcamunas/model-router@v0.19.0`. Other setups are in
+[Install](docs/install.md).
 
 ## What you get
 

@@ -96,9 +96,10 @@ through `--json-schema`. It spends your subscription's quota, not dollars: the a
 are the list-price equivalent, a proxy for quota use.
 
 The Claude profile it uses, in order: `MODEL_ROUTER_CLAUDE_CONFIG_DIR`, `claude_config_dir` in
-`~/.model-router/config.json` (written by `router install` or `router config`), `CLAUDE_CONFIG_DIR`.
-With none of them it refuses to start, so it never uses another profile by accident. `router doctor`
-says which one it is using.
+`config.json` in the router's state folder (written by `router install` or `router config`), `CLAUDE_CONFIG_DIR`,
+and last `~/.claude`, the profile that holds the router's state. With `MODEL_ROUTER_HOME` set and none of
+the others, it refuses to start, so it never uses another profile by accident. `router doctor` says which
+one it is using.
 
 Differences from the `api` backend: no `max_tokens` and no server-side refusal fallbacks, and every
 call takes one or two seconds more because of the process start-up. `--backend api|cli` forces one

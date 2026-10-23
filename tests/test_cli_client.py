@@ -113,6 +113,15 @@ def test_profile_must_be_explicit(monkeypatch, tmp_path):
         CliClient(binary="claude-does-not-exist")
 
 
+def test_with_the_state_in_the_default_profile_that_profile_is_the_one_used(monkeypatch, tmp_path):
+    from model_router.cli_client import resolve_profile
+
+    for name in ("MODEL_ROUTER_HOME", "MODEL_ROUTER_CLAUDE_CONFIG_DIR", "CLAUDE_CONFIG_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert resolve_profile()[0] == tmp_path / ".claude"
+
+
 def test_every_session_the_router_starts_is_marked_as_its_child(tmp_path, monkeypatch):
     import json
     import os

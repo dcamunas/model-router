@@ -5,6 +5,9 @@
 What the plugin does to the subagents Claude launches: the model and effort it gives them, the read-only
 agent, what it measures, what it learns per repository, and what a repository can set for itself.
 
+Paths under `~/.claude/model-router` are those of the default Claude profile; a profile elsewhere (`CLAUDE_CONFIG_DIR`) keeps
+its own `model-router/` folder.
+
 A subagent's bill is mostly its context, read again on every turn: the tools, the MCP servers, the
 skills and the conversation so far. A review subagent on Opus measured in this repository took 36
 turns and read 3.6M cached tokens: 1.43 USD at list price for its context alone. So the plugin
@@ -58,7 +61,7 @@ The router learns, per git repository, where each kind of task should start.
   least), it starts one step up in that repository from the next session, and Claude Code says so.
 - **Down only by hand.** After 10 launches without a fail, `router project` proposes the cell it was
   raised from, or one at least 20 % cheaper, and `--apply` applies it. The risk floors always hold.
-- **Reset.** The tuning lives in `~/.model-router/projects/`. `--reset` or `--apply` restart the count,
+- **Reset.** The tuning lives in `~/.claude/model-router/projects/`. `--reset` or `--apply` restart the count,
   so what was already weighed does not move it again.
 
 Alone, the numbers grow slowly: six launches of one kind on one start cell in one repository before
@@ -74,7 +77,7 @@ resets. The router finds out from the failure and then knows the exact moment:
   reaches `SubagentStop`), and `router run` gets the same 429 back.
 - **Exact reset.** The router then asks that model for one word through `claude -p --output-format
   stream-json`, whose `rate_limit_event` carries the window and its `resetsAt`. A refused question
-  reports a cost of 0. What it learns goes to `~/.model-router/limits.json`.
+  reports a cost of 0. What it learns goes to `~/.claude/model-router/limits.json`.
 - **Routed around.** Until that moment the model is left out of the available ones: the hook, plans,
   judges and `router run` pick the next model, and each launch's notice says until when. At the reset it
   is back with no other step. A launch that names the limited model with `model` is refused, with the
@@ -132,6 +135,11 @@ no advice: their model is the session's. When the advice changes the model, it
 prices the measured tokens at both models; a change of effort also changes the tokens, which is not
 estimated. It never edits an agent: the change is yours.
 
+In a repository that [shares counts](#shared-with-your-team-optional), the teammates' runs of the same agent
+on the same cell add to yours before the thresholds apply, so the advice covers the whole team: the `team`
+column says how many runs came from others. Turns, spend and savings come from your machine only. A cell
+the agent's file no longer names gets no advice, so a change you made does not keep showing up.
+
 ## Workflows
 
 The hook does not see the agents a workflow script spawns: they run on the session's model and effort
@@ -146,14 +154,18 @@ One person's numbers grow slowly; a team can pool them. `router project --share`
 adds one small file there per closed week, never changed afterwards:
 
 ```json
-{"v":1,"c":{"review|high|opus/medium":[12,1]}}
+{"v":1,"c":{"review|high|opus/medium":[12,1]},"a":{"migration-curator|opus/xhigh":[9,0]}}
 ```
 
-- **What is in it.** Launches and fails per kind, risk and start cell. No prompts, signatures, paths,
-  names, costs or times. The file name is a salted hash plus the week.
+- **What is in it.** `c`: launches and fails per kind, risk and start cell, for the subagents the router
+  routed. `a`: runs and repeats per agent fixed by hand and its cell, for `router agents`, and only for
+  agents committed in the repository's own `.claude/agents/` (a plain file in git, never a link or an
+  untracked file), whose names are already there. Which agents count is read from the checkout when the
+  week's file is written. No prompts, signatures, paths, people, costs or times. The file name is a salted
+  hash plus the week.
 - **No double counting.** Each router counts the others' files with its own log, never its own files.
-  The same rules apply: weeks before a reset do not count, and one installation weighs at most 30
-  launches per cell, at its own fail rate.
+  One installation weighs at most 30 launches per cell, at its own fail rate. For routing, weeks before a
+  reset do not count; `router agents` takes the whole 13-week window, since it only advises.
 - **No raise on others' numbers alone.** A raise happens on its own only with at least one fail on
   your machine too; otherwise `router project` proposes it.
 - **Git-friendly.** Files never change, so branches and merges do not fight over them. Any router
@@ -196,4 +208,4 @@ environment the update installed, and never puts the older version back.
 | `MODEL_ROUTER_HOOK_LOG=0` | Stops logging decisions and measurements, and with them all learning. |
 | `MODEL_ROUTER_UV` | Tells the plugin where `uv` is. |
 
-Decisions go to `~/.model-router/hook.jsonl` and measurements to `~/.model-router/subagents.jsonl`.
+Decisions go to `~/.claude/model-router/hook.jsonl` and measurements to `~/.claude/model-router/subagents.jsonl`.

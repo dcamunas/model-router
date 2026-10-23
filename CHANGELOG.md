@@ -2,6 +2,39 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.19.0] - 2026-10-23
+
+Each Claude profile keeps its own router, the plugin brings the `router` command, and `router agents` sees the whole team.
+
+### Changed
+
+- The state moves from `~/.model-router`, which every profile on the machine shared, to `model-router/` inside
+  the Claude profile in use (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A personal profile and a work profile
+  no longer share decisions, measurements, limits, tunings or `config.json`, so a work session can no longer
+  pick up the profile a personal `router install` recorded. `MODEL_ROUTER_HOME` still moves it.
+- `router run` and the limit probe run on the profile in use. A profile recorded in `config.json` by `router
+  install` counts only when `MODEL_ROUTER_HOME` moves the state out of the profile, and a usage limit hit on
+  another profile's account (`MODEL_ROUTER_CLAUDE_CONFIG_DIR`) is left to that profile's own sessions.
+
+### Added
+
+- `bin/router` in the plugin: Claude Code puts it on the PATH of its shell, so `router doctor`, `router agents`
+  or `router limits` work in a session with nothing else installed, at the version that profile's plugin pinned.
+- `router agents` advises on the whole team's runs in a repository that shares counts: the weekly files in
+  `.claude/model-router/` gain `a`, runs and repeats per agent fixed by hand and its cell, only for agents
+  defined in the repository's `.claude/agents/`. A `team` column says how many runs came from teammates;
+  turns, spend and savings stay this machine's. Routers before 0.19.0 ignore the new key.
+- `router doctor` fails while `~/.model-router` is still there and says how to move it; it also catches a move
+  that nested the old folder inside the new one, and a `claude_config_dir` in `config.json` that names another
+  profile.
+
+Upgrading: move `~/.model-router` into the profile it belongs to before that profile's next session, for
+instance `mv ~/.model-router ~/.claude-personal/model-router` for a profile in `~/.claude-personal`. If the
+folder already exists, a plain `mv` puts the old one inside it; merge by hand instead. Delete the key
+`claude_config_dir` from the moved `config.json`. A CLI installed with `uv tool install` at 0.18 or earlier
+still uses `~/.model-router` and comes before the plugin's `router` on the PATH: upgrade it to this tag or
+uninstall it.
+
 ## [0.18.0] - 2026-10-22
 
 The router knows when a model's usage limit is spent and the exact moment it resets.

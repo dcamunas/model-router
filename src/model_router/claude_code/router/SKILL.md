@@ -61,9 +61,9 @@ router run --file brief.md --check-json name,date,amount     # programmatic chec
 router run "..." --json                                      # answer + attempts as JSON
 ```
 
-It uses the Claude account of the profile recorded in `~/.model-router/config.json` (written by
-`router install` or `router config`), with no API key. If `router` is not on the PATH or anything
-fails, `router doctor` says so.
+It uses the Claude account of this session's profile (or the one `router config` recorded), with no API
+key. The plugin brings the `router` command; until the first session has built its environment it says
+"not ready yet", and after that `router doctor` explains anything that fails.
 
 ## When to step in yourself
 
@@ -128,4 +128,4 @@ the design is yours and it touches production, money, customers or deletions:
 - A programmatic checker beats any judge. If there are tests, the verdict is "they pass or they
   don't".
 - Do not change cells inside one subagent conversation: the cache is per model.
-- The hook's decisions are kept in `~/.model-router/hook.jsonl`; `router stats` summarises them.
+- The hook's decisions are kept in `<profile>/model-router/hook.jsonl`; `router stats` summarises them.
