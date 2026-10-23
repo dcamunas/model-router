@@ -2,6 +2,49 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.20.0] - 2026-10-23
+
+The plugin is the product: what a plugin user never runs is gone, and every setting has one place.
+
+### Removed
+
+- The tooling used to tune the tables: `router bench` (simulated or on a task file), `router calibrate`, the
+  SQLite index and `router db`, the Haiku classifier (`--classify-llm`), the feedback store with `router
+  feedback`, `evals/` and `tasks.example.yaml`. The `START` table decides, and per-repository learning moves a
+  start that keeps failing. A calibration made with an earlier version is no longer read: delete
+  `model-router/calibrations/`, `feedback.json`, `router.db` and `bench/` from the profile if you have them.
+- `router install` and `router uninstall`: the plugin brings the hooks, the skill, the read-only agent and the
+  `router` command. If an earlier `router install` wrote hooks into a profile's `settings.json`, run
+  `router uninstall` with that version first, or delete the entries that run `router-hook` by hand: with the
+  plugin as well, every subagent would be routed twice.
+- The environment variables `MODEL_ROUTER_MODELS`, `MODEL_ROUTER_JUDGE`, `MODEL_ROUTER_LEAN`,
+  `MODEL_ROUTER_CALIBRATION`, `MODEL_ROUTER_HOME` and `MODEL_ROUTER_CLAUDE_CONFIG_DIR`, and `--claude-config-dir`.
+  Models, judge and the read-only agent live in `config.json` (`router config`); the state and `router run`
+  use the Claude profile in use.
+- `router doctor`'s checks of the non-plugin install and of the pre-0.19 `~/.model-router` folder.
+- In the logs: the decision log's `prompt_head` (the first 60 characters of every prompt) and `subagent`; the
+  measurements' `tool_calls`, `tokens` and `context_cost_usd`; the ledger's `fingerprint`, `calibration_id`,
+  `eval_id` and `repeat`. Nothing read them.
+- `pyyaml` as a dependency, and the alias `ClientUnavailable` from 0.1.0.
+
+### Changed
+
+- The skill and the read-only agent live at `skills/router/` and `agents/reader.md`, the plugin layout.
+- `router config --lean on` turns the read-only agent back on; `router config` shows the profile in use.
+- `verify.ask` is a function: one judge, one verdict, for a package that seats its own judges. `Verifier`
+  takes no judge instructions or confidence of its own. `ladder(..., steps=)` and `Verifier.verify(..., mode=,
+  worker=)` take keywords. `model_router.fmt` (money, tables) is public.
+- `config.json` and `limits.json` are written in one step, as the other state files already were.
+
+### Fixed
+
+- In a repository that shares counts, a week whose file was written while git could not say which agents the
+  repository commits lost its agent runs for good. Now nothing is written that session and the next one tries.
+- An agent file with `model: "opus"` or a trailing comment counted for `router agents` on this machine but was
+  left out of the shared counts. One frontmatter reader now, quotes and comments dropped.
+- The skill and the hook's docstring said a declaration in the Agent description counts; only the first lines
+  of the prompt do.
+
 ## [0.19.0] - 2026-10-23
 
 Each Claude profile keeps its own router, the plugin brings the `router` command, and `router agents` sees the whole team.
@@ -29,7 +72,7 @@ Each Claude profile keeps its own router, the plugin brings the `router` command
   profile.
 
 Upgrading: move `~/.model-router` into the profile it belongs to before that profile's next session, for
-instance `mv ~/.model-router ~/.claude-personal/model-router` for a profile in `~/.claude-personal`. If the
+instance `mv ~/.model-router ~/.claude-other/model-router` for a profile in `~/.claude-other`. If the
 folder already exists, a plain `mv` puts the old one inside it; merge by hand instead. Delete the key
 `claude_config_dir` from the moved `config.json`. A CLI installed with `uv tool install` at 0.18 or earlier
 still uses `~/.model-router` and comes before the plugin's `router` on the PATH: upgrade it to this tag or
