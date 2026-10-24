@@ -188,12 +188,12 @@ def _notes(declared: str, raised: floors.Raised) -> dict[str, Any]:
 
 def _cross_review(cell: Cell, *, kind: str, risk: str, chat_model: str | None, policy: Policy) -> tuple[Cell, str | None]:
     """Return the cell a review runs on, and why it moved: a review that gets a full judge (critical) does not run
-    on the chat's own model when a Claude model at least as capable is there to take it.
+    on the chat's own model when a model at least as capable is there to take it.
     """
     if kind != "review" or VERIFY_BY_RISK[risk] != "full" or cell.claude_code()["model"] != chat_model:
         return cell, None
     other = policy.verifier_for(cell)
-    if not other.spec.claude or other.claude_code()["model"] == chat_model or other.tier < cell.tier:
+    if other.claude_code()["model"] == chat_model or other.tier < cell.tier:
         return cell, None
     return other, f"{risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
 
@@ -364,7 +364,7 @@ def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
     if "rate_limit" not in str(event.get("error") or "") or is_child():
         return None  # in a session the router started (its own probe, say), asking again would never end
     text = str(event.get("last_assistant_message") or event.get("error_details") or "")
-    limit = limits.learn(text, models={s.short: s.id for s in MODELS.values() if s.claude})
+    limit = limits.learn(text, models={s.short: s.id for s in MODELS.values()})
     if limit is None or quiet():
         return None
     who = "every model" if limit.model == limits.ALL_MODELS else limit.model

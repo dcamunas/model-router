@@ -13,7 +13,7 @@ from model_router.hook import handle
 
 NOW = datetime(2026, 10, 22, 21, 0, tzinfo=UTC)
 RESET = datetime(2026, 10, 24, 13, 0, tzinfo=UTC)  # Sat 24/10 15:00 in Madrid
-CLAUDE_MODELS = {s.short: s.id for s in MODELS.values() if s.claude}
+CLAUDE_MODELS = {s.short: s.id for s in MODELS.values()}
 FABLE_MESSAGE = "You've reached your Fable limit. Switch to another model, or manage usage credits"
 
 
@@ -166,14 +166,13 @@ def test_the_hook_routes_around_a_limited_model_and_refuses_it_when_named(home):
 
 def test_router_run_learns_the_limit_of_the_model_its_message_names(home, tmp_path):
     from model_router.catalog import parse_cell
-    from model_router.cli_client import CliClient
-    from model_router.client import ClientUnavailableError
+    from model_router.cli_client import CliClient, ClientUnavailableError
 
     client = CliClient.__new__(CliClient)
     client.config_dir, client.binary = tmp_path, _fake_claude(tmp_path, REJECTED)
     with pytest.raises(ClientUnavailableError, match="Fable limit"):
         client.to_completion({"is_error": True, "api_error_status": 429, "result": FABLE_MESSAGE},
-                             parse_cell("sonnet/low"), output_format=None, seconds=0.5)  # not the model named
+                             parse_cell("sonnet/low"), seconds=0.5)  # not the model named
     assert "--model claude-fable-5-1" in (tmp_path / "claude.calls").read_text()
     assert limits.active()["fable"].until == RESET
 

@@ -60,23 +60,4 @@ a personal account's quota. `router doctor` names the profile.
 
 ## As a library
 
-The router has no Python API of its own to drive. Its modules are shared with
-[model-tribunal](https://github.com/dcamunas/model-tribunal), which builds its judges on them and imports these
-names:
-
-| Module | Names |
-|---|---|
-| `model_router.task` | `Task`, `KINDS`, `RISKS`, `json_payload` |
-| `model_router.client` | `ClaudeClient`, `ClientUnavailableError`, `LiveClient`, `Completion`, `NON_STREAMING_MAX_TOKENS` |
-| `model_router.cli_client` | `CliClient`, `DEFAULT_SYSTEM` |
-| `model_router.verify` | `ask`, `judge_prompt`, `JUDGE_SYSTEM`, `JudgeVerdict`, `VerifyResult`, `Verdict` |
-| `model_router.catalog` | `MODELS`, `ModelSpec`, `register`, `unregister`, `Cell`, `Usage`, `parse_cell`, `available_models`, `nearest_available`, `nearest_effort`, `UnknownModelError` |
-| `model_router.classify` | `head`, `classify_rules` |
-| `model_router.hook` | `main_model` |
-| `model_router.paths` | `claude_profile`, `read_json`, `merge_json`, `read_jsonl`, `parse_jsonl`, `append_jsonl`, `replace_file`, `locked`, `is_child` |
-| `model_router.fmt` | `money`, `table` |
-| `model_router.clock` | the module |
-
-`ask` puts one judge cell to one answer and returns its verdict. A client is any object with
-`complete(cell, prompt=..., ...)`, so a caller can be tested without a network
-(`model_router.testing.FakeClient`).
+The router has no Python API. Its modules are internal and can change in any release.

@@ -19,7 +19,6 @@ from .catalog import (
     Cell,
     lattice,
     listed_models,
-    nearest_available,
     nearest_effort,
     parse_cell,
     unknown_listed,
@@ -91,7 +90,7 @@ def models_note() -> str | None:
 
 def default_judge_cell(models: Iterable[str] | None = None) -> Cell:
     """Return DEFAULT_JUDGE on the nearest model this installation has, whatever the settings say."""
-    return _cap_effort(nearest_available(parse_cell(DEFAULT_JUDGE), models))
+    return _cap_effort(worker_cell(parse_cell(DEFAULT_JUDGE), models))
 
 
 def default_judge(models: Iterable[str] | None = None) -> Cell:
@@ -104,7 +103,7 @@ def default_judge(models: Iterable[str] | None = None) -> Cell:
         ValueError: the configured effort does not exist.
     """
     raw = read_config().get("judge") or DEFAULT_JUDGE
-    return _cap_effort(nearest_available(parse_cell(str(raw)), models))
+    return _cap_effort(worker_cell(parse_cell(str(raw)), models))
 
 
 def _full_judge(worker: Cell, *, judge: Cell, cells: list[Cell]) -> Cell:
@@ -156,7 +155,7 @@ class Policy:
         if note:
             self.notes.append(note)
         try:
-            self.judge = _cap_effort(nearest_available(judge, self.models)) if judge else default_judge(self.models)
+            self.judge = _cap_effort(worker_cell(judge, self.models)) if judge else default_judge(self.models)
         except ValueError as exc:  # a typo, or a model this version does not know
             self.judge = default_judge_cell(self.models)
             self.notes.append(f"judge setting cannot be used ({exc}): {self.judge} instead; `router config --judge` "

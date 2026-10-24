@@ -4,16 +4,14 @@ import stat
 import pytest
 
 from model_router.catalog import parse_cell
-from model_router.cli_client import CliClient
-from model_router.client import ClientUnavailableError
-from model_router.verify import Verdict
+from model_router.cli_client import CliClient, ClientUnavailableError
 
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
 prompt = sys.stdin.read()
 opt = lambda name: args[args.index(name) + 1] if name in args else None
-echo = {"model": opt("--model"), "effort": opt("--effort"), "system": opt("--system-prompt"), "schema": opt("--json-schema"),
+echo = {"model": opt("--model"), "effort": opt("--effort"), "system": opt("--system-prompt"),
         "tools": opt("--tools"), "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"), "nested": os.environ.get("CLAUDECODE"),
         "prompt": prompt}
 with open(os.environ["FAKE_CLAUDE_ECHO"], "w") as fh:
@@ -29,9 +27,6 @@ elif prompt.strip() == "LIST":
     sys.stdout.write("[]"); sys.exit(0)
 elif prompt.strip() == "CRASH":
     json.dump(out, sys.stdout); sys.exit(2)
-elif opt("--json-schema"):
-    out["structured_output"] = {"passed": True, "confidence": 0.9, "reason": "ok", "issues": []}
-    out["stop_reason"] = "tool_use"
 json.dump(out, sys.stdout)
 '''
 
@@ -53,18 +48,10 @@ def test_passes_cell_profile_and_prompt_and_reads_usage(fake):
     c = client.complete(parse_cell("opus/low"), prompt="hello", system="be brief")
     e = json.loads(echo.read_text())
     assert (e["model"], e["effort"], e["system"], e["tools"], e["prompt"]) == ("claude-opus-5-5", "low", "be brief", "", "hello")
-    assert e["config_dir"].endswith("profile") and e["nested"] is None and e["schema"] is None
-    assert c.text == "answer to: hello" and c.model == "claude-opus-5-5" and c.stop_reason == "end_turn"
+    assert e["config_dir"].endswith("profile") and e["nested"] is None
+    assert c.text == "answer to: hello" and c.model == "claude-opus-5-5"
     u = c.usage
     assert (u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens) == (12, 34, 5, 800)
-    assert c.request_id == "sess-1" and not c.refused and not c.fallback_ran and c.parsed is None
-
-
-def test_structured_output_becomes_the_parsed_model(fake):
-    client, echo = fake
-    c = client.complete(parse_cell("sonnet/medium"), prompt="judge", output_format=Verdict)
-    assert json.loads(json.loads(echo.read_text())["schema"])["required"] == ["passed", "confidence", "reason"]
-    assert isinstance(c.parsed, Verdict) and c.parsed.passed and c.stop_reason == "end_turn"
 
 
 def test_errors_become_client_unavailable(fake):

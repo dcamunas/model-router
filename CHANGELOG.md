@@ -2,6 +2,15 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.25.0] - 2026-10-24
+
+### Removed
+
+- The code only model-tribunal used, now that it is retired: `verify.py` (the judge), the API client
+  (`LiveClient`) with the `anthropic` SDK, structured outputs with `pydantic`, `testing.FakeClient`, models
+  registered by another package (`register`, `unregister`, the provider of a model) and `task.json_payload`.
+  The router calls Claude only through `claude -p`, so it now has no dependencies.
+
 ## [0.24.0] - 2026-10-24
 
 ### Changed

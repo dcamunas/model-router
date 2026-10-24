@@ -55,7 +55,7 @@ def test_step_down_gives_up_little_capability_for_a_real_saving():
 
 
 def test_available_models_come_from_the_config_else_the_catalogue():
-    from model_router.catalog import available_models, nearest_available, parse_models
+    from model_router.catalog import available_models, parse_models, worker_cell
     from model_router.paths import write_config
 
     assert available_models() == list(MODELS)
@@ -71,46 +71,15 @@ def test_available_models_come_from_the_config_else_the_catalogue():
     with pytest.raises(ValueError):
         parse_models("")
     # nearest: same effort on the best model below; the first one above when nothing is below
-    assert nearest_available(parse_cell("fable/low"), ["haiku", "sonnet", "opus"]).label == "opus/low"
-    assert nearest_available(parse_cell("haiku/medium"), ["sonnet", "opus"]).label == "sonnet/medium"
-    assert nearest_available(parse_cell("opus/high"), ["opus"]).label == "opus/high"
+    assert worker_cell(parse_cell("fable/low"), ["haiku", "sonnet", "opus"]).label == "opus/low"
+    assert worker_cell(parse_cell("haiku/medium"), ["sonnet", "opus"]).label == "sonnet/medium"
+    assert worker_cell(parse_cell("opus/high"), ["opus"]).label == "opus/high"
 
 
-def test_a_registered_model_can_be_named_and_priced_but_never_enters_the_router_s_lattice():
-    from model_router.catalog import (
-        MODELS,
-        ModelSpec,
-        available_models,
-        lattice,
-        nearest_available,
-        nearest_effort,
-        parse_cell,
-        register,
-        unregister,
-        worker_cell,
-    )
+def test_an_older_config_naming_unknown_models_keeps_the_known_ones():
+    from model_router.catalog import MODELS, available_models, lattice, nearest_effort
     from model_router.paths import write_config
 
-    other = ModelSpec("vendor-model-1", "vendor", 0, 0.1, 0.5, 0.1, 0.1, "medium", False, provider="vendor",
-                      efforts=("low", "medium", "high", "xhigh"))
-    with pytest.raises(ValueError, match="Claude model's name"):
-        register(ModelSpec("vendor-opus", "opus", 2, 1, 1, 1, 1, "medium", False, provider="vendor"))
-    with pytest.raises(ValueError, match="Claude model's id"):
-        register(ModelSpec("claude-opus-5-5", "vendor2", 2, 1, 1, 1, 1, "medium", False, provider="vendor"))
-    register(other)
-    try:
-        claude = [m for m, s in MODELS.items() if s.claude]
-        assert parse_cell("vendor/high").capability == 0.40 and parse_cell("vendor").effort == "medium"  # its tier's
-        assert nearest_available(parse_cell("vendor/high"), ["opus"]) == parse_cell("vendor/high")  # its registrar serves it
-        write_config(models=["haiku", "sonnet", "opus", "fable", "vendor", "nosuch"])  # an older version's list
-        assert available_models() == claude and len(lattice()) == 16  # registered, listed, and still out
-        assert worker_cell(parse_cell("haiku/low"), ["vendor"]).label == "vendor/low"  # asked for by name, it stands in
-        assert nearest_effort("max", ("low", "high")) == "high" and nearest_effort("low", ("medium",)) == "medium"
-        register(ModelSpec("vendor-model-1", "vendor-b", 1, 1, 1, 1, 1, "low", False, provider="vendor"))
-        assert parse_cell("vendor-b/low").tier == 1  # the same id again: the first short name is gone
-        with pytest.raises(ValueError):
-            parse_cell("vendor/low")
-    finally:
-        unregister("vendor-model-1")
-        unregister("claude-opus-5-5")  # a Claude model is left alone
-    assert "vendor-model-1" not in MODELS and "claude-opus-5-5" in MODELS
+    write_config(models=["haiku", "sonnet", "opus", "fable", "vendor", "nosuch"])  # an older version's list
+    assert available_models() == list(MODELS) and len(lattice()) == 16
+    assert nearest_effort("max", ("low", "high")) == "high" and nearest_effort("low", ("medium",)) == "medium"

@@ -246,7 +246,7 @@ def model_id(name: str) -> str | None:
     """
     if name in MODELS:
         return name
-    return next((mid for mid, spec in MODELS.items() if spec.claude and spec.short in name.lower()), None)
+    return next((mid for mid, spec in MODELS.items() if spec.short in name.lower()), None)
 
 
 def transcript_calls(path: Path, *, seen: set[str] | None = None) -> Iterator[Call]:

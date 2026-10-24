@@ -1,11 +1,9 @@
 """What the router receives: a task with its kind and its risk. The hook builds one from a subagent's brief to pick
-the start cell; a judge reads its prompt and its instructions.
+the start cell.
 """
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
 
 KINDS: tuple[str, ...] = (
@@ -34,17 +32,3 @@ class Task:
             raise ValueError("empty prompt")
 
 
-FENCED_BLOCK = re.compile(r"```[\w-]*[ \t]*\r?\n(.*?)\r?\n?[ \t]*```", re.DOTALL)
-
-
-def json_payload(answer: str) -> object:
-    """Parse the JSON in `answer`: the first fenced block when there is one, else the whole text.
-
-    Raises:
-        json.JSONDecodeError: it is not JSON.
-    """
-    text = answer.strip()
-    fenced = FENCED_BLOCK.search(text)
-    if fenced:
-        text = fenced.group(1)
-    return json.loads(text)

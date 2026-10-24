@@ -16,9 +16,7 @@ cell to escalate to); a project's tuning (`projects.py`) moves a start cell on w
 
 The lattice the router chooses from stops at `xhigh` (AUTO_EFFORTS): `max` runs only when someone names it.
 
-The router works with Claude models only. Another package may `register` a model it serves itself (its
-`provider` says which door), so that model's cells can be named, priced and recorded; the router never routes
-to it: `available_models`, the lattice, the plans and the hook stay on Claude.
+The router works with Claude models only.
 """
 
 from __future__ import annotations
@@ -30,9 +28,6 @@ from . import limits
 from .paths import read_config
 
 PRICES_AS_OF = "2026-10-06"
-CLAUDE = "anthropic"  # the provider of the models the router routes to
-# A registered model's capability by its tier, since CAPABILITY_TIER names Claude models only.
-REGISTERED_CAPABILITY: dict[int, float] = {0: 0.40, 1: 0.60, 2: 0.75, 3: 0.90}
 
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 # The efforts the router chooses on its own. `max` is left out: it costs far more output than `xhigh` for little more
@@ -58,7 +53,7 @@ EPSILON = 1e-9  # capabilities are sums of decimals: compare them with this much
 @dataclass(frozen=True)
 class ModelSpec:
     """One model of the catalogue: ids, list prices in USD per million tokens and the API traits the router
-    relies on (default effort, server-side fallbacks, output cap, long-prompt pricing).
+    relies on (default effort, output cap, long-prompt pricing).
     """
 
     id: str
@@ -69,55 +64,22 @@ class ModelSpec:
     cache_read: float
     cache_write: float
     default_effort: str  # what the API applies when `effort` is omitted
-    server_fallbacks: bool  # accepts fallbacks="default" (Haiku does not)
     max_output: int = 128_000
     long_prompt_from: int | None = None  # prompt tokens above which `long_prompt_mult` applies
     long_prompt_mult: float = 1.0
-    provider: str = CLAUDE  # the door that serves it; a registered model names its own
-    efforts: tuple[str, ...] = EFFORTS  # the efforts this door accepts: the cells the lattice makes of the model
-
-    @property
-    def claude(self) -> bool:
-        """Say whether this is a Claude model, one the router may route to."""
-        return self.provider == CLAUDE
+    efforts: tuple[str, ...] = EFFORTS  # the efforts it accepts: the cells the lattice makes of the model
 
 
 MODELS: dict[str, ModelSpec] = {
     "claude-haiku-5-5": ModelSpec(
-        "claude-haiku-5-5", "haiku", 0, 0.10, 0.50, 0.01, 0.125, "medium", False,
+        "claude-haiku-5-5", "haiku", 0, 0.10, 0.50, 0.01, 0.125, "medium",
         long_prompt_from=100_000, long_prompt_mult=5.0,
     ),
-    "claude-sonnet-5-5": ModelSpec("claude-sonnet-5-5", "sonnet", 1, 2.00, 10.00, 0.20, 2.50, "high", True),
-    "claude-opus-5-5": ModelSpec("claude-opus-5-5", "opus", 2, 4.00, 20.00, 0.20, 5.00, "medium", True),
-    "claude-fable-5-1": ModelSpec("claude-fable-5-1", "fable", 3, 10.00, 50.00, 0.25, 12.50, "high", True),
+    "claude-sonnet-5-5": ModelSpec("claude-sonnet-5-5", "sonnet", 1, 2.00, 10.00, 0.20, 2.50, "high"),
+    "claude-opus-5-5": ModelSpec("claude-opus-5-5", "opus", 2, 4.00, 20.00, 0.20, 5.00, "medium"),
+    "claude-fable-5-1": ModelSpec("claude-fable-5-1", "fable", 3, 10.00, 50.00, 0.25, 12.50, "high"),
 }
 SHORT_TO_ID: dict[str, str] = {spec.short: spec.id for spec in MODELS.values()}
-
-
-def register(spec: ModelSpec) -> None:
-    """Add `spec` to the catalogue, replacing a registered model of the same id, so its cells can be named, priced
-    and recorded. The router routes to Claude only: a registered model never enters `available_models`, and the
-    package that registers it serves its calls.
-
-    Raises:
-        ValueError: `spec` is a Claude model, or takes a Claude model's id or short name.
-    """
-    if spec.claude or spec.short in {s.short for s in MODELS.values() if s.claude}:
-        raise ValueError(f"{spec.short!r} is a Claude model's name; a registered model needs its own")
-    taken = MODELS.get(spec.id)
-    if taken is not None and taken.claude:
-        raise ValueError(f"{spec.id!r} is a Claude model's id; a registered model needs its own")
-    if taken is not None:
-        SHORT_TO_ID.pop(taken.short, None)
-    MODELS[spec.id] = spec
-    SHORT_TO_ID[spec.short] = spec.id
-
-
-def unregister(model_id: str) -> None:
-    """Remove a registered model from the catalogue; a Claude model, or an id nobody registered, is left alone."""
-    spec = MODELS.get(model_id)
-    if spec is not None and not spec.claude:
-        SHORT_TO_ID.pop(MODELS.pop(model_id).short, None)
 
 
 class UnknownModelError(ValueError):
@@ -204,14 +166,11 @@ def parse_models(text: str | Iterable[str]) -> list[str]:
 
 
 def configured_models() -> list[str]:
-    """Return the Claude models this installation is set to use, in catalogue order: `models` in config.json
-    (`router config --models`), else every Claude model in the catalogue. A name the catalogue does not know, or a
-    registered model's, is ignored: the router routes to Claude only.
+    """Return the models this installation is set to use, in catalogue order: `models` in config.json
+    (`router config --models`), else every model in the catalogue. A name the catalogue does not know is ignored.
     """
-    claude = [m for m, spec in MODELS.items() if spec.claude]
     known = [n for n in listed_models() if n in SHORT_TO_ID or n in MODELS]
-    ids = [m for m in parse_models(known) if MODELS[m].claude] if known else []
-    return ids or claude  # nothing listed, or nothing left: every Claude model
+    return (parse_models(known) if known else []) or list(MODELS)  # nothing listed, or nothing left: every model
 
 
 def available_models() -> list[str]:
@@ -270,7 +229,7 @@ class Cell:
 
     @property
     def capability(self) -> float:
-        base = CAPABILITY_TIER.get(self.spec.short, REGISTERED_CAPABILITY[self.spec.tier])
+        base = CAPABILITY_TIER[self.spec.short]
         return round(base + CAPABILITY_EFFORT[self.effort], 4)
 
     def claude_code(self) -> dict[str, str]:
@@ -304,15 +263,6 @@ def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None =
     cells = [Cell(m, e) for m in (models or available_models())
              for e in (efforts or [x for x in MODELS[resolve_model(m)].efforts if x in AUTO_EFFORTS])]
     return sorted(cells, key=lambda c: (c.expected_cost(), c.capability))
-
-
-def nearest_available(cell: Cell, models: Iterable[str] | None = None) -> Cell:
-    """Return the cell a judge runs on: `cell` itself when its model is in `models` or is a registered one (whoever
-    registered it serves its calls and checks its own access); otherwise what `worker_cell` picks.
-    """
-    if not cell.spec.claude:
-        return cell
-    return worker_cell(cell, models)
 
 
 def worker_cell(cell: Cell, models: Iterable[str] | None = None) -> Cell:

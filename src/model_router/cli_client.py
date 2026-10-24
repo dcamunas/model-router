@@ -1,17 +1,7 @@
 """Claude through the `claude` CLI in headless mode (`claude -p`), on the Claude.ai subscription of the profile
-in use. Each completion is one short-lived CLI process with a
-fresh context, the cell's model and effort, no MCP servers, a minimal system prompt (without `--system-prompt`
-the CLI sends its own prompt of about 100K tokens on every call) and no tools unless the caller names some.
-
-What differs from the API backend (`client.LiveClient`):
-
-* `max_tokens` is not a CLI option; the CLI manages output length itself.
-* No server-side refusal fallbacks and no refusal category; a refusal is only what the CLI reports
-  as `stop_reason == "refusal"`.
-* Structured outputs go through `--json-schema` with the Pydantic model's JSON schema; the CLI
-  validates and returns `structured_output`.
-* Dollar amounts priced from its usage are list-price equivalents: a subscription is billed by quota, not
-  per token, so read them as a proxy for quota consumption.
+in use; `router doctor --live` makes its one call through it. Each completion is one short-lived CLI process with
+a fresh context, the cell's model and effort, no MCP servers, no tools and a minimal system prompt (without
+`--system-prompt` the CLI sends its own prompt of about 100K tokens on every call).
 
 Profile: the subprocess runs on the Claude profile in use ($CLAUDE_CONFIG_DIR, else ~/.claude), the one whose
 folder holds the router's state, unless the caller names another. CLAUDECODE is dropped from the environment so
@@ -25,15 +15,12 @@ import json
 import shutil
 import subprocess
 import time
-from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any  # Any: the JSON that `claude -p` prints
 
-from pydantic import BaseModel, ValidationError
-
 from . import limits
 from .catalog import MODELS, Cell, Usage
-from .client import NON_STREAMING_MAX_TOKENS, ClientUnavailableError, Completion
 from .paths import NO_MCP, child_env, claude_profile, is_child
 
 DEFAULT_SYSTEM = "Do the task in the message carefully and answer with only what was asked for."
@@ -41,6 +28,20 @@ TIMEOUT_SECONDS = 900.0  # a long answer at high effort takes minutes; past this
 NOT_LOGGED_IN = "not logged in"
 ERROR_DETAIL_CHARS = 300  # how much of the CLI's stderr/stdout an error message carries
 RATE_LIMITED = 429
+
+
+@dataclass
+class Completion:
+    """What one call returned: the text, the usage, the model that actually served it and how long it took."""
+
+    text: str
+    usage: Usage
+    model: str  # the model that actually served the request (a fallback may differ from the cell)
+    seconds: float = 0.0
+
+
+class ClientUnavailableError(RuntimeError):
+    """`claude -p` could not serve the request: not installed, not logged in, a usage limit, an error."""
 
 
 def _served_model(model_usage: Any, requested: str) -> str:
@@ -58,7 +59,7 @@ def _served_model(model_usage: Any, requested: str) -> str:
 
 
 class CliClient:
-    """Completions through `claude -p`. Satisfies `client.ClaudeClient`.
+    """Completions through `claude -p`.
 
     Raises:
         ClientUnavailableError: the `claude` executable is not on the PATH.
@@ -70,9 +71,6 @@ class CliClient:
         binary: str = "claude",
         config_dir: Path | None = None,
         timeout: float = TIMEOUT_SECONDS,
-        extra_args: Sequence[str] = (),
-        tools: str = "",
-        cwd: Path | None = None,
     ) -> None:
         path = shutil.which(binary)
         if path is None:
@@ -80,32 +78,22 @@ class CliClient:
         self.binary = path
         self.config_dir = config_dir or claude_profile()
         self.timeout = timeout
-        # For a caller that reviews a repository: built-in tools the call may use ("Read,Grep,Glob"; none by
-        # default, and none pre-approved, so they only read inside `cwd`), where it runs, and any other flags.
-        self.extra_args = list(extra_args)
-        self.tools = tools
-        self.cwd = cwd
 
-    def complete(
-        self,
-        cell: Cell,
-        *,
-        prompt: str,
-        system: str | None = None,
-        max_tokens: int = NON_STREAMING_MAX_TOKENS,  # noqa: ARG002 - the CLI has no such option
-        output_format: type[BaseModel] | None = None,
-    ) -> Completion:
+    def complete(self, cell: Cell, *, prompt: str, system: str | None = None) -> Completion:
+        """Complete `prompt` on `cell` and return what came back with its real usage.
+
+        Raises:
+            ClientUnavailableError: the CLI could not serve the request.
+        """
         args = [
             self.binary, "-p", "--model", cell.model, "--effort", cell.effort, "--output-format", "json",
-            "--tools", self.tools, "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
-            "--system-prompt", system or DEFAULT_SYSTEM, *self.extra_args,
+            "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
+            "--system-prompt", system or DEFAULT_SYSTEM,
         ]
-        if output_format is not None:
-            args += ["--json-schema", json.dumps(output_format.model_json_schema())]
         t0 = time.monotonic()
         try:
             proc = subprocess.run(args, input=prompt, capture_output=True, text=True, env=child_env(self.config_dir),
-                                  timeout=self.timeout, check=False, cwd=self.cwd)
+                                  timeout=self.timeout, check=False)
         except subprocess.TimeoutExpired as exc:
             raise ClientUnavailableError(f"claude -p exceeded {self.timeout:.0f}s") from exc
         seconds = time.monotonic() - t0
@@ -118,7 +106,7 @@ class CliClient:
             raise ClientUnavailableError(f"claude -p exited with code {proc.returncode} and no JSON object: {detail}")
         if proc.returncode != 0 and not data.get("is_error"):
             raise ClientUnavailableError(f"claude -p exited with code {proc.returncode}: {detail}")
-        return self.to_completion(data, cell, output_format=output_format, seconds=seconds)
+        return self.to_completion(data, cell, seconds=seconds)
 
     def _note_limit(self, cell: Cell, text: str) -> None:
         """Keep the usage limit a refused call hit, with its exact reset (`limits.py`). The next plans skip that
@@ -128,12 +116,11 @@ class CliClient:
             return  # a session the router started: whoever started it learns the limit
         if self.config_dir.resolve() != claude_profile().resolve():
             return  # another profile's account: its own sessions learn its limits, in its own folder
-        models = {spec.short: spec.id for spec in MODELS.values() if spec.claude}
+        models = {spec.short: spec.id for spec in MODELS.values()}
         with contextlib.suppress(OSError, ValueError):  # learning the reset must never hide the refusal itself
             limits.learn(text or cell.spec.short, models=models, config_dir=self.config_dir, binary=self.binary)
 
-    def to_completion(self, data: dict[str, Any], cell: Cell, *, output_format: type[BaseModel] | None,
-                      seconds: float) -> Completion:
+    def to_completion(self, data: dict[str, Any], cell: Cell, *, seconds: float) -> Completion:
         """Turn the JSON `claude -p` printed for `cell` into a Completion. A usage limit it reports is kept with its
         exact reset (`limits.py`) before the call fails.
 
@@ -155,20 +142,5 @@ class CliClient:
             cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
             cache_write_tokens=int(u.get("cache_creation_input_tokens") or 0),
         )
-        served = _served_model(data.get("modelUsage"), cell.model)
-        parsed = None
-        structured = data.get("structured_output")
-        if output_format is not None and structured is not None:
-            try:
-                parsed = output_format.model_validate(structured)
-            except ValidationError:
-                parsed = None
-        stop = str(data.get("stop_reason") or "end_turn")
-        if parsed is not None and stop == "tool_use":  # the CLI implements structured output as a tool call
-            stop = "end_turn"
-        refused = stop == "refusal"
-        return Completion(
-            text=text, usage=usage, stop_reason=stop, model=served, parsed=None if refused else parsed,
-            request_id=data.get("session_id"), refused=refused, refusal_category=None,
-            fallback_ran=served != cell.model, seconds=seconds,
-        )
+        return Completion(text=text, usage=usage, model=_served_model(data.get("modelUsage"), cell.model),
+                          seconds=seconds)

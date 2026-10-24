@@ -34,8 +34,7 @@ from .catalog import (
     unknown_listed,
 )
 from .classify import Classification, classify_rules
-from .cli_client import CliClient
-from .client import ClientUnavailableError, Completion
+from .cli_client import CliClient, ClientUnavailableError, Completion
 from .fmt import money, table
 from .hook import start_in_force
 from .paths import (
@@ -192,8 +191,8 @@ def _cmd_limits(args: argparse.Namespace) -> int:
         config_dir = claude_profile()
         for name in names:
             spec = MODELS.get(SHORT_TO_ID.get(name, name))
-            if spec is None or not spec.claude:
-                known = ", ".join(s.short for s in MODELS.values() if s.claude)
+            if spec is None:
+                known = ", ".join(s.short for s in MODELS.values())
                 raise CommandError(f"unknown Claude model: {name}; try one of {known}")
             limit = limits.record_check(spec.short, limits.probe(spec.id, config_dir=config_dir))
             print(f"{spec.short}: " + (f"limited until {limit.when()} ({limit.window})" if limit else "available"))
@@ -597,7 +596,7 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
     print(table(["cell", "tier", "capability*", "ref. cost", "$/M in", "$/M out"], rows))
     print(f"\n* assumed capability (catalog.py), not measured · ref. cost = {PLAN_INPUT_TOKENS:,} tokens in, "
           f"{PLAN_OUTPUT_TOKENS_AT_HIGH:,} out at effort high · prices {PRICES_AS_OF}")
-    off = [spec.short for m, spec in MODELS.items() if spec.claude and m not in configured_models()]
+    off = [spec.short for m, spec in MODELS.items() if m not in configured_models()]
     if off:
         print(f"not in this installation: {', '.join(off)} (`router config --models`)")
     return 0
