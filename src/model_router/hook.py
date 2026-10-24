@@ -333,12 +333,12 @@ def _session_start(event: dict[str, Any]) -> dict[str, Any]:
 
 def _natives() -> list[str]:
     """Write the native settings the router builds on (`natives.apply`), outside its own sessions, and return the
-    notice that says what was set, if anything was.
+    notice that says what was set or taken out, if anything was.
     """
     if is_child():
         return []
     try:
-        notice = natives.notice(natives.apply())
+        notice = natives.notice(*natives.apply())
     except Exception as exc:  # noqa: BLE001 - settings are a side task: they must never cost the session its context
         sys.stderr.write(f"router-hook: native settings skipped: {type(exc).__name__}: {exc}\n")
         return []

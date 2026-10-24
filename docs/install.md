@@ -26,15 +26,17 @@ environment with `uv` in the plugin's data directory (`plugins/data/model-router
 profile), and builds it again with every new plugin version. `uv` has to be on the machine
 (`MODEL_ROUTER_UV=/path/to/uv` when it is not on the PATH).
 
-In that first session the router also writes three keys into the profile's `settings.json`, each one only if
+In that first session the router also writes two keys into the profile's `settings.json`, each one only if
 the file does not have it yet, and says so in one line. Claude Code reads them when a session starts, so they
 apply from the next one:
 
 - `autoCompactWindow: 400000`, so long conversations compact at 400k
   ([why 400k](claude-code.md#context-and-the-usage-windows));
-- `statusLine`, which runs `router statusline` from the plugin's environment;
-- `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, the model of a subagent nobody gave one. The router's choice and an
-  agent's own model come first.
+- `statusLine`, which runs `router statusline` from the plugin's environment.
+
+Version 0.23 also wrote `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`. Skills that run in their own subsession, such as
+`/code-review`, took it and reviewed on Sonnet in an Opus session, so 0.24 takes it out again while it still says
+`sonnet`.
 
 It writes each key once per profile and never changes a value you set: a key you edit or delete stays as you
 left it, and the router does not put it back. `router doctor` says who set each one. `router config --natives

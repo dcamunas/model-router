@@ -697,9 +697,8 @@ def build_parser() -> argparse.ArgumentParser:
                     "opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
                     "to the read-only agent, which carries a fraction of the general agent's context (default on)")
-    sg.add_argument("--natives", choices=("on", "off"), help="let the router write autoCompactWindow, the status line "
-                    "and CLAUDE_CODE_SUBAGENT_MODEL into the profile's settings.json once, where they are missing "
-                    "(default on)")
+    sg.add_argument("--natives", choices=("on", "off"), help="let the router write autoCompactWindow and the status line "
+                    "into the profile's settings.json once, where they are missing (default on)")
     sg.add_argument("--usage-profiles", metavar="DIR,DIR", help="other Claude profiles signed in to the same account, "
                     "which `router usage` reads too (they share its windows); none clears them")
     sg.set_defaults(func=_cmd_config)

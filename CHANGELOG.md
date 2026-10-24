@@ -2,6 +2,18 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.24.0] - 2026-10-24
+
+### Changed
+
+- The router no longer writes `env.CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, and takes out the one 0.23 wrote while it
+  still says `sonnet`. Skills that run in their own subsession, such as `/code-review`, took it: in an Opus session
+  they reviewed on Sonnet, where the router itself sends reviews to Opus. On five replayed changes with 47 known
+  bugs, `/code-review high` found 22 on Opus, and 14 and 20 in two runs on Sonnet. Explore and Plan say `inherit`
+  and the hook gives general subagents their model; a subagent the hook does not see, such as a skill's own
+  subsession, takes the chat's model again, as it does in Claude Code without the router. The removal runs with
+  `--natives off` too, since it only undoes the router's own write.
+
 ## [0.23.1] - 2026-10-24
 
 ### Fixed

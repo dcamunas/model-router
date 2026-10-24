@@ -3,36 +3,34 @@
 A plugin's own settings only carry `agent` and `subagentStatusLine`, so the SessionStart hook writes these into
 `<profile>/settings.json`:
 
-    autoCompactWindow                  400000 (docs/claude-code.md has the replay that chose it)
-    statusLine                         `router statusline` from the plugin's environment ($CLAUDE_PLUGIN_DATA)
-    env.CLAUDE_CODE_SUBAGENT_MODEL     sonnet, a fallback: a model the hook passes, or an agent's own, wins over it
+    autoCompactWindow    400000 (docs/claude-code.md has the replay that chose it)
+    statusLine           `router statusline` from the plugin's environment ($CLAUDE_PLUGIN_DATA)
 
 Each key at most once per profile, and only when the settings do not have it already. `natives.json` in the state
 folder records every key the router looked at, with who set it (`router` or `user`): a key in it is never touched
 again, so a value the person changes or removes stays as they left it. A settings.json that is not a JSON object is
 left alone. `router config --natives off` stops it.
+
+0.23 also wrote `env.CLAUDE_CODE_SUBAGENT_MODEL=sonnet`. The skills that run in their own subsession, such as
+/code-review, took it and reviewed on Sonnet where the router sends reviews to Opus, so it is taken out again while
+it still holds the value the router wrote, with the switch on or off: it only undoes the router's own write.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
-import subprocess
 from pathlib import Path
 from typing import Any  # Any: decoded JSON (settings.json)
 
 from .paths import claude_profile, home, locked, read_config, read_json, replace_file
 
 RECORD = "natives.json"
-SUBAGENT_MODEL_SINCE = (2, 1, 251)  # before it, CLAUDE_CODE_SUBAGENT_MODEL overrode every other model choice
-VERSION_SECONDS = 5.0
 AUTO_COMPACT_WINDOW = 400_000
-SUBAGENT_MODEL = "sonnet"
-KEYS = ("autoCompactWindow", "statusLine", "env.CLAUDE_CODE_SUBAGENT_MODEL")  # a dot: an entry inside that object
-SAID = {"autoCompactWindow": f"autoCompactWindow {AUTO_COMPACT_WINDOW}", "statusLine": "the status line",
-        "env.CLAUDE_CODE_SUBAGENT_MODEL": f"CLAUDE_CODE_SUBAGENT_MODEL={SUBAGENT_MODEL}"}
+KEYS = ("autoCompactWindow", "statusLine")
+SAID = {"autoCompactWindow": f"autoCompactWindow {AUTO_COMPACT_WINDOW}", "statusLine": "the status line"}
+RETIRED = {"env.CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}  # written by an earlier version: key (a dot: inside that object)
 
 
 def enabled() -> bool:
@@ -54,53 +52,68 @@ def wanted() -> dict[str, Any]:
     if data:
         router = shlex.quote(str(Path(data) / "venv" / "bin" / "router"))
         out["statusLine"] = {"type": "command", "command": f"{router} statusline"}
-    out["env.CLAUDE_CODE_SUBAGENT_MODEL"] = SUBAGENT_MODEL
     return out
 
 
-def apply() -> list[str]:
-    """Write the wanted keys the settings lack and the router never looked at before; return the keys it set.
+def apply() -> tuple[list[str], list[str]]:
+    """Write the wanted keys the settings lack and the router never looked at before, and take out the retired ones it
+    wrote; return the keys it set and the keys it took out.
 
     Raises:
         OSError: settings.json or the record could not be read or written.
     """
-    if not enabled() or (settings_path().is_symlink() and not settings_path().exists()):
-        return []  # off, or a link to nothing: never create its target
+    if settings_path().is_symlink() and not settings_path().exists():
+        return [], []  # a link to nothing: never create its target
     path = settings_path().resolve()  # a settings.json linked from a dotfiles repository stays a link
     with locked(home() / RECORD):
         before = _stamp(path)
         data: Any = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         if not isinstance(data, dict):
-            return []
+            return [], []
         seen = read_json(home() / RECORD)
-        known = len(seen)
-        done = [key for key, value in wanted().items() if key not in seen and _set(data, seen, key, value)]
-        if done:
+        record = dict(seen)
+        done = [key for key, value in wanted().items() if key not in seen and _set(data, seen, key, value)] \
+            if enabled() else []
+        undone = _retire(data, seen)
+        if done or undone:
             if _stamp(path) != before:  # Claude Code or the person wrote it meanwhile: theirs wins, try next session
-                return []
+                return [], []
             mode = path.stat().st_mode & 0o777 if path.exists() else None
             replace_file(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", mode=mode)
-        if len(seen) > known:
+        if seen != record:
             replace_file(home() / RECORD, json.dumps(seen, indent=2) + "\n")
-    return done
+    return done, undone
 
 
 def _set(data: dict[str, Any], seen: dict[str, Any], key: str, value: Any) -> bool:
     """Put `value` at `key` in the settings when the person has no value of their own, recording who holds the key
     in `seen`; return whether the router set it.
     """
-    holder = _holder(data, key)
-    parent, _, leaf = key.rpartition(".")
-    if holder is None or leaf in holder or (parent == "env" and leaf in os.environ):
-        seen[key] = "user"  # in settings.json, or exported in the shell or another settings scope
+    if key in data:
+        seen[key] = "user"
         return False
-    if key == "env.CLAUDE_CODE_SUBAGENT_MODEL" and not _claude_at_least(SUBAGENT_MODEL_SINCE):
-        return False  # an older Claude Code would put it above the hook's choice; looked at again next time
-    if parent and parent not in data:
-        data[parent] = holder  # `env` appears only when something goes in it
-    holder[leaf] = value
+    data[key] = value
     seen[key] = "router"
     return True
+
+
+def _retire(data: dict[str, Any], seen: dict[str, Any]) -> list[str]:
+    """Take out each retired key the router wrote, while it still holds the value it wrote, and mark it retired in
+    `seen` either way; return the keys taken out. A value the person changed stays theirs.
+    """
+    out = []
+    for key, value in RETIRED.items():
+        if seen.get(key) != "router":
+            continue
+        parent, _, leaf = key.rpartition(".")
+        holder = data.get(parent) if parent else data
+        if isinstance(holder, dict) and holder.get(leaf) == value:
+            del holder[leaf]
+            if parent and not holder:
+                del data[parent]
+            out.append(key)
+        seen[key] = "retired"
+    return out
 
 
 def _stamp(path: Path) -> tuple[int, int] | None:
@@ -112,35 +125,18 @@ def _stamp(path: Path) -> tuple[int, int] | None:
     return info.st_mtime_ns, info.st_size
 
 
-def _claude_at_least(version: tuple[int, ...]) -> bool:
-    """Say whether `claude --version` reports at least `version`; False when it cannot tell."""
-    try:
-        out = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=VERSION_SECONDS,
-                             check=False).stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    found = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
-    return bool(found) and tuple(int(n) for n in found.groups()) >= version
-
-
-def _holder(data: dict[str, Any], key: str) -> dict[str, Any] | None:
-    """Return the object that holds `key` in the settings (`env` for `env.X`; a new empty one, not yet in the
-    settings, when there is none), or None when it is there but not an object.
-    """
-    parent = key.rpartition(".")[0]
-    if not parent:
-        return data
-    holder = data.get(parent, {})
-    return holder if isinstance(holder, dict) else None
-
-
-def notice(done: list[str]) -> str:
-    """Return the one-line notice for the keys just set, or an empty string."""
-    if not done:
+def notice(done: list[str], undone: list[str]) -> str:
+    """Return the one-line notice for the keys just set or taken out, or an empty string."""
+    parts = []
+    if done:
+        said = [SAID[key] for key in done]
+        parts.append("set " + (", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]))
+    if undone:
+        parts.append("took out " + ", ".join(f"{key.rpartition('.')[2]}={RETIRED[key]}" for key in undone)
+                     + " (written by router 0.23)")
+    if not parts:
         return ""
-    said = [SAID[key] for key in done]
-    listed = ", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]
-    return (f"router: set {listed} in settings.json, from the next session on "
+    return (f"router: {'; '.join(parts)} in settings.json, from the next session on "
             "(once; `router config --natives off` stops it)")
 
 
@@ -152,8 +148,7 @@ def report() -> list[str]:
     seen = read_json(home() / RECORD)
     lines = []
     for key in KEYS:
-        holder = _holder(data, key)
-        if holder is None or key.rpartition(".")[2] not in holder:
+        if key not in data:
             lines.append(f"{key}: not set" + (" (removed after the router set it; it stays so)"
                                                if seen.get(key) == "router" else ""))
         else:

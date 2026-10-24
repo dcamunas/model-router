@@ -224,7 +224,7 @@ wheels = [
 
 [[package]]
 name = "model-router"
-version = "0.23.1"
+version = "0.24.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

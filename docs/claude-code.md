@@ -246,9 +246,9 @@ router config --natives off  # stop writing the native settings below into setti
 ## What else the plugin does
 
 `SessionStart` tells Claude the hook exists and what to declare, and writes once into the profile's
-`settings.json` the keys that are missing there: `autoCompactWindow: 400000`, the status line and
-`env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, a fallback for subagents nobody gave a model (a model the hook passes,
-or an agent's own, wins over it). The record of what it set is `~/.claude/model-router/natives.json`. The skill `router` covers what a
+`settings.json` the keys that are missing there: `autoCompactWindow: 400000` and the status line. It leaves the model
+of a subagent nobody gave one to Claude Code: such a subagent, like the subsession `/code-review` runs in, takes the
+chat's model. The record of what it set is `~/.claude/model-router/natives.json`. The skill `router` covers what a
 hook cannot do: check a subagent's result by risk and relaunch it higher when it fails. A launch takes the hook about 50 milliseconds, and the
 hooks call no API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
 word (a `claude -p` call of up to 30 seconds) to learn its reset. The status line, when you set it, asks Fable for one

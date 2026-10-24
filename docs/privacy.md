@@ -26,6 +26,8 @@ profiles on one machine share no decisions, measurements, limits or settings.
   committed in the repository itself. An agent from your profile, a plugin, a link or an untracked file is
   never named there, nor is one whose name has spaces or characters beyond letters, digits, `.`, `_` and `-`. They leave your machine only when you commit and push them.
 - In the first session, the hook writes into the profile's `settings.json`, once and only where the key is
-  missing, `autoCompactWindow`, `statusLine` and `env.CLAUDE_CODE_SUBAGENT_MODEL`, and records which ones it set in
-  `~/.claude/model-router/natives.json`. Nothing is sent. `router config --natives off` stops it.
+  missing, `autoCompactWindow` and `statusLine`, and records which ones it set in
+  `~/.claude/model-router/natives.json`. Nothing is sent. `router config --natives off` stops it. The one key it
+  ever removes is `env.CLAUDE_CODE_SUBAGENT_MODEL`, which 0.23 wrote, and only while it still holds the router's
+  `sonnet`.
 - `router plan`, `router stats`, `router cells` and `router doctor` without `--live` call nothing.
