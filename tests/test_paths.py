@@ -85,3 +85,19 @@ def test_the_command_of_a_plugin_loaded_from_a_folder_uses_its_venv_or_says_so(t
     _fake_cli(folder / ".venv" / "bin", "checkout")
     ran = subprocess.run([str(folder / "bin" / "router"), "stats"], capture_output=True, text=True, env=env, check=False)
     assert ran.stdout.strip() == "checkout stats"
+
+
+def test_a_child_on_the_default_profile_runs_without_the_variable(monkeypatch, tmp_path):
+    from model_router.paths import child_env
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    default, other = tmp_path / ".claude", tmp_path / ".claude-personal"
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR")  # a session on the default profile
+    assert "CLAUDE_CONFIG_DIR" not in child_env(default)  # signed in under the default Keychain name
+    assert child_env(other)["CLAUDE_CONFIG_DIR"] == str(other)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other))  # a session on another profile
+    assert child_env(other)["CLAUDE_CONFIG_DIR"] == str(other)
+    assert "CLAUDE_CONFIG_DIR" not in child_env(default)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(default) + "/")  # the default named by hand: kept as it is
+    assert child_env(default)["CLAUDE_CONFIG_DIR"] == str(default) + "/"
+    assert child_env(None)["MODEL_ROUTER_CHILD"] == "1"

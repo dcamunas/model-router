@@ -2,6 +2,15 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.25.1] - 2026-10-24
+
+### Fixed
+
+- On the default profile (`~/.claude`) the `claude -p` calls the router starts (the Fable probe behind the status
+  line, `router doctor --live`, learning a limit after a 429) ran signed out: the router set `CLAUDE_CONFIG_DIR`,
+  and Claude Code keeps the default profile's login under a Keychain name that only holds without that variable.
+  The profile in use now keeps the variable as the session has it, and the default profile runs without it.
+
 ## [0.25.0] - 2026-10-24
 
 ### Removed

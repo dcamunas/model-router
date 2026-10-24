@@ -55,13 +55,25 @@ def is_child() -> bool:
 def child_env(config_dir: Path | None) -> dict[str, str]:
     """Return the environment of a `claude -p` the router starts: on `config_dir` (the inherited profile when None),
     not nested in this session, marked as the router's own, with no claude.ai MCP servers.
+
+    Claude Code keeps a profile's login in the Keychain under a name that depends on CLAUDE_CONFIG_DIR, so the
+    default profile (~/.claude) is signed in only when the variable is unset. The profile in use keeps the variable
+    exactly as this session has it; the default profile gets it removed; any other profile gets it set.
     """
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    if config_dir is not None:
-        env["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    if config_dir is not None and not _same_dir(config_dir, claude_profile()):
+        if _same_dir(config_dir, Path("~/.claude").expanduser()):
+            env.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            env["CLAUDE_CONFIG_DIR"] = str(config_dir)
     env[CHILD_ENV] = "1"  # hooks that watch a person's turns, and the limit probe, skip this session
     env.setdefault("ENABLE_CLAUDEAI_MCP_SERVERS", "false")
     return env
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    """Say whether two paths name the same folder, after `~`, links and relative parts."""
+    return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
 
 
 def config_path() -> Path:
