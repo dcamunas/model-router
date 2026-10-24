@@ -342,9 +342,10 @@ def _cmd_statusline(_args: argparse.Namespace) -> int:
         if fable is not None:
             status.fable, status.fable_resets = fable
         print(usage.statusline_text(status, warn_at=usage.warn_threshold()), flush=True)
-        if logging_on() and not is_child():
-            usage.keep_sample(status)
-            usage.refresh_fable()
+        if not is_child():
+            if logging_on():
+                usage.keep_sample(status)
+            usage.refresh_fable()  # not a log: Fable's window is read whenever Fable is among the models
     except Exception:  # noqa: BLE001 - a status line never fails; the next update tries again
         return 0
     return 0

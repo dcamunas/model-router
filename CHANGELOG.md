@@ -2,6 +2,17 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.21.2] - 2026-10-24
+
+### Fixed
+
+- The status line said the week's reset only after Fable's, so a Fable reading without a reset dropped the week's;
+  each week now carries its own unless both reset together.
+- With the whole account limited (five-hour or seven-day window), the status line no longer shows Fable's own week,
+  which would be out of date.
+- `MODEL_ROUTER_HOOK_LOG=0` stopped the Fable probe along with the samples; only the samples stop now.
+- The status line tests started the real background Fable probe; no test starts it now.
+
 ## [0.21.1] - 2026-10-24
 
 ### Added

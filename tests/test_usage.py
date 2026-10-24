@@ -318,3 +318,39 @@ def test_the_fable_probe_starts_at_most_once_per_refresh(state):
     assert not usage.refresh_fable(now=10_000.0 + usage.FABLE_REFRESH_SECONDS - 1, start=lambda: started.append(1))
     assert usage.refresh_fable(now=10_000.0 + usage.FABLE_REFRESH_SECONDS, start=lambda: started.append(1))
     assert started == [1, 1]
+
+
+def test_a_fable_reading_without_a_reset_keeps_the_weeks_reset():
+    status = usage.read_status(_status_json(week=2.0, week_resets=1_793_451_600))
+    status.fable, status.fable_resets = 1.0, None
+    text = usage.statusline_text(status, warn_at=0)
+    assert "week 2% (resets " in text and text.endswith("fable 1%")
+
+
+def test_an_account_wide_limit_hides_fables_reading(state, freeze_clock):
+    from model_router import limits
+
+    freeze_clock(T0)
+    limits.record_check("fable", _fable_probe())
+    limits.record_check("haiku", limits.Probe("rejected", until=T0 + timedelta(hours=3), window="five_hour"))
+    assert usage.fable_window(T0) is None
+
+
+def test_the_statusline_command_shows_fable_and_starts_one_probe(state, freeze_clock, monkeypatch, capsys,
+                                                                  _no_fable_probe):
+    from model_router import limits
+
+    freeze_clock(datetime.now(UTC))
+    limits.record_check("fable", _fable_probe())
+    for _ in range(2):
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_status_json(week=2.0))))
+        assert main(["statusline"]) == 0
+    assert "fable 1%" in capsys.readouterr().out
+    assert _no_fable_probe == [1]  # throttled: one probe per refresh
+
+
+def test_logging_off_still_reads_fables_window(state, monkeypatch, _no_fable_probe):
+    monkeypatch.setenv("MODEL_ROUTER_HOOK_LOG", "0")
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_status_json())))
+    assert main(["statusline"]) == 0
+    assert _no_fable_probe == [1] and not (state / usage.USAGE_LOG).exists()

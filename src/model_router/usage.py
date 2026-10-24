@@ -103,20 +103,15 @@ def statusline_text(status: Status, *, warn_at: int) -> str:
         parts.append(f"{'⚠ ' if over else ''}ctx {tokens(status.context)}{size}{' · /compact?' if over else ''}")
     if status.five_hour is not None:
         parts.append(f"5h {status.five_hour:.0f}%")
-    same = status.fable is None or _same_reset(status.seven_day_resets, status.fable_resets)
-    if status.seven_day is not None:
-        reset = f" (resets {_when(status.seven_day_resets)})" if status.seven_day_resets and not same else ""
+    week_reset = status.seven_day_resets
+    fable_reset = status.fable_resets if status.fable is not None else None
+    shared = bool(week_reset and fable_reset and abs(week_reset - fable_reset) <= RESET_TOLERANCE)
+    if status.seven_day is not None:  # when both weeks reset together, the time is said once, after Fable
+        reset = f" (resets {_when(week_reset)})" if week_reset and not shared else ""
         parts.append(f"week {status.seven_day:.0f}%{reset}")
     if status.fable is not None:
-        parts.append(f"fable {status.fable:.0f}%")
-    resets = status.fable_resets if status.fable is not None else status.seven_day_resets
-    if resets and (status.fable is not None or status.seven_day is not None):
-        parts[-1] += f" (resets {_when(resets)})"
+        parts.append(f"fable {status.fable:.0f}%" + (f" (resets {_when(fable_reset)})" if fable_reset else ""))
     return " · ".join(parts)
-
-
-def _same_reset(a: int | None, b: int | None) -> bool:
-    return a is None or b is None or abs(a - b) <= RESET_TOLERANCE
 
 
 def keep_sample(status: Status, *, now: float | None = None, state_dir: Path | None = None) -> bool:
@@ -184,12 +179,16 @@ def fable_available() -> bool:
 def fable_window(now: datetime | None = None) -> tuple[float, int | None] | None:
     """Return Fable's own weekly window, which Claude Code does not give the status line: percent used and reset
     (epoch seconds), from the last Fable probe in `limits.json`; 100 % until its reset when Fable is limited. None
-    when this installation has no Fable or no probe saw the window in the last FABLE_STALE_SECONDS.
+    when this installation has no Fable, no probe saw the window in the last FABLE_STALE_SECONDS, or the whole
+    account is limited (the five-hour or seven-day window says so; Fable's own reading would be out of date).
     """
     if not fable_available():
         return None
     moment = now or clock.now()
-    held = limits.active(moment).get(FABLE)
+    held_all = limits.active(moment)
+    if limits.ALL_MODELS in held_all:
+        return None
+    held = held_all.get(FABLE)
     if held is not None and held.until is not None:
         return 100.0, int(held.until.timestamp())
     window = _dict(limits.windows().get(FABLE_WINDOW))

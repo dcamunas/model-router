@@ -7,6 +7,16 @@ def _own_profile(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("profile")))
 
 
+@pytest.fixture(autouse=True)
+def _no_fable_probe(monkeypatch):
+    """Never let a test start the status line's background Fable probe (a real `claude -p` call): record it."""
+    from model_router import usage
+
+    started: list[int] = []
+    monkeypatch.setattr(usage, "_start_fable_probe", lambda: started.append(1))
+    return started
+
+
 @pytest.fixture
 def state():
     """Return the router's state folder in the test's profile (`<profile>/model-router`), created."""
