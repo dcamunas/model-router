@@ -2,6 +2,13 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.23.1] - 2026-10-24
+
+### Fixed
+
+- The notice and the docs say that the native settings apply from the next session: Claude Code reads
+  `autoCompactWindow` when a session starts, so the session that writes it still compacts at the model's default.
+
 ## [0.23.0] - 2026-10-24
 
 ### Added
