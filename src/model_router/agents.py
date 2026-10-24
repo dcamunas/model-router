@@ -38,7 +38,7 @@ from typing import Any  # Any: measured subagent records, decoded JSON
 
 from . import clock
 from .catalog import MODELS, Cell, UnknownModelError, Usage, cost_usd, parse_cell, step_down, step_up
-from .paths import claude_profile
+from .paths import claude_profile, read_regular
 from .projects import (
     ALIKE,
     DOWN_N,
@@ -58,9 +58,10 @@ TeamRuns = dict[tuple[str, str], dict[str, int]]  # (agent, cell label) -> {"n":
 AGENTS_DIR = (".claude", "agents")
 REGULAR_MODES = frozenset({"100644", "100755"})  # git's modes for a plain file; 120000 is a link
 GIT_SECONDS = 10.0
-FRONTMATTER_PARTS = 3  # what splitting a file on its first two `---` gives: before, the frontmatter, the body
 FRONTMATTER_FIELD = re.compile(r"^(model|effort)\s*:(.*)$", re.M)
 FRONTMATTER_NAME = re.compile(r"^name\s*:(.*)$", re.M)
+MAX_AGENT_BYTES = 65_536  # an agent file larger than this is not read by the hook
+MAX_AGENT_FILES = 200  # at most this many files per agents folder are looked at on one launch
 Fixed = tuple[str, str | None]  # the model's short name and the effort an agent file names (None: not set)
 
 
@@ -109,10 +110,26 @@ def frontmatter(text: str) -> dict[str, str]:
     """Return the `model` and `effort` an agent file's frontmatter sets, as written but without quotes or a trailing
     comment (`model: "opus"  # why` is `opus`); empty when the file has no frontmatter.
     """
-    parts = text.split("---", 2)
-    if not text.startswith("---") or len(parts) != FRONTMATTER_PARTS:
+    block = _frontmatter_block(text)
+    if block is None:
         return {}
-    return {key: value.split(" #")[0].strip().strip("'\"") for key, value in FRONTMATTER_FIELD.findall(parts[1])}
+    return {key: _plain(value) for key, value in FRONTMATTER_FIELD.findall(block)}
+
+
+def _frontmatter_block(text: str) -> str | None:
+    """Return what sits between the opening `---` line and the next line that is only `---`, or None when the file
+    does not open with one. A `---` inside a value (`description: strict --- no style`) does not close it.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None
+    end = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+    return "\n".join(lines[1:end]) if end is not None else None
+
+
+def _plain(value: str) -> str:
+    """Return a frontmatter value as written but without quotes or a trailing comment."""
+    return value.split(" #")[0].strip().strip("'\"")
 
 
 def committed_agents(project: str) -> dict[str, Fixed] | None:
@@ -262,13 +279,17 @@ def unpinned(name: str, project: str | None) -> dict[str, str] | None:
         return None
     folders = ([Path(project, *AGENTS_DIR)] if project else []) + [claude_profile() / "agents"]
     for folder in folders:
-        for path in sorted(folder.glob("*.md"), key=lambda f: f.stem != name):  # the likely file first
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+        try:
+            files = sorted(folder.glob("*.md"), key=lambda f: f.stem != name)[:MAX_AGENT_FILES]  # the likely one first
+        except OSError:
+            continue
+        for path in files:
+            raw = read_regular(path, MAX_AGENT_BYTES)  # never a link, a FIFO or a huge file a repository planted
+            if raw is None:
                 continue
-            declared = FRONTMATTER_NAME.search(text.split("---", 2)[1] if text.startswith("---") else "")
-            if (declared.group(1).strip().strip("'\"") if declared else path.stem) != name:
+            text = raw.decode("utf-8", errors="replace")
+            declared = FRONTMATTER_NAME.search(_frontmatter_block(text) or "")
+            if (_plain(declared.group(1)) if declared else path.stem) != name:
                 continue
             fields = frontmatter(text)
             return fields if fields.get("model", "") in ("", "inherit") else None

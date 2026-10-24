@@ -13,6 +13,8 @@ from model_router.paths import claude_profile, write_config
 @pytest.fixture
 def settings(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "plugin data"))
+    monkeypatch.delenv("CLAUDE_CODE_SUBAGENT_MODEL", raising=False)  # the session running the tests may set it
+    monkeypatch.setattr(natives, "_claude_at_least", lambda version: True)
     return claude_profile() / "settings.json"
 
 
@@ -116,3 +118,35 @@ def test_doctor_says_who_set_each_key(settings, tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "ok     autoCompactWindow: set by the user" in out and "ok     statusLine: set by the router" in out
     assert "ok     env.CLAUDE_CODE_SUBAGENT_MODEL: set by the router" in out
+
+
+def test_a_value_exported_in_the_shell_counts_as_the_user_s(settings, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SUBAGENT_MODEL", "haiku")
+    natives.apply()
+    assert "env" not in json.loads(settings.read_text())
+    assert json.loads((claude_profile() / "model-router" / natives.RECORD).read_text())[
+        "env.CLAUDE_CODE_SUBAGENT_MODEL"] == "user"
+
+
+def test_an_older_claude_code_gets_no_subagent_fallback_and_is_asked_again(settings, monkeypatch):
+    monkeypatch.setattr(natives, "_claude_at_least", lambda version: False)
+    natives.apply()
+    assert "env" not in json.loads(settings.read_text())
+    monkeypatch.setattr(natives, "_claude_at_least", lambda version: True)
+    assert natives.apply() == ["env.CLAUDE_CODE_SUBAGENT_MODEL"]
+
+
+def test_a_write_by_someone_else_meanwhile_wins(settings, monkeypatch):
+    _write(settings, {"theme": "dark"})
+    stamps = iter([(1, 10), (2, 12)])  # read, then changed before the router's write
+    monkeypatch.setattr(natives, "_stamp", lambda path: next(stamps))
+    assert natives.apply() == []
+    assert json.loads(settings.read_text()) == {"theme": "dark"}
+    assert not (claude_profile() / "model-router" / natives.RECORD).exists()  # tried again next session
+
+
+def test_a_link_to_nothing_is_left_alone(settings, tmp_path):
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.symlink_to(tmp_path / "dotfiles" / "settings.json")
+    assert natives.apply() == []
+    assert not (tmp_path / "dotfiles").exists()

@@ -5,6 +5,7 @@ import pytest
 def _own_profile(tmp_path_factory, monkeypatch):
     """Keep every test away from the machine's Claude profile and router state: a fresh profile per test."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("profile")))
+    monkeypatch.delenv("MODEL_ROUTER_CHILD", raising=False)  # a suite run from a router-started session
 
 
 @pytest.fixture(autouse=True)

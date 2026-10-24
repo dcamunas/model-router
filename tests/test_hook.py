@@ -232,3 +232,29 @@ def test_a_custom_agent_is_found_by_the_name_in_its_frontmatter(tmp_path):
     updated, record = decide({"subagent_type": "data-reviewer", "prompt": "Review the SQL"}, cwd=str(repo))
     assert updated is not None and updated["subagent_type"] == "data-reviewer" and record["agent"] == "data-reviewer"
     assert decide({"subagent_type": "something-else", "prompt": "Review the SQL"}, cwd=str(repo))[0] is None  # pinned
+
+
+def test_frontmatter_ends_only_at_a_line_of_dashes():
+    from model_router.agents import frontmatter
+
+    text = "---\nname: strict\ndescription: strict review --- no style\nmodel: opus\n---\nBody --- here\n"
+    assert frontmatter(text) == {"model": "opus"}
+
+
+def test_agent_files_that_are_links_or_fifos_are_never_read(tmp_path):
+    import os
+
+    repo = tmp_path / "repo"
+    folder = repo / ".claude" / "agents"
+    folder.mkdir(parents=True)
+    (tmp_path / "elsewhere.md").write_text("---\nname: linked\n---\n")
+    (folder / "linked.md").symlink_to(tmp_path / "elsewhere.md")
+    os.mkfifo(folder / "pipe.md")
+    for name in ("linked", "pipe"):
+        assert decide({"subagent_type": name, "prompt": "Review it"}, cwd=str(repo))[0] is None
+
+
+def test_agents_of_a_folder_without_git_are_found(tmp_path):
+    _agent_file(tmp_path / "notes" / ".claude" / "agents", "summariser", "")
+    updated, _ = decide({"subagent_type": "summariser", "prompt": "Summarise it"}, cwd=str(tmp_path / "notes"))
+    assert updated is not None and updated["subagent_type"] == "summariser"

@@ -17,13 +17,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Any  # Any: decoded JSON (settings.json)
 
 from .paths import claude_profile, home, locked, read_config, read_json, replace_file
 
 RECORD = "natives.json"
+SUBAGENT_MODEL_SINCE = (2, 1, 251)  # before it, CLAUDE_CODE_SUBAGENT_MODEL overrode every other model choice
+VERSION_SECONDS = 5.0
 AUTO_COMPACT_WINDOW = 400_000
 SUBAGENT_MODEL = "sonnet"
 KEYS = ("autoCompactWindow", "statusLine", "env.CLAUDE_CODE_SUBAGENT_MODEL")  # a dot: an entry inside that object
@@ -60,28 +64,20 @@ def apply() -> list[str]:
     Raises:
         OSError: settings.json or the record could not be read or written.
     """
-    if not enabled():
-        return []
+    if not enabled() or (settings_path().is_symlink() and not settings_path().exists()):
+        return []  # off, or a link to nothing: never create its target
     path = settings_path().resolve()  # a settings.json linked from a dotfiles repository stays a link
     with locked(home() / RECORD):
+        before = _stamp(path)
         data: Any = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         if not isinstance(data, dict):
             return []
         seen = read_json(home() / RECORD)
         known = len(seen)
-        done = []
-        for key, value in wanted().items():
-            if key in seen:
-                continue
-            holder = _holder(data, key, create=True)
-            leaf = key.rpartition(".")[2]
-            if holder is None or leaf in holder:
-                seen[key] = "user"
-                continue
-            holder[leaf] = value
-            seen[key] = "router"
-            done.append(key)
+        done = [key for key, value in wanted().items() if key not in seen and _set(data, seen, key, value)]
         if done:
+            if _stamp(path) != before:  # Claude Code or the person wrote it meanwhile: theirs wins, try next session
+                return []
             mode = path.stat().st_mode & 0o777 if path.exists() else None
             replace_file(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", mode=mode)
         if len(seen) > known:
@@ -89,13 +85,51 @@ def apply() -> list[str]:
     return done
 
 
-def _holder(data: dict[str, Any], key: str, *, create: bool = False) -> dict[str, Any] | None:
-    """Return the object that holds `key` in the settings (`env` for `env.X`), or None when it is not an object."""
+def _set(data: dict[str, Any], seen: dict[str, Any], key: str, value: Any) -> bool:
+    """Put `value` at `key` in the settings when the person has no value of their own, recording who holds the key
+    in `seen`; return whether the router set it.
+    """
+    holder = _holder(data, key)
+    parent, _, leaf = key.rpartition(".")
+    if holder is None or leaf in holder or (parent == "env" and leaf in os.environ):
+        seen[key] = "user"  # in settings.json, or exported in the shell or another settings scope
+        return False
+    if key == "env.CLAUDE_CODE_SUBAGENT_MODEL" and not _claude_at_least(SUBAGENT_MODEL_SINCE):
+        return False  # an older Claude Code would put it above the hook's choice; looked at again next time
+    if parent and parent not in data:
+        data[parent] = holder  # `env` appears only when something goes in it
+    holder[leaf] = value
+    seen[key] = "router"
+    return True
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    """Return the modification time and size of `path`, or None when it does not exist."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return info.st_mtime_ns, info.st_size
+
+
+def _claude_at_least(version: tuple[int, ...]) -> bool:
+    """Say whether `claude --version` reports at least `version`; False when it cannot tell."""
+    try:
+        out = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=VERSION_SECONDS,
+                             check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    found = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    return bool(found) and tuple(int(n) for n in found.groups()) >= version
+
+
+def _holder(data: dict[str, Any], key: str) -> dict[str, Any] | None:
+    """Return the object that holds `key` in the settings (`env` for `env.X`; a new empty one, not yet in the
+    settings, when there is none), or None when it is there but not an object.
+    """
     parent = key.rpartition(".")[0]
     if not parent:
         return data
-    if create and parent not in data:
-        data[parent] = {}
     holder = data.get(parent, {})
     return holder if isinstance(holder, dict) else None
 

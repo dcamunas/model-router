@@ -122,12 +122,13 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     `chat_model` is the short name of the model serving the main chat, for the cross-check rule.
     """
     subagent = str(tool_input.get("subagent_type") or "")
+    if tool_input.get("model") and (subagent in ROUTED_SUBAGENTS or ":" not in subagent):
+        return None, {"skipped": "model chosen explicitly", "model": tool_input["model"]}
     project = project_of(cwd)
-    custom = None if subagent in ROUTED_SUBAGENTS else unpinned(subagent, project)
+    # Claude Code reads .claude/agents/ in the working folder whether or not it is a git repository
+    custom = None if subagent in ROUTED_SUBAGENTS else unpinned(subagent, project or cwd)
     if subagent not in ROUTED_SUBAGENTS and custom is None:
         return None, {"skipped": f"subagent_type={subagent}"}
-    if tool_input.get("model"):
-        return None, {"skipped": "model chosen explicitly", "model": tool_input["model"]}
     prompt = str(tool_input.get("prompt") or "")
     if not prompt.strip():
         return None, {"skipped": "empty prompt"}
