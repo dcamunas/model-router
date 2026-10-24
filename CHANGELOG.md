@@ -4,6 +4,13 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 
 ## [0.23.0] - 2026-10-24
 
+### Added
+
+- The SessionStart hook writes `autoCompactWindow: 400000`, the status line and `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`
+  into the profile's `settings.json`, once and only where they are missing; `router config --natives off` stops it.
+- Custom agents whose file names no model, or says `inherit`, are routed: they get a model, and an effort unless
+  their file sets one, and keep their type.
+
 ### Removed
 
 - `router run` and `router judge`, with the runner, the ledger and the ledger's part of `router stats` and

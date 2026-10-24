@@ -183,3 +183,40 @@ def test_reading_work_goes_to_the_plugin_s_read_only_agent_only_when_declared(tm
     write_config(lean=False)
     updated, _ = decided(review)
     assert updated["subagent_type"] == "general-purpose"  # `router config --lean off`
+
+
+def _agent_file(folder, name, frontmatter):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.md").write_text(f"---\nname: {name}\n{frontmatter}description: x\n---\nYou curate.\n")
+
+
+def test_custom_agents_without_a_fixed_model_get_a_model_and_keep_their_type(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path / "plugin"))
+    (tmp_path / "plugin" / PLUGIN_AGENT).parent.mkdir(parents=True)
+    (tmp_path / "plugin" / PLUGIN_AGENT).write_text("---\nname: reader\n---\n")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    agents_dir = repo / ".claude" / "agents"
+    _agent_file(agents_dir, "curator", "")
+    _agent_file(agents_dir, "heir", "model: inherit\n")
+    _agent_file(agents_dir, "careful", "effort: xhigh\n")
+    _agent_file(agents_dir, "pinned", "model: opus\n")
+    brief = "kind: review, risk: medium, access: read\nReview the parser"
+    for name in ("curator", "heir"):
+        updated, record = decide({"subagent_type": name, "prompt": brief}, cwd=str(repo))
+        assert updated is not None and updated["subagent_type"] == name and record["agent"] == name
+        assert set(record["set"]) == {"model", "effort"} and not record["router_chose"]
+    updated, record = decide({"subagent_type": "careful", "prompt": brief}, cwd=str(repo))
+    assert updated is not None and "effort" not in updated and record["set"] == ["model"]
+    for name in ("pinned", "Explore", "Plan", "model-router:reader", "some-plugin:curator", "missing"):
+        assert decide({"subagent_type": name, "prompt": brief}, cwd=str(repo))[0] is None, name
+    assert decide({"subagent_type": "curator", "prompt": brief, "model": "haiku"}, cwd=str(repo))[0] is None
+    assert decide({"subagent_type": "curator", "prompt": brief}, cwd=str(tmp_path))[0] is None  # not this repo's
+
+
+def test_a_profile_agent_without_a_model_is_routed_too(tmp_path):
+    from model_router.paths import claude_profile
+
+    _agent_file(claude_profile() / "agents", "helper", "")
+    updated, _ = decide({"subagent_type": "helper", "prompt": "Write the release notes"}, cwd=str(tmp_path))
+    assert updated is not None and updated["subagent_type"] == "helper" and updated["model"]

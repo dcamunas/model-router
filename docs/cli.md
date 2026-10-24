@@ -39,8 +39,9 @@ router usage --days 7
 # The status line command: reads the JSON Claude Code sends on stdin, prints one line, keeps a sample
 router statusline
 
-# The models it may use, the judge for critical reviews on the chat's model, the read-only agent
-router config --models haiku,sonnet,opus --judge opus/xhigh --lean on
+# The models it may use, the judge for critical reviews on the chat's model, the read-only agent, the native
+# settings the hook writes once into settings.json
+router config --models haiku,sonnet,opus --judge opus/xhigh --lean on --natives on
 
 # The other profiles signed in to the same account, which `router usage` reads too
 router config --usage-profiles ~/.claude-other

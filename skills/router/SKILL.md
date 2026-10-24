@@ -53,7 +53,8 @@ router plan --kind search --risk low --workflow     # {model: 'haiku', effort: '
 - Do not set `model` on the Agent unless the user asks for it or the task is high risk. If you set
   it, the hook keeps it, unless that model is over its usage limit: then the launch is refused with
   the time it resets, and a launch without `model` goes to an available one.
-- Agents defined in `.claude/agents/*.md` do not go through the hook: their frontmatter rules.
+- Agents defined in `.claude/agents/*.md` with a `model` of their own do not go through the hook: their
+  frontmatter rules. One with no model, or `model: inherit`, gets its model from the hook and keeps its type.
   `router agents` says, from what they spent and how often they were repeated, which look too high or too
   low; the change is the user's.
 - High or critical risk (production, money, customers, deletions, legal): follow the steps below. The

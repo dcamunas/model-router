@@ -24,8 +24,20 @@ The marketplace `dcamunas` lives at [dcamunas/claude-plugins](https://github.com
 this repository is the plugin. The first session takes a few seconds longer: the hook builds its Python
 environment with `uv` in the plugin's data directory (`plugins/data/model-router-dcamunas/` inside the
 profile), and builds it again with every new plugin version. `uv` has to be on the machine
-(`MODEL_ROUTER_UV=/path/to/uv` when it is not on the PATH). The only change to `settings.json` is the plugin
-being enabled.
+(`MODEL_ROUTER_UV=/path/to/uv` when it is not on the PATH).
+
+In that first session the router also writes three keys into the profile's `settings.json`, each one only if
+the file does not have it yet, and says so in one line:
+
+- `autoCompactWindow: 400000`, so long conversations compact at 400k
+  ([why 400k](claude-code.md#context-and-the-usage-windows));
+- `statusLine`, which runs `router statusline` from the plugin's environment;
+- `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, the model of a subagent nobody gave one. The router's choice and an
+  agent's own model come first.
+
+It writes each key once per profile and never changes a value you set: a key you edit or delete stays as you
+left it, and the router does not put it back. `router doctor` says who set each one. `router config --natives
+off` stops it before the first session, or for keys it has not written yet.
 
 The plugin puts the `router` command on the PATH of the shell Claude Code runs commands in, so in a session
 `router doctor`, `router config`, `router agents` or `router limits` work with nothing else installed. In a
@@ -39,7 +51,7 @@ If your plan or your account lacks a model (no Fable, say), tell it once:
 
 ```bash
 router config --models haiku,sonnet,opus
-router doctor                               # claude, profile, plugin, available models, state
+router doctor                               # claude, profile, plugin, available models, settings, state
 ```
 
 The tables do not change: when they ask for a model you do not have, the router drops to the most capable

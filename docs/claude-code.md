@@ -16,7 +16,11 @@ every subagent, and learns from what it measures. All of it on Claude models.
 
 `PreToolUse` on the Agent tool sets `model` and `effort` for every
 general-purpose subagent launched without a model, from the kind and the risk declared on the first
-line of the prompt (`kind: review, risk: high`), else inferred from the text. A critical review never runs
+line of the prompt (`kind: review, risk: high`), else inferred from the text. A custom agent whose file
+(`.claude/agents/<name>.md` in the repository, else `agents/<name>.md` in the profile) names no model, or says
+`model: inherit`, is routed the same way: it gets `model`, and `effort` unless its file sets one, and keeps its
+own type, never the read-only agent. Agents with a fixed model, Claude Code's own agents and plugin agents are
+left alone, and a `model` named in the launch always wins. A critical review never runs
 on the model serving the chat. The router never picks `max` effort
 on its own: `xhigh` is the top it chooses, and `max` runs only when someone names it.
 
@@ -94,14 +98,15 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
 
 - **Status line.** Claude Code gives the status line command the share of both windows already used and the size
   of the last turn's context, on every update and at no cost. `router statusline` shows them:
-  `ctx 412k/1M · 5h 22% · week 61% · fable 1% (resets Sat 15:00)`. Set it once in the profile's
-  `settings.json`:
+  `ctx 412k/1M · 5h 22% · week 61% · fable 1% (resets Sat 15:00)`. The router sets it in the profile's
+  `settings.json` in the first session, when there is no `statusLine` yet, with the full path of `router` in the
+  plugin's environment:
 
   ```json
-  "statusLine": {"type": "command", "command": "router statusline"}
+  "statusLine": {"type": "command", "command": "~/.claude/plugins/data/model-router-dcamunas/venv/bin/router statusline"}
   ```
 
-  If `router` is not on the status line's PATH, give the full path of `bin/router` in the plugin's folder.
+  A status line you already had stays.
 - **Fable's own week.** Fable has a weekly window of its own, the "Current week (Fable)" row of `/usage`, which
   Claude Code does not hand the status line. Only a call to Fable reports it (as `seven_day_overage_included`), so
   while a status line runs, the router asks Fable for one word at most every 30 minutes, in the background, and
@@ -109,8 +114,10 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
 - **Samples.** Each time a window or the context moves, the status line appends the numbers to
   `~/.claude/model-router/usage.jsonl`: the session id, the model, the context, both windows and their resets.
   It writes no text from the session.
-- **Compacting earlier.** That part is Claude Code's own: `/autocompact 400k`, or `"autoCompactWindow": 400000` in
-  `settings.json`. Without it, models with a 1M window compact at about 967k. Replaying two weeks of one person's
+- **Compacting earlier.** That part is Claude Code's own: `/autocompact`, or `autoCompactWindow` in
+  `settings.json`. The router sets `"autoCompactWindow": 400000` there in the first session, when the key is not
+  there yet; change it or delete it and the router leaves it so. Without it, models with a 1M window compact at
+  about 967k. Replaying two weeks of one person's
   80 main conversations under each window gave this, counting the tokens each call reads again:
 
   | Window | Tokens read | Compactions per session |
@@ -163,8 +170,8 @@ committed with the code:
 
 ## Agents fixed by hand
 
-Agents defined in `.claude/agents/*.md` or by a plugin keep their own `model:` and `effort:`; the hook
-leaves them alone. They are measured all the same, and `router agents` turns those measurements into
+Agents defined in `.claude/agents/*.md` or by a plugin with a `model:` of their own keep it, and their
+`effort:`; the hook leaves them alone. They are measured all the same, and `router agents` turns those measurements into
 advice per agent and cell in the repository:
 
 | Advice | When |
@@ -177,8 +184,8 @@ advice per agent and cell in the repository:
 A run counts as repeated when, in the same session and within 30 minutes of its end, another subagent
 starts on an alike prompt on a more capable cell: whoever launched it was not satisfied. The same agent
 again on the same cell is not a repeat, since a loop over files with one template brief looks the same.
-Agents whose frontmatter says `model: inherit`, or names no model, and Claude Code's own agents get
-no advice: their model is the session's. When the advice changes the model, it
+Agents whose frontmatter says `model: inherit`, or names no model, get no advice: the hook routes them.
+Claude Code's own agents get none either: their model is the session's. When the advice changes the model, it
 prices the measured tokens at both models; a change of effort also changes the tokens, which is not
 estimated. It never edits an agent: the change is yours.
 
@@ -233,16 +240,20 @@ router limits                # models over their usage limit, until the exact re
 router usage                 # the seven-day window day by day, and which tokens move it
 router statusline            # the status line command (reads Claude Code's JSON on stdin)
 router config --lean off     # keep every subagent on the agent Claude chose (`--lean on` undoes it)
+router config --natives off  # stop writing the native settings below into settings.json (`--natives on` undoes it)
 ```
 
 ## What else the plugin does
 
-`SessionStart` tells Claude the hook exists and what to declare. The skill `router` covers what a
+`SessionStart` tells Claude the hook exists and what to declare, and writes once into the profile's
+`settings.json` the keys that are missing there: `autoCompactWindow: 400000`, the status line and
+`env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, a fallback for subagents nobody gave a model (a model the hook passes,
+or an agent's own, wins over it). The record of what it set is `~/.claude/model-router/natives.json`. The skill `router` covers what a
 hook cannot do: check a subagent's result by risk and relaunch it higher when it fails. A launch takes the hook about 50 milliseconds, and the
 hooks call no API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
 word (a `claude -p` call of up to 30 seconds) to learn its reset. The status line, when you set it, asks Fable for one
 word at most every 30 minutes, in the background, to read Fable's weekly window. They block only a launch that names a
-model over its limit; on any error they exit with one line on stderr. Agents defined in `.claude/agents/*.md` and forks are
+model over its limit; on any error they exit with one line on stderr. Agents with a fixed model, plugin agents and forks are
 left alone; they are still measured. A session opened before a plugin update keeps routing with the
 environment the update installed, and never puts the older version back.
 

@@ -38,6 +38,7 @@ from typing import Any  # Any: measured subagent records, decoded JSON
 
 from . import clock
 from .catalog import MODELS, Cell, UnknownModelError, Usage, cost_usd, parse_cell, step_down, step_up
+from .paths import claude_profile
 from .projects import (
     ALIKE,
     DOWN_N,
@@ -248,3 +249,22 @@ def agent_file(project: str, agent: str) -> Path | None:
     """Return the repository's definition of `agent` (`.claude/agents/<name>.md`), or None when it is not there."""
     path = Path(project, *AGENTS_DIR) / f"{agent}.md"
     return path if path.is_file() else None
+
+
+def unpinned(name: str, project: str | None) -> dict[str, str] | None:
+    """Return the frontmatter of the custom agent `name` when its file sets no model (or `inherit`), so the hook may
+    route it; None for any other agent. Its file is `.claude/agents/<name>.md` in the repository, else
+    `agents/<name>.md` in the profile, the order Claude Code reads them in. Built-in agents and plugin agents
+    (`plugin:name`) are never routed.
+    """
+    if not name or name in NOT_FIXED_BY_HAND or any(c in name for c in ":/\\") or name.startswith("."):
+        return None
+    folders = ([Path(project, *AGENTS_DIR)] if project else []) + [claude_profile() / "agents"]
+    path = next((f / f"{name}.md" for f in folders if (f / f"{name}.md").is_file()), None)
+    if path is None:
+        return None
+    try:
+        fields = frontmatter(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    return fields if fields.get("model", "") in ("", "inherit") else None

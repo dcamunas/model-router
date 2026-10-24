@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
-from . import agents, clock, floors, limits, projects, shared, team, usage
+from . import agents, clock, floors, limits, natives, projects, shared, team, usage
 from .catalog import (
     MODELS,
     PLAN_INPUT_TOKENS,
@@ -571,6 +571,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         if team_check is not None:
             checks.append(team_check)
         checks += _profile_checks(profile, enabled_by=enabled_by)
+        checks += [(True, line) for line in natives.report()]
     hook_n = sum(n for *_, n in _hook_decisions(home() / DECISION_LOG))
     checks.append((True, f"state in {home()}: {hook_n} hook decisions"))
     if args.live and claude[0]:
@@ -605,6 +606,8 @@ def _cmd_cells(_args: argparse.Namespace) -> int:
 def _cmd_config(args: argparse.Namespace) -> int:
     if args.lean is not None:
         write_config(lean=None if args.lean == "on" else False)
+    if args.natives is not None:
+        write_config(natives=None if args.natives == "on" else False)
     if args.models is not None:
         write_config(models=_model_names(args.models))
     if args.judge is not None:
@@ -618,6 +621,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
     print(f"available models: {', '.join(MODELS[m].short for m in configured_models())}")
     print(f"judge for critical reviews on the chat's model: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
     print(f"read-only agent for reading tasks: {'off' if cfg.get('lean') is False else 'on'}")
+    print(f"native settings written once into settings.json: {'on' if natives.enabled() else 'off'}")
     print(f"profiles `router usage` reads: {', '.join(_home_relative(p) for p in _usage_profiles(None))}")
     print(f"(in {config_path()})")
     return 0
@@ -693,6 +697,9 @@ def build_parser() -> argparse.ArgumentParser:
                     "opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
                     "to the read-only agent, which carries a fraction of the general agent's context (default on)")
+    sg.add_argument("--natives", choices=("on", "off"), help="let the router write autoCompactWindow, the status line "
+                    "and CLAUDE_CODE_SUBAGENT_MODEL into the profile's settings.json once, where they are missing "
+                    "(default on)")
     sg.add_argument("--usage-profiles", metavar="DIR,DIR", help="other Claude profiles signed in to the same account, "
                     "which `router usage` reads too (they share its windows); none clears them")
     sg.set_defaults(func=_cmd_config)

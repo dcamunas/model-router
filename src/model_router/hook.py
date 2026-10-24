@@ -19,7 +19,9 @@ Events handled (one entry point, dispatch on `hook_event_name`):
 * SessionStart: finishes the last session's measurements, raises the repository's start cells that
   keep failing (`projects.py`), writes and prunes this installation's shared counts when the
   repository shares them (`shared.py`), and gives Claude the context it needs to declare kind,
-  risk and access, naming any model over its usage limit. A raise comes with a one-line notice.
+  risk and access, naming any model over its usage limit. A raise comes with a one-line notice. Outside the
+  router's own sessions it also writes, once, the native settings it builds on into the profile's settings.json
+  (`natives.py`), and says so in one line.
 
 Cross-check rule: a review subagent whose risk calls for a full check (see VERIFY_BY_RISK)
 never runs on the model that serves the main chat. The chat's model is read from the last
@@ -27,9 +29,11 @@ assistant entry of the session transcript (`transcript_path` in the event); when
 the rule does nothing. This is the only verification the orchestrator itself gets: it has no
 hook that can change its own model.
 
-Rules: explicit beats automatic. A `model` chosen by Claude is kept, unless its usage limit is spent. Custom agents from
-`.claude/agents/*.md` are skipped (their frontmatter is their routing), and so are forks (the Agent
-tool ignores model and effort for them). Apart from that one denial the hook never blocks: on any error it
+Rules: explicit beats automatic. A `model` chosen by Claude is kept, unless its usage limit is spent. A custom agent
+(`.claude/agents/<name>.md` in the repository, else `agents/<name>.md` in the profile) whose frontmatter sets no model,
+or `inherit`, gets `model` (and `effort` unless its frontmatter sets one) and keeps its type; one with a fixed model is
+skipped (its frontmatter is its routing), and so are built-in agents, plugin agents and forks (the Agent tool
+ignores model and effort for them). Apart from that one denial the hook never blocks: on any error it
 exits 0 with one line on stderr.
 
 Environment: MODEL_ROUTER_HOOK=0 disables it; MODEL_ROUTER_HOOK_LOG=0 stops the decisions log
@@ -48,7 +52,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any  # Any: hook events and log records are decoded JSON
 
-from . import clock, floors, limits
+from . import clock, floors, limits, natives
+from .agents import unpinned
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .paths import DECISION_LOG, HOOK_ENV, append_jsonl, home, is_child, logging_on, quiet, read_config, read_jsonl
@@ -117,7 +122,9 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     `chat_model` is the short name of the model serving the main chat, for the cross-check rule.
     """
     subagent = str(tool_input.get("subagent_type") or "")
-    if subagent not in ROUTED_SUBAGENTS:
+    project = project_of(cwd)
+    custom = None if subagent in ROUTED_SUBAGENTS else unpinned(subagent, project)
+    if subagent not in ROUTED_SUBAGENTS and custom is None:
         return None, {"skipped": f"subagent_type={subagent}"}
     if tool_input.get("model"):
         return None, {"skipped": "model chosen explicitly", "model": tool_input["model"]}
@@ -127,7 +134,6 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     description = str(tool_input.get("description") or "")
     cls = classify_rules(prompt, description=description)
     claude = lattice()  # Claude models only: the Agent tool runs nothing else, and the router routes nothing else
-    project = project_of(cwd)
     raised = floors.apply(cls.risk, floors.head(prompt, description), floors=floors.load(project))
     risk = raised.risk
     policy = Policy(cells=claude, tuning=load_tuning(project))
@@ -138,7 +144,7 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     updated = dict(tool_input)
     updated["model"] = cc["model"]
     fields = ["model"]
-    if not tool_input.get("effort"):
+    if not tool_input.get("effort") and not (custom or {}).get("effort"):
         updated["effort"] = cc["effort"]
         fields.append("effort")
     record = {
@@ -146,11 +152,15 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
         "prompt_hash": prompt_hash(prompt), "project": project,
         # model and effort both the router's, on the table's cell: evidence about its tables (a cross-checked review
         # runs another cell than the start, so its outcome says nothing about the start)
-        "router_chose": "effort" in fields and not cross,
+        # a custom agent brings its own prompt and tools, so its outcome says nothing about the tables either
+        "router_chose": "effort" in fields and not cross and custom is None,
     }
     if cross:
         record["cross"] = cross
     record.update(_notes(cls.risk, raised))
+    if custom is not None:  # its own agent: never renamed, never sent to the read-only agent
+        record["agent"] = subagent
+        return updated, record
     lean = lean_agent()
     safe, why = read_only(prompt, description)
     if lean is not None and safe:
@@ -313,9 +323,25 @@ def _session_start(event: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
     raised = _tune(event)
     _share(event)
-    if raised and not quiet():
-        out["systemMessage"] = "router: " + "; ".join(raised) + " (`router project` shows why; `--reset` undoes it)"
+    notices = ["router: " + "; ".join(raised) + " (`router project` shows why; `--reset` undoes it)"] if raised else []
+    notices += _natives()
+    if notices and not quiet():
+        out["systemMessage"] = "\n".join(notices)
     return out
+
+
+def _natives() -> list[str]:
+    """Write the native settings the router builds on (`natives.apply`), outside its own sessions, and return the
+    notice that says what was set, if anything was.
+    """
+    if is_child():
+        return []
+    try:
+        notice = natives.notice(natives.apply())
+    except Exception as exc:  # noqa: BLE001 - settings are a side task: they must never cost the session its context
+        sys.stderr.write(f"router-hook: native settings skipped: {type(exc).__name__}: {exc}\n")
+        return []
+    return [notice] if notice else []
 
 
 def _limits_context() -> str:

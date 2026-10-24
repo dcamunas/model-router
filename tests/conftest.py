@@ -35,3 +35,15 @@ def freeze_clock(monkeypatch):
         monkeypatch.setattr(clock, "now", lambda: moment)
 
     return freeze
+
+
+@pytest.fixture(autouse=True)
+def natives_hook(monkeypatch):
+    """Keep the SessionStart hook from writing native settings in tests that are about something else; return the real
+    step, for the tests about it to put back.
+    """
+    from model_router import hook
+
+    real = hook._natives
+    monkeypatch.setattr(hook, "_natives", lambda: [])
+    return real
