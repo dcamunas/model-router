@@ -116,7 +116,7 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
   It writes no text from the session.
 - **Compacting earlier.** That part is Claude Code's own: `/autocompact`, or `autoCompactWindow` in
   `settings.json`. The router sets `"autoCompactWindow": 400000` there in the first session, when the key is not
-  there yet; change it or delete it and the router leaves it so. Without it, models with a 1M window compact at
+  there yet, and it applies from the next session; change it or delete it and the router leaves it so. Without it, models with a 1M window compact at
   about 967k. Replaying two weeks of one person's
   80 main conversations under each window gave this, counting the tokens each call reads again:
 

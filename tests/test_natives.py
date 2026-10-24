@@ -88,7 +88,7 @@ def test_session_start_says_it_once_and_never_in_the_router_s_own_sessions(setti
     monkeypatch.delenv("MODEL_ROUTER_CHILD")
     out = handle({"hook_event_name": "SessionStart"}) or {}
     assert out["systemMessage"] == ("router: set autoCompactWindow 400000, the status line and "
-                                    "CLAUDE_CODE_SUBAGENT_MODEL=sonnet in settings.json (once; "
+                                    "CLAUDE_CODE_SUBAGENT_MODEL=sonnet in settings.json, from the next session on (once; "
                                     "`router config --natives off` stops it)")
     assert "Model router active" in out["hookSpecificOutput"]["additionalContext"]
     assert "systemMessage" not in (handle({"hook_event_name": "SessionStart"}) or {})

@@ -140,7 +140,8 @@ def notice(done: list[str]) -> str:
         return ""
     said = [SAID[key] for key in done]
     listed = ", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]
-    return f"router: set {listed} in settings.json (once; `router config --natives off` stops it)"
+    return (f"router: set {listed} in settings.json, from the next session on "
+            "(once; `router config --natives off` stops it)")
 
 
 def report() -> list[str]:
