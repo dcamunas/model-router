@@ -38,8 +38,12 @@ A test, when there is one, always comes first and is final when it fails.
   `analysis`, `agentic`. The risks: `low`, `medium`, `high`, `critical`.
 - You pass them (`router plan --kind --risk`), or the first two lines of the text declare them
   (`kind: review, risk: high`; also `tipo:` and `riesgo: alto`). A value ends the line or is followed
-  by a comma or a full stop, and material pasted below the head never counts.
-- Otherwise rules infer them; the rules know English and Spanish prompts.
+  by a comma or a full stop, and material pasted below the head never counts. A kind written by another
+  of its names counts too: `research` is `search`, `writing` is `write`, `summary` is `summarize`,
+  `extraction` is `extract`, `classification` is `classify` (`classify.KIND_ALIASES`).
+- Otherwise rules infer them; the rules know English and Spanish prompts. A keyword that follows a
+  negation in its clause ("do not run tests", "sin código", "never migrate") does not name the kind: the
+  text says what the task is not, and the rule moves on to the next keyword.
 - The risk is the damage a wrong answer does, and the text does not carry it. On 28 real tasks the
   rules got it right 9 times and a Haiku classifier 5 to 10, both reading difficulty or vocabulary
   instead of consequences. So a text that says "critical" or "production" is not a critical task for the
@@ -61,6 +65,11 @@ A test, when there is one, always comes first and is final when it fails.
   ([usage limits](claude-code.md#usage-limits)): its cells go to the next model, as for a model you lack.
 - No cell the router picks on its own is at `max` effort: a `max` cell from a tuning runs at `xhigh`, and
   the plan says so.
+- `router config --min-effort medium` (or `high`) raises every start below it to that effort on its own
+  model, after the table, the floors and the tuning; the plan says so. The default is `low`, the
+  table's own choices: on the bench of 21/10/2026 (112 tasks per cell) `sonnet/low` solved 92 % and
+  `sonnet/medium` 90 %, `opus/low` and `opus/medium` 99 % each with medium 28 % dearer and slower, so
+  the setting is for whoever wants the margin, not a measured need.
 
 ### 3. One step up
 

@@ -2,6 +2,23 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.26.0] - 2026-10-25
+
+### Added
+
+- `router config --min-effort low|medium|high`: the effort no start cell goes below, applied on the cell's own
+  model after the table, the risk floors and a repository's tuning; the plan and the hook's decision say when it
+  raised a start. Default `low`, the table's own choices.
+
+### Fixed
+
+- A kind declared by another of its names (`kind: research`, `writing`, `summary`, `extraction`,
+  `classification`, and their Spanish forms) was not a declaration, so the text rules decided: a research brief
+  that named tools or tests was routed as `code` and went to Opus. They now map to the router's kinds
+  (`classify.KIND_ALIASES`); the session context lists the kinds.
+- A kind keyword right after a negation ("do not run your own agent tests", "sin código", "never migrate")
+  named the kind. The rules now skip a keyword negated in its clause and look for the next one.
+
 ## [0.25.1] - 2026-10-24
 
 ### Fixed

@@ -22,7 +22,7 @@ wheels = [
 
 [[package]]
 name = "model-router"
-version = "0.25.1"
+version = "0.26.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

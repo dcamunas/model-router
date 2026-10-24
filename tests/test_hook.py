@@ -258,3 +258,10 @@ def test_agents_of_a_folder_without_git_are_found(tmp_path):
     _agent_file(tmp_path / "notes" / ".claude" / "agents", "summariser", "")
     updated, _ = decide({"subagent_type": "summariser", "prompt": "Summarise it"}, cwd=str(tmp_path / "notes"))
     assert updated is not None and updated["subagent_type"] == "summariser"
+
+
+def test_the_hook_honours_the_configured_minimum_effort(state):
+    write_config(min_effort="medium")
+    out = routed(agent_event(prompt="kind: search, risk: medium, access: write\nFind every portal with alerts"))
+    updated = out["hookSpecificOutput"]["updatedInput"]
+    assert updated["model"] == "sonnet" and updated["effort"] == "medium"  # search x medium is sonnet/low by the table

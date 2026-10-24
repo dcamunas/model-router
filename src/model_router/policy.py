@@ -43,6 +43,8 @@ START: dict[str, dict[str, str]] = {
 }
 # A task never starts below this capability, whatever a project's tuning says.
 FLOOR: dict[str, str] = {"high": "sonnet/low", "critical": "opus/medium"}
+# The effort no start goes below unless `router config --min-effort` raises it: the table's own choices.
+DEFAULT_MIN_EFFORT = "low"
 # How much checking each risk calls for; a review at `full` gets the cross-check of the hook (`hook._cross_review`).
 VERIFY_BY_RISK: dict[str, str] = {"low": "none", "medium": "none", "high": "light", "critical": "full"}
 
@@ -135,9 +137,17 @@ def choose_verifier(worker: Cell, *, cells: list[Cell], judge: Cell | None = Non
     return _full_judge(worker, judge=judge, cells=cells)
 
 
+def configured_min_effort() -> str:
+    """Return the effort no start goes below: `min_effort` in config.json when it is one the router chooses on
+    its own, else DEFAULT_MIN_EFFORT.
+    """
+    value = str(read_config().get("min_effort") or DEFAULT_MIN_EFFORT).lower()
+    return value if value in AUTO_EFFORTS else DEFAULT_MIN_EFFORT
+
+
 class Policy:
-    """The default policy: the START table, the risk floors, a project's tuning and a fixed judge (`judge`, else the
-    configured one) for the cross-check.
+    """The default policy: the START table, the risk floors, a project's tuning, a minimum effort (`min_effort`, else
+    the configured one) and a fixed judge (`judge`, else the configured one) for the cross-check.
     """
 
     def __init__(
@@ -146,9 +156,11 @@ class Policy:
         cells: list[Cell] | None = None,
         judge: Cell | None = None,
         tuning: dict[str, Any] | None = None,  # Any: a tuning file's decoded JSON (`projects.load_tuning`)
+        min_effort: str | None = None,
     ) -> None:
         self.cells = cells or lattice()
         self.tuning = tuning or {}  # a project's own start cells (`projects.py`), on top of the table
+        self.min_effort = min_effort if min_effort in AUTO_EFFORTS else configured_min_effort()
         self.models = sorted({c.model for c in self.cells}, key=lambda m: MODELS[m].tier)
         self.notes: list[str] = []
         note = models_note()
@@ -192,7 +204,16 @@ class Policy:
                 rationale.append(f"risk floor {risk}: {start} -> {floor_cell}")
                 start = floor_cell
         start = self._tuned(kind, risk, start=start, rationale=rationale)
+        start = self._at_least(start, rationale)
         return Plan(start, rationale)
+
+    def _at_least(self, start: Cell, rationale: list[str]) -> Cell:
+        """Raise `start` to the minimum effort on its own model when it is below, and say so."""
+        if start.effort_rank >= EFFORTS.index(self.min_effort):
+            return start
+        raised = _at(start.model, self.min_effort)
+        rationale.append(f"minimum effort {self.min_effort}: {start} -> {raised}")
+        return raised
 
     def _tuned(self, kind: str, risk: str, *, start: Cell, rationale: list[str]) -> Cell:
         """Apply the project's tuning (`projects.py`) to the start the table and the floors gave: its cell stands in

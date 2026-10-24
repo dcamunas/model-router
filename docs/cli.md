@@ -43,6 +43,9 @@ router statusline
 # settings the hook writes once into settings.json
 router config --models haiku,sonnet,opus --judge opus/xhigh --lean on --natives on
 
+# The effort no start cell goes below (low by default; medium or high raise every lower start on its own model)
+router config --min-effort medium
+
 # The other profiles signed in to the same account, which `router usage` reads too
 router config --usage-profiles ~/.claude-other
 

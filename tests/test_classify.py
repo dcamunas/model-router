@@ -88,3 +88,20 @@ def test_only_a_declaration_on_its_own_line_in_the_prompt_sends_work_to_the_read
     assert not read_only("access: read\nReview it", "access: write")[0]  # write wins wherever it is said
     assert not read_only("access: write\nReview it")[0]
     assert declared_access("acceso: lectura. Mira esto") == "read" and declared_access("nothing here") is None
+
+
+def test_a_kind_declared_by_another_of_its_names_is_that_kind():
+    brief = "kind: research, risk: medium, access: write\nResearch the tools; use WebFetch and the Chrome tools."
+    assert classify_rules(brief).kind == "search"
+    assert classify_rules("kind: writing, risk: medium\nRead the notes and write the report").kind == "write"
+    assert classify_rules("tipo: extracción, riesgo: bajo\nSaca los campos").kind == "extract"
+    assert classify_rules("kind: summary, risk: low\nTen lines on this thread").kind == "summarize"
+    assert classify_rules("kind: classification\nSort these tickets").kind == "classify"
+
+
+def test_a_keyword_after_a_negation_does_not_name_the_kind():
+    assert classify_rules("Check the portals' help pages. Do not run your own agent tests against idealista.").kind != "code"
+    assert classify_rules("Explica el concepto sin código ni scripts").kind != "code"
+    assert classify_rules("Never migrate the pipeline; just describe it").kind != "agentic"
+    assert classify_rules("Run the tests and fix what fails").kind == "code"  # no negation: the rule still fires
+    assert classify_rules("No hay prisa. Implementa la función").kind == "code"  # a negation in another clause

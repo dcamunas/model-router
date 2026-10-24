@@ -75,7 +75,8 @@ The plugin brings the `router` command; until the first session has built its en
    router plan "<the subtask in one sentence>" --kind <kind> --risk <risk>
    ```
 
-   Kinds: classify, extract, summarize, search, chat, write, code, review, analysis, agentic.
+   Kinds: classify, extract, summarize, search, chat, write, code, review, analysis, agentic
+   (research counts as search, writing as write, summary / extraction / classification as their verbs).
    Risks: low, medium, high, critical. It prints the classification and the start cell.
 
 2. Launch the subagent with the `model` and `effort` of the start cell and the full brief.

@@ -158,3 +158,12 @@ def test_every_subcommand_prints_its_help(capsys):
             main([gone, "x"])
         assert exc.value.code == 2, gone
 
+
+def test_config_sets_and_shows_the_minimum_effort(home, capsys):
+    assert main(["config", "--min-effort", "medium"]) == 0
+    assert json.loads((home / "config.json").read_text())["min_effort"] == "medium"
+    assert "minimum effort of a start cell: medium" in capsys.readouterr().out
+    assert main(["plan", "--kind", "search", "--risk", "medium", "--claude-code"]) == 0
+    assert "effort: medium" in capsys.readouterr().out
+    assert main(["config", "--min-effort", "low"]) == 0
+    assert "min_effort" not in json.loads((home / "config.json").read_text())

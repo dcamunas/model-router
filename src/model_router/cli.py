@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, co
 
 from . import agents, clock, floors, limits, natives, projects, shared, team, usage
 from .catalog import (
+    AUTO_EFFORTS,
     MODELS,
     PLAN_INPUT_TOKENS,
     PLAN_OUTPUT_TOKENS_AT_HIGH,
@@ -48,7 +49,7 @@ from .paths import (
     read_jsonl,
     write_config,
 )
-from .policy import DEFAULT_JUDGE, FLOOR, Policy, default_judge
+from .policy import DEFAULT_JUDGE, DEFAULT_MIN_EFFORT, FLOOR, Policy, configured_min_effort, default_judge
 from .subagents import LOG_FILE as SUBAGENT_LOG
 from .subagents import finalize as finalize_subagents
 from .subagents import load as load_subagents
@@ -550,6 +551,12 @@ def _settings_checks() -> list[tuple[bool, str]]:
                              f"(via {'config.json' if cfg.get('judge') else 'default'})"))
     except ValueError as exc:  # UnknownModelError is one too
         checks.append((False, f"judge for critical reviews on the chat's model: {exc} (`router config --judge`)"))
+    raw = cfg.get("min_effort")
+    if raw and str(raw).lower() not in AUTO_EFFORTS:
+        checks.append((False, f"the min_effort setting {raw!r} is not an effort the router chooses, ignored "
+                              f"(`router config --min-effort`)"))
+    elif raw:
+        checks.append((True, f"minimum effort of a start cell: {configured_min_effort()} (via config.json)"))
     return checks
 
 
@@ -611,6 +618,8 @@ def _cmd_config(args: argparse.Namespace) -> int:
         write_config(models=_model_names(args.models))
     if args.judge is not None:
         write_config(judge=parse_cell(args.judge).label)
+    if args.min_effort is not None:
+        write_config(min_effort=None if args.min_effort == DEFAULT_MIN_EFFORT else args.min_effort)
     if args.usage_profiles is not None:
         listed = [] if args.usage_profiles.strip().lower() == "none" else [
             str(Path(p.strip()).expanduser().absolute()) for p in args.usage_profiles.split(",") if p.strip()]
@@ -619,6 +628,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
     print(f"Claude profile: {claude_profile()}")
     print(f"available models: {', '.join(MODELS[m].short for m in configured_models())}")
     print(f"judge for critical reviews on the chat's model: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
+    print(f"minimum effort of a start cell: {configured_min_effort()}")
     print(f"read-only agent for reading tasks: {'off' if cfg.get('lean') is False else 'on'}")
     print(f"native settings written once into settings.json: {'on' if natives.enabled() else 'off'}")
     print(f"profiles `router usage` reads: {', '.join(_home_relative(p) for p in _usage_profiles(None))}")
@@ -694,6 +704,8 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--models", help="Claude models that may do the work, e.g. haiku,sonnet,opus; all = every Claude model")
     sg.add_argument("--judge", help="cell a critical review moves to when it would run on the chat's model, e.g. "
                     "opus/xhigh (effort capped at xhigh)")
+    sg.add_argument("--min-effort", choices=AUTO_EFFORTS, help="effort no start cell goes below, on its own model "
+                    f"(default {DEFAULT_MIN_EFFORT}: the table's own choices)")
     sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
                     "to the read-only agent, which carries a fraction of the general agent's context (default on)")
     sg.add_argument("--natives", choices=("on", "off"), help="let the router write autoCompactWindow and the status line "

@@ -76,3 +76,20 @@ def test_the_router_never_chooses_max_effort_on_its_own():
     plan = tuned.plan(Task(prompt="x", kind="write", risk="high"))
     assert plan.start.label == "fable/xhigh" and any("never chooses max" in r for r in plan.rationale)  # capped
     assert parse_cell("opus/max").effort == "max"  # named by hand, it is still a cell
+
+
+def test_the_minimum_effort_raises_a_start_on_its_own_model():
+    plan = Policy(min_effort="medium").plan(Task(prompt="x", kind="search", risk="medium"))
+    assert plan.start.label == "sonnet/medium"
+    assert any("minimum effort medium: sonnet/low -> sonnet/medium" in r for r in plan.rationale)
+    plan = Policy(min_effort="medium").plan(Task(prompt="x", kind="code", risk="high"))
+    assert plan.start.label == "opus/medium"  # already at or above it: untouched
+    assert not any("minimum effort" in r for r in plan.rationale)
+
+
+def test_the_minimum_effort_comes_from_the_config_and_ignores_bad_values():
+    assert Policy().plan(Task(prompt="x", kind="search", risk="medium")).start.label == "sonnet/low"
+    write_config(min_effort="medium")
+    assert Policy().plan(Task(prompt="x", kind="search", risk="medium")).start.label == "sonnet/medium"
+    write_config(min_effort="max")  # never chosen on its own
+    assert Policy().plan(Task(prompt="x", kind="search", risk="medium")).start.label == "sonnet/low"
