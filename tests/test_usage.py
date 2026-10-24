@@ -2,12 +2,9 @@ import io
 import json
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from model_router import usage
 from model_router.catalog import Usage
-from model_router.cli import _token_count, main
-from model_router.hook import handle
+from model_router.cli import main
 from model_router.paths import write_config
 
 T0 = datetime(2026, 10, 24, 10, 0, tzinfo=UTC)
@@ -40,28 +37,25 @@ def _write(path, entries):
 # ---- status line ----------------------------------------------------------------------------------------------
 
 
-def test_the_status_line_reads_context_and_windows_and_marks_a_long_context():
+def test_the_status_line_reads_context_and_windows():
     status = usage.read_status(_status_json())
     assert (status.context, status.window_size, status.five_hour, status.seven_day) == (412_005, 1_000_000, 22.4, 61.2)
-    text = usage.statusline_text(status, warn_at=300_000)
-    assert text.startswith("⚠ ctx 412k/1M · /compact? · 5h 22% · week 61% (resets ")
-    assert "⚠" not in usage.statusline_text(status, warn_at=500_000)
-    assert "⚠" not in usage.statusline_text(status, warn_at=0)
+    assert usage.statusline_text(status).startswith("ctx 412k/1M · 5h 22% · week 61% (resets ")
 
 
 def test_the_status_line_shows_what_it_has_and_nothing_before_the_first_call():
-    assert usage.statusline_text(usage.read_status({}), warn_at=300_000) == ""
+    assert usage.statusline_text(usage.read_status({})) == ""
     data = _status_json()
     del data["rate_limits"]
-    assert usage.statusline_text(usage.read_status(data), warn_at=300_000) == "⚠ ctx 412k/1M · /compact?"
+    assert usage.statusline_text(usage.read_status(data)) == "ctx 412k/1M"
     # right after /compact current_usage is null while the totals still hold the old context: show none
     data = {"context_window": {"total_input_tokens": 900_000, "current_usage": None}, "rate_limits": {"seven_day": {}}}
-    assert usage.statusline_text(usage.read_status(data), warn_at=300_000) == ""
+    assert usage.statusline_text(usage.read_status(data)) == ""
 
 
 def test_odd_numbers_never_break_the_status_line(state, monkeypatch, capsys):
     data = _status_json(week_resets=1_793_300_000_000)  # milliseconds
-    assert "(resets " in usage.statusline_text(usage.read_status(data), warn_at=0)
+    assert "(resets " in usage.statusline_text(usage.read_status(data))
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_status_json()).replace("61.2", "Infinity")))
     assert main(["statusline"]) == 0
     out = capsys.readouterr().out
@@ -103,64 +97,9 @@ def test_a_child_session_or_logging_off_keeps_no_sample(state, monkeypatch):
     assert not (state / usage.USAGE_LOG).exists()
 
 
-# ---- context warning ------------------------------------------------------------------------------------------
-
-
-def test_last_context_is_the_main_conversations_last_call(tmp_path):
-    path = _write(tmp_path / "t.jsonl", [
-        *_assistant("m1", at=T0, cache_read=100_000),
-        *_assistant("m2", at=T0 + timedelta(seconds=5), cache_read=350_000),
-        *_assistant("sub", at=T0 + timedelta(seconds=9), cache_read=5_000, side=True),
-    ])
-    assert usage.last_context(path) == 350_102
-    assert usage.last_context(tmp_path / "missing.jsonl") is None
-
-
-def test_the_warning_comes_once_per_band(state, tmp_path):
-    path = tmp_path / "t.jsonl"
-    event = {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "transcript_path": str(path)}
-    _write(path, _assistant("m1", at=T0, cache_read=250_000))
-    assert handle(event) is None
-    _write(path, _assistant("m2", at=T0, cache_read=320_000))
-    out = handle(event)
-    assert out is not None and "320k tokens" in out["systemMessage"]
-    assert handle(event) is None  # same band, already warned
-    _write(path, _assistant("m3", at=T0, cache_read=520_000))
-    assert handle(event) is not None
-    assert handle({**event, "session_id": "s2"}) is not None  # another session is warned on its own
-    _write(path, _assistant("m4", at=T0, cache_read=60_000))  # a /compact
-    assert handle(event) is None
-    _write(path, _assistant("m5", at=T0, cache_read=310_000))
-    assert handle(event) is not None  # grown again: warned again
-
-
-def test_the_warning_is_off_at_zero_and_silent_in_a_child_session(state, tmp_path, monkeypatch):
-    path = _write(tmp_path / "t.jsonl", _assistant("m1", at=T0, cache_read=800_000))
-    event = {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "transcript_path": str(path)}
-    monkeypatch.setenv("MODEL_ROUTER_CHILD", "1")
-    assert handle(event) is None
-    monkeypatch.delenv("MODEL_ROUTER_CHILD")
-    write_config(context_warn=0)
-    assert usage.warn_threshold() == 0 and usage.bands(0) == ()
-    assert handle(event) is None
-
-
-def test_token_counts_read_k_and_m():
-    assert (_token_count("300k"), _token_count("1.2M"), _token_count("250000"), _token_count("0")) == (
-        300_000, 1_200_000, 250_000, 0)
-    with pytest.raises(ValueError):
-        _token_count("lots")
-    with pytest.raises(ValueError):
-        _token_count("-5k")
-    with pytest.raises(ValueError):
-        _token_count("inf")
-
-
-def test_config_sets_the_warning_and_the_profiles(state, tmp_path, capsys):
-    assert main(["config", "--context-warn", "400k", "--usage-profiles", str(tmp_path)]) == 0
-    out = capsys.readouterr().out
-    assert "context warning from: 400k tokens" in out and str(tmp_path.name) in out
-    assert usage.warn_threshold() == 400_000
+def test_config_sets_the_profiles_usage_reads(state, tmp_path, capsys):
+    assert main(["config", "--usage-profiles", str(tmp_path)]) == 0
+    assert str(tmp_path.name) in capsys.readouterr().out
     assert main(["config", "--usage-profiles", "none"]) == 0
 
 
@@ -275,11 +214,11 @@ def _fable_probe(used=0.01, resets="2026-10-31T13:00:00+00:00"):
 def test_fable_shows_apart_with_one_reset_when_both_weeks_share_it():
     status = usage.read_status(_status_json(week=2.0, week_resets=1_793_451_600))
     status.fable, status.fable_resets = 1.0, 1_793_451_600
-    text = usage.statusline_text(status, warn_at=0)
+    text = usage.statusline_text(status)
     assert text.endswith("· week 2% · fable 1% (resets " + text.rsplit("(resets ", 1)[1])
     assert text.count("resets") == 1
     status.fable_resets = 1_793_000_000
-    assert usage.statusline_text(status, warn_at=0).count("resets") == 2
+    assert usage.statusline_text(status).count("resets") == 2
 
 
 def test_fable_window_comes_from_the_last_fable_probe_while_fresh(state, freeze_clock):
@@ -323,7 +262,7 @@ def test_the_fable_probe_starts_at_most_once_per_refresh(state):
 def test_a_fable_reading_without_a_reset_keeps_the_weeks_reset():
     status = usage.read_status(_status_json(week=2.0, week_resets=1_793_451_600))
     status.fable, status.fable_resets = 1.0, None
-    text = usage.statusline_text(status, warn_at=0)
+    text = usage.statusline_text(status)
     assert "week 2% (resets " in text and text.endswith("fable 1%")
 
 

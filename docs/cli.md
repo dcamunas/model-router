@@ -54,8 +54,8 @@ router statusline
 # The models it may use, the judge for full verification, the read-only agent
 router config --models haiku,sonnet,opus --judge opus/xhigh --lean on
 
-# The context warning's threshold (0 = off), and the other profiles on the same account for `router usage`
-router config --context-warn 300k --usage-profiles ~/.claude-other
+# The other profiles signed in to the same account, which `router usage` reads too
+router config --usage-profiles ~/.claude-other
 
 # Is everything in place: claude, the plugin, the settings, limits, floors and state
 router doctor

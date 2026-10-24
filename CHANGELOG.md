@@ -2,6 +2,14 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.22.0] - 2026-10-24
+
+### Removed
+
+- The context warning (the UserPromptSubmit hook and `router config --context-warn`) and the status line's `⚠`
+  mark. Claude Code compacts on its own at the window you set with `/autocompact` or `autoCompactWindow`, which
+  does what the warning only suggested; the docs give the replay behind choosing that window.
+
 ## [0.21.2] - 2026-10-24
 
 ### Fixed

@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -341,7 +340,7 @@ def _cmd_statusline(_args: argparse.Namespace) -> int:
         fable = usage.fable_window()
         if fable is not None:
             status.fable, status.fable_resets = fable
-        print(usage.statusline_text(status, warn_at=usage.warn_threshold()), flush=True)
+        print(usage.statusline_text(status), flush=True)
         if not is_child():
             if logging_on():
                 usage.keep_sample(status)
@@ -775,8 +774,6 @@ def _cmd_config(args: argparse.Namespace) -> int:
         write_config(models=_model_names(args.models))
     if args.judge is not None:
         write_config(judge=parse_cell(args.judge).label)
-    if args.context_warn is not None:
-        write_config(context_warn=_token_count(args.context_warn))
     if args.usage_profiles is not None:
         listed = [] if args.usage_profiles.strip().lower() == "none" else [
             str(Path(p.strip()).expanduser().absolute()) for p in args.usage_profiles.split(",") if p.strip()]
@@ -786,26 +783,9 @@ def _cmd_config(args: argparse.Namespace) -> int:
     print(f"available models: {', '.join(MODELS[m].short for m in configured_models())}")
     print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
     print(f"read-only agent for reading tasks: {'off' if cfg.get('lean') is False else 'on'}")
-    warn = usage.warn_threshold()
-    print(f"context warning from: {usage.tokens(warn) + ' tokens' if warn else 'off'}"
-          + ("" if "context_warn" in cfg else " (default)"))
     print(f"profiles `router usage` reads: {', '.join(_home_relative(p) for p in _usage_profiles(None))}")
     print(f"(in {config_path()})")
     return 0
-
-
-def _token_count(text: str) -> int:
-    """Return a token count written as 300000, 300k or 1.2M; 0 turns the context warning off.
-
-    Raises:
-        ValueError: not a count.
-    """
-    raw = text.strip().lower().replace("_", "").replace(",", "")
-    scale = {"k": 1_000, "m": 1_000_000}.get(raw[-1:], 1)
-    value = float(raw[:-1] if scale > 1 else raw)
-    if not math.isfinite(value) or value < 0:
-        raise ValueError(f"not a token count: {text}")
-    return int(value * scale)
 
 
 def _model_names(models: str) -> list[str] | None:
@@ -893,8 +873,6 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
                     "to the read-only agent, which carries a fraction of the general agent's context (default on)")
-    sg.add_argument("--context-warn", metavar="TOKENS", help="warn once a session's context passes this many tokens, "
-                    "e.g. 300k (default), then 200k further up; 0 turns the warning off")
     sg.add_argument("--usage-profiles", metavar="DIR,DIR", help="other Claude profiles signed in to the same account, "
                     "which `router usage` reads too (they share its windows); none clears them")
     sg.set_defaults(func=_cmd_config)

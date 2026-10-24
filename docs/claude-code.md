@@ -94,8 +94,8 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
 
 - **Status line.** Claude Code gives the status line command the share of both windows already used and the size
   of the last turn's context, on every update and at no cost. `router statusline` shows them:
-  `ctx 412k/1M · 5h 22% · week 61% (resets Sat 15:00)`, with `⚠` and `/compact?` once the context passes the
-  warning threshold. Set it once in the profile's `settings.json`:
+  `ctx 412k/1M · 5h 22% · week 61% · fable 1% (resets Sat 15:00)`. Set it once in the profile's
+  `settings.json`:
 
   ```json
   "statusLine": {"type": "command", "command": "router statusline"}
@@ -109,9 +109,22 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
 - **Samples.** Each time a window or the context moves, the status line appends the numbers to
   `~/.claude/model-router/usage.jsonl`: the session id, the model, the context, both windows and their resets.
   It writes no text from the session.
-- **Warning.** The first time a session's context passes 300k, then 500k and 700k, the hook shows you one line
-  saying so, when you send a message. `router config --context-warn 400k` moves the threshold and `0` turns it
-  off. Nothing compacts on its own. No hook can run `/compact`, and only you know whether the task allows it.
+- **Compacting earlier.** That part is Claude Code's own: `/autocompact 400k`, or `"autoCompactWindow": 400000` in
+  `settings.json`. Without it, models with a 1M window compact at about 967k. Replaying two weeks of one person's
+  80 main conversations under each window gave this, counting the tokens each call reads again:
+
+  | Window | Tokens read | Compactions per session |
+  |---|---|---|
+  | 967k (default) | as today | none added |
+  | 700k | -19 % | 0.3 |
+  | 500k | -32 % | 0.7 |
+  | 400k | -42 % | 1.1 |
+  | 300k | -50 % | 2.0 |
+  | 200k | -62 % | 4.5 |
+
+  Below 400k each extra compaction saves less than half as much as the ones above it, and every compaction
+  summarises away some detail; 400k is where that person set it. The replay keeps each session's growth after a
+  compaction as it was, so it does not count files read again because the summary dropped them.
 - **What spent the windows.** `router usage` adds up the transcripts of the last seven days (`--days`): tokens by
   kind, main conversation against subagents, by model, and the main conversation's calls by context size. The
   windows belong to the account, so when two profiles share one, `router config --usage-profiles ~/.claude-other`

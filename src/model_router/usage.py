@@ -1,10 +1,10 @@
-"""Where the account's usage windows go: the status line, the context warning and `router usage`.
+"""Where the account's usage windows go: the status line and `router usage`.
 
 Claude Code hands the status line command, on every update, the share of the account's five-hour and seven-day
 windows already used (`rate_limits`) and the size of the last turn's context (`context_window`). `router
-statusline` prints them in one line and keeps a sample in `usage.jsonl` whenever they move: numbers only, never
-text. The hook's UserPromptSubmit warns once per band when a session's context grows past the threshold, since
-every turn reads the whole context again. `router usage` adds up what the transcripts of one or more profiles
+statusline` prints them in one line, with Fable's own week from a background probe, and keeps a sample in
+`usage.jsonl` whenever they move: numbers only, never text. Keeping the context small is Claude Code's own
+`autoCompactWindow`. `router usage` adds up what the transcripts of one or more profiles
 spent (the windows belong to the account, which several profiles may share) and fits which weighting of those
 tokens best follows how the seven-day window rose: the one that prices every point of the week the same.
 """
@@ -25,19 +25,15 @@ from typing import Any  # Any: status line input, transcript entries and state f
 
 from . import clock, limits
 from .catalog import MODELS, SHORT_TO_ID, Usage, configured_models, cost_usd
-from .paths import append_jsonl, home, locked, read_config, read_json, read_jsonl, replace_file
+from .paths import append_jsonl, home, locked, read_json, read_jsonl, replace_file
 
 USAGE_LOG = "usage.jsonl"  # the status line's samples of the windows and the context
-STATE_FILE = "usage-state.json"  # per session: the last sample kept and the highest context band warned about
-DEFAULT_WARN = 300_000  # context tokens from which a session is warned
-BAND_STEP = 200_000  # then again at each step above it: 300k, 500k, 700k
-BANDS_WARNED = 3
+STATE_FILE = "usage-state.json"  # per session: the last sample kept; and when the last Fable probe started
 SAMPLE_SECONDS = 30.0  # at most one sample per session in this time, unless a window moved
 CONTEXT_STEP = 10_000  # a context change smaller than this is not worth a sample on its own
 STATE_DAYS = 7  # sessions older than this leave the state file
 MAX_LOG_BYTES = 4_000_000  # past this the usage log keeps only its newer half (a few weeks of samples)
 SAMPLES_TAIL_BYTES = 8_000_000  # the end of each usage log `router usage` reads
-TAIL_BYTES = 262_144  # the end of a transcript read for the last turn's context
 REPORT_BANDS = (0, 100_000, 200_000, 400_000, 700_000)  # context bands of the main conversation's calls
 MAX_GAP_SECONDS = 2 * 3600  # two samples further apart than this are not one interval of the fit
 MIN_INTERVALS = 20  # fewer intervals than this give no weighting
@@ -92,15 +88,14 @@ def read_status(data: dict[str, Any]) -> Status:
                   seven_day=_float(week.get("used_percentage")), seven_day_resets=_int(week.get("resets_at")))
 
 
-def statusline_text(status: Status, *, warn_at: int) -> str:
+def statusline_text(status: Status) -> str:
     """Return the status line: the context, then the five-hour and seven-day windows when Claude Code sends them,
-    with a mark when the context is past `warn_at` (0: never).
+    and Fable's own week when the last Fable probe saw it.
     """
     parts = []
     if status.context is not None:
         size = f"/{tokens(status.window_size)}" if status.window_size else ""
-        over = bool(warn_at) and status.context >= warn_at
-        parts.append(f"{'⚠ ' if over else ''}ctx {tokens(status.context)}{size}{' · /compact?' if over else ''}")
+        parts.append(f"ctx {tokens(status.context)}{size}")
     if status.five_hour is not None:
         parts.append(f"5h {status.five_hour:.0f}%")
     week_reset = status.seven_day_resets
@@ -223,71 +218,6 @@ def _start_fable_probe() -> None:
     subprocess.Popen([sys.executable, "-m", "model_router.cli", "limits", "--check", FABLE],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)
-
-
-# ---- the context warning --------------------------------------------------------------------------------------
-
-
-def warn_threshold() -> int:
-    """Return the context size from which a session is warned (`router config --context-warn`; 0 = never)."""
-    value = read_config().get("context_warn")
-    return max(0, value) if isinstance(value, int) and not isinstance(value, bool) else DEFAULT_WARN
-
-
-def bands(threshold: int) -> tuple[int, ...]:
-    """Return the context sizes a session is warned at: the threshold and BAND_STEP above it, BANDS_WARNED times."""
-    return tuple(threshold + i * BAND_STEP for i in range(BANDS_WARNED)) if threshold > 0 else ()
-
-
-def last_context(transcript: Path) -> int | None:
-    """Return the context of the main conversation's last call (input + cache read + cache write), read from the end
-    of its transcript; None when no call with usage is there. Subagent entries are skipped.
-    """
-    for entry in reversed(read_jsonl(transcript, tail_bytes=TAIL_BYTES)):
-        message = entry.get("message")
-        if entry.get("isSidechain") or not isinstance(message, dict) or message.get("role") != "assistant":
-            continue
-        usage = message.get("usage")
-        if isinstance(usage, dict):
-            return sum(_int(usage.get(k)) or 0 for k in ("input_tokens", "cache_read_input_tokens",
-                                                         "cache_creation_input_tokens"))
-    return None
-
-
-def context_warning(event: dict[str, Any], *, now: float | None = None,
-                    state_dir: Path | None = None) -> dict[str, Any] | None:
-    """Return the hook's answer to a UserPromptSubmit: a message for the person the first time the session's
-    context passes each band, else None. The state file remembers the highest band warned per session, and forgets
-    it once the context is back under the first band (a /compact), so a session that grows again is warned again.
-    """
-    marks = bands(warn_threshold())
-    transcript = event.get("transcript_path")
-    if not marks or not transcript:
-        return None
-    context = last_context(Path(str(transcript)))
-    if context is None:
-        return None
-    reached = [b for b in marks if context >= b]
-    session = str(event.get("session_id") or "")
-    moment = time.time() if now is None else now
-    state_path = (state_dir or home()) / STATE_FILE
-    with locked(state_path):
-        state = read_json(state_path)
-        sessions = _dict(state.get("sessions"))
-        own = _dict(sessions.get(session))
-        warned = _int(own.get("warned")) or 0
-        if not reached:  # below every band: after a /compact the bands are warned about again
-            if warned:
-                sessions[session] = {**own, "warned": 0, "seen": moment}
-                _save_state(state_path, state, sessions, now=moment)
-            return None
-        if reached[-1] <= warned:
-            return None
-        sessions[session] = {**own, "warned": reached[-1], "seen": moment}
-        _save_state(state_path, state, sessions, now=moment)
-    return {"systemMessage": f"router: this session's context is {tokens(context or 0)} tokens, and every turn reads "
-                             "all of it again from the account's usage windows. /compact, or a new session, when the "
-                             "task allows (`router config --context-warn 0` turns this notice off)."}
 
 
 # ---- what the transcripts spent -------------------------------------------------------------------------------

@@ -16,8 +16,8 @@ profiles on one machine share no decisions, measurements, limits or settings.
   signature of sixteen numbers (no text) and the project's path, read from the transcript Claude Code
   already keeps on your disk. A project's tuning goes to `~/.claude/model-router/projects/`.
 - The status line (`router statusline`) appends to `~/.claude/model-router/usage.jsonl` the numbers Claude Code
-  gives it: the session id, the model, the context size and both usage windows with their resets. The context
-  warning keeps, per session, the highest threshold it warned about in `usage-state.json`. `router usage` reads
+  gives it: the session id, the model, the context size and both usage windows with their resets. It keeps, per
+  session, the last sample in `usage-state.json`. `router usage` reads
   the transcripts of the profiles it is given to count tokens and keeps nothing. When Fable is among the models,
   the status line also sends the word "ok" to Fable through `claude -p`, on your account, at most every 30 minutes,
   to read Fable's weekly window into `limits.json`.
