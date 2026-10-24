@@ -14,6 +14,8 @@ from __future__ import annotations
 import bisect
 import json
 import math
+import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -21,8 +23,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any  # Any: status line input, transcript entries and state files are decoded JSON
 
-from . import clock
-from .catalog import MODELS, Usage, cost_usd
+from . import clock, limits
+from .catalog import MODELS, SHORT_TO_ID, Usage, configured_models, cost_usd
 from .paths import append_jsonl, home, locked, read_config, read_json, read_jsonl, replace_file
 
 USAGE_LOG = "usage.jsonl"  # the status line's samples of the windows and the context
@@ -41,6 +43,10 @@ MAX_GAP_SECONDS = 2 * 3600  # two samples further apart than this are not one in
 MIN_INTERVALS = 20  # fewer intervals than this give no weighting
 RESET_TOLERANCE = 120  # seconds: two samples name the same weekly reset when their reset times are this close
 K = 1000
+FABLE = "fable"
+FABLE_WINDOW = "seven_day_overage_included"  # the weekly window of the models outside the all-models one: Fable
+FABLE_REFRESH_SECONDS = 1800  # a background Fable probe at most this often per profile, while a status line runs
+FABLE_STALE_SECONDS = 6 * 3600  # an older reading of Fable's window is not shown
 
 
 # ---- the status line ------------------------------------------------------------------------------------------
@@ -58,6 +64,8 @@ class Status:
     five_hour_resets: int | None = None  # epoch seconds
     seven_day: float | None = None
     seven_day_resets: int | None = None
+    fable: float | None = None  # Fable's own weekly window, from the last Fable probe (not in Claude Code's JSON)
+    fable_resets: int | None = None
 
     def sample(self, at: float) -> dict[str, Any]:
         """Return the sample kept in the log: these numbers and the moment, never any text of the session."""
@@ -65,7 +73,7 @@ class Status:
                 "session": self.session, "model": self.model, "context": self.context,
                 "window_size": self.window_size, "five_hour": self.five_hour,
                 "five_hour_resets": self.five_hour_resets, "seven_day": self.seven_day,
-                "seven_day_resets": self.seven_day_resets}
+                "seven_day_resets": self.seven_day_resets, "fable": self.fable, "fable_resets": self.fable_resets}
 
 
 def read_status(data: dict[str, Any]) -> Status:
@@ -95,10 +103,20 @@ def statusline_text(status: Status, *, warn_at: int) -> str:
         parts.append(f"{'⚠ ' if over else ''}ctx {tokens(status.context)}{size}{' · /compact?' if over else ''}")
     if status.five_hour is not None:
         parts.append(f"5h {status.five_hour:.0f}%")
+    same = status.fable is None or _same_reset(status.seven_day_resets, status.fable_resets)
     if status.seven_day is not None:
-        reset = f" (resets {_when(status.seven_day_resets)})" if status.seven_day_resets else ""
+        reset = f" (resets {_when(status.seven_day_resets)})" if status.seven_day_resets and not same else ""
         parts.append(f"week {status.seven_day:.0f}%{reset}")
+    if status.fable is not None:
+        parts.append(f"fable {status.fable:.0f}%")
+    resets = status.fable_resets if status.fable is not None else status.seven_day_resets
+    if resets and (status.fable is not None or status.seven_day is not None):
+        parts[-1] += f" (resets {_when(resets)})"
     return " · ".join(parts)
+
+
+def _same_reset(a: int | None, b: int | None) -> bool:
+    return a is None or b is None or abs(a - b) <= RESET_TOLERANCE
 
 
 def keep_sample(status: Status, *, now: float | None = None, state_dir: Path | None = None) -> bool:
@@ -142,7 +160,7 @@ def _prune_log(path: Path) -> None:
 def _worth_keeping(status: Status, last: dict[str, Any], *, since: float) -> bool:
     if not last:
         return True
-    windows = ("five_hour", "seven_day", "five_hour_resets", "seven_day_resets")
+    windows = ("five_hour", "seven_day", "five_hour_resets", "seven_day_resets", "fable", "fable_resets")
     moved = any(getattr(status, k) != last.get(k) for k in windows)
     context_moved = abs((status.context or 0) - (_int(last.get("context")) or 0)) >= CONTEXT_STEP
     changed = moved or status.context != last.get("context")
@@ -153,6 +171,59 @@ def _save_state(path: Path, state: dict[str, Any], sessions: dict[str, Any], *, 
     cutoff = now - STATE_DAYS * 86400
     kept = {k: v for k, v in sessions.items() if isinstance(v, dict) and float(v.get("seen") or 0) >= cutoff}
     replace_file(path, json.dumps({**state, "sessions": kept}, ensure_ascii=False) + "\n")
+
+
+# ---- Fable's own weekly window ---------------------------------------------------------------------------------
+
+
+def fable_available() -> bool:
+    """Say whether this installation may use Fable (`router config --models`): only then is its window shown."""
+    return SHORT_TO_ID.get(FABLE) in configured_models()
+
+
+def fable_window(now: datetime | None = None) -> tuple[float, int | None] | None:
+    """Return Fable's own weekly window, which Claude Code does not give the status line: percent used and reset
+    (epoch seconds), from the last Fable probe in `limits.json`; 100 % until its reset when Fable is limited. None
+    when this installation has no Fable or no probe saw the window in the last FABLE_STALE_SECONDS.
+    """
+    if not fable_available():
+        return None
+    moment = now or clock.now()
+    held = limits.active(moment).get(FABLE)
+    if held is not None and held.until is not None:
+        return 100.0, int(held.until.timestamp())
+    window = _dict(limits.windows().get(FABLE_WINDOW))
+    seen = clock.parse_moment(window.get("seen") or limits.checked())
+    used = _float(window.get("utilization"))
+    if used is None or seen is None or (moment - seen).total_seconds() > FABLE_STALE_SECONDS:
+        return None
+    reset = clock.parse_moment(window.get("resets_at"))
+    return used * 100, int(reset.timestamp()) if reset else None
+
+
+def refresh_fable(*, now: float | None = None, state_dir: Path | None = None,
+                  start: Callable[[], None] | None = None) -> bool:
+    """Start a background Fable probe (`router limits --check fable`: one-word answer, a sliver of Fable's window)
+    when the profile has not started one in FABLE_REFRESH_SECONDS and Fable is available; return whether it did.
+    The status line never waits for it: the next update shows what it found.
+    """
+    if not fable_available():
+        return False
+    moment = time.time() if now is None else now
+    state_path = (state_dir or home()) / STATE_FILE
+    with locked(state_path):
+        state = read_json(state_path)
+        if moment - (_float(state.get("fable_probe_at")) or 0.0) < FABLE_REFRESH_SECONDS:
+            return False
+        replace_file(state_path, json.dumps({**state, "fable_probe_at": moment}, ensure_ascii=False) + "\n")
+    (start or _start_fable_probe)()
+    return True
+
+
+def _start_fable_probe() -> None:
+    subprocess.Popen([sys.executable, "-m", "model_router.cli", "limits", "--check", FABLE],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
 
 
 # ---- the context warning --------------------------------------------------------------------------------------

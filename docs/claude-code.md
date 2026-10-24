@@ -102,6 +102,10 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
   ```
 
   If `router` is not on the status line's PATH, give the full path of `bin/router` in the plugin's folder.
+- **Fable's own week.** Fable has a weekly window of its own, the "Current week (Fable)" row of `/usage`, which
+  Claude Code does not hand the status line. Only a call to Fable reports it (as `seven_day_overage_included`), so
+  while a status line runs, the router asks Fable for one word at most every 30 minutes, in the background, and
+  shows `fable 1%` next to the week. Leave Fable out of `router config --models` and it neither asks nor shows.
 - **Samples.** Each time a window or the context moves, the status line appends the numbers to
   `~/.claude/model-router/usage.jsonl`: the session id, the model, the context, both windows and their resets.
   It writes no text from the session.
@@ -225,7 +229,8 @@ router config --lean off     # keep every subagent on the agent Claude chose (`-
 hook cannot do: verify a subagent's result, escalate, and send text-only subtasks through `router
 run`, which carries no session context at all. A launch takes the hook about 50 milliseconds, and the
 hooks call no API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
-word (a `claude -p` call of up to 30 seconds) to learn its reset. They block only a launch that names a
+word (a `claude -p` call of up to 30 seconds) to learn its reset. The status line, when you set it, asks Fable for one
+word at most every 30 minutes, in the background, to read Fable's weekly window. They block only a launch that names a
 model over its limit; on any error they exit with one line on stderr. Agents defined in `.claude/agents/*.md` and forks are
 left alone; they are still measured. A session opened before a plugin update keeps routing with the
 environment the update installed, and never puts the older version back.

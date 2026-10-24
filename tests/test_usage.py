@@ -259,3 +259,62 @@ def test_usage_prints_the_tables_and_asks_for_samples(tmp_path, capsys, freeze_c
     assert main(["usage", "--profile", str(tmp_path), "--days", "2"]) == 0
     out = capsys.readouterr().out
     assert "cache read" in out and "400k-700k" in out and "not enough samples yet" in out
+
+
+# ---- Fable's own weekly window --------------------------------------------------------------------------------
+
+
+def _fable_probe(used=0.01, resets="2026-10-31T13:00:00+00:00"):
+    from model_router.limits import Probe
+
+    return Probe("allowed", windows={"five_hour": {"utilization": 0.0, "resets_at": "2026-10-24T19:30:00+00:00"},
+                                     "seven_day": {"utilization": 0.02, "resets_at": resets},
+                                     usage.FABLE_WINDOW: {"utilization": used, "resets_at": resets}})
+
+
+def test_fable_shows_apart_with_one_reset_when_both_weeks_share_it():
+    status = usage.read_status(_status_json(week=2.0, week_resets=1_793_451_600))
+    status.fable, status.fable_resets = 1.0, 1_793_451_600
+    text = usage.statusline_text(status, warn_at=0)
+    assert text.endswith("· week 2% · fable 1% (resets " + text.rsplit("(resets ", 1)[1])
+    assert text.count("resets") == 1
+    status.fable_resets = 1_793_000_000
+    assert usage.statusline_text(status, warn_at=0).count("resets") == 2
+
+
+def test_fable_window_comes_from_the_last_fable_probe_while_fresh(state, freeze_clock):
+    from model_router import limits
+
+    freeze_clock(T0)
+    limits.record_check("fable", _fable_probe())
+    assert usage.fable_window(T0 + timedelta(hours=1)) == (1.0, int(datetime(2026, 10, 31, 13, tzinfo=UTC).timestamp()))
+    limits.record_check("haiku", limits.Probe("allowed", windows={"seven_day": {"utilization": 0.03}}))
+    assert usage.fable_window(T0 + timedelta(hours=1)) is not None  # a Haiku probe does not wipe Fable's window
+    assert usage.fable_window(T0 + timedelta(hours=7)) is None  # too old to show
+
+
+def test_fable_is_not_shown_or_probed_without_fable(state, freeze_clock):
+    from model_router import limits
+
+    freeze_clock(T0)
+    limits.record_check("fable", _fable_probe())
+    write_config(models=["haiku", "sonnet", "opus"])
+    assert usage.fable_window(T0) is None
+    assert not usage.refresh_fable(now=1000.0, start=lambda: None)
+
+
+def test_a_limited_fable_shows_full_until_its_reset(state, freeze_clock):
+    from model_router import limits
+
+    freeze_clock(T0)
+    until = T0 + timedelta(days=2)
+    limits.record_check("fable", limits.Probe("rejected", until=until, window=usage.FABLE_WINDOW))
+    assert usage.fable_window(T0) == (100.0, int(until.timestamp()))
+
+
+def test_the_fable_probe_starts_at_most_once_per_refresh(state):
+    started = []
+    assert usage.refresh_fable(now=10_000.0, start=lambda: started.append(1))
+    assert not usage.refresh_fable(now=10_000.0 + usage.FABLE_REFRESH_SECONDS - 1, start=lambda: started.append(1))
+    assert usage.refresh_fable(now=10_000.0 + usage.FABLE_REFRESH_SECONDS, start=lambda: started.append(1))
+    assert started == [1, 1]

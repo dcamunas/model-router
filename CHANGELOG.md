@@ -2,6 +2,19 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.21.1] - 2026-10-24
+
+### Added
+
+- Fable's weekly window in the status line (`fable 1%`), apart from the all-models week. Claude Code does not give
+  it to the status line and only a call to Fable reports it, so while a status line runs the router asks Fable for
+  one word at most every 30 minutes, in the background. Only when Fable is among `router config --models`.
+
+### Changed
+
+- `limits.json` keeps every window the probes have seen, each with the moment it was seen, instead of only the
+  last probe's: a probe of Haiku no longer wipes Fable's week. `router limits` shows that moment per window.
+
 ## [0.21.0] - 2026-10-24
 
 On a subscription the limit is the account's usage windows, and the main conversation's context spends most of

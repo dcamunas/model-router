@@ -321,10 +321,10 @@ def _cmd_limits(args: argparse.Namespace) -> int:
         print("no model is over its usage limit")
     seen = limits.windows()
     if seen:
-        rows = [[name, f"{float(w.get('utilization') or 0):.0%}", _local(w.get("resets_at"))]
-                for name, w in sorted(seen.items())]
-        print(f"\naccount windows (as of {_local(limits.checked())})")
-        print(table(["window", "used", "resets"], rows))
+        rows = [[name, f"{float(w.get('utilization') or 0):.0%}", _local(w.get("resets_at")),
+                 _local(w.get("seen") or limits.checked())] for name, w in sorted(seen.items())]
+        print("\naccount windows (seven_day_overage_included is Fable's own week)")
+        print(table(["window", "used", "resets", "seen"], rows))
     return 0
 
 
@@ -338,9 +338,13 @@ def _cmd_statusline(_args: argparse.Namespace) -> int:
         return 0
     try:
         status = usage.read_status(data if isinstance(data, dict) else {})
+        fable = usage.fable_window()
+        if fable is not None:
+            status.fable, status.fable_resets = fable
         print(usage.statusline_text(status, warn_at=usage.warn_threshold()), flush=True)
         if logging_on() and not is_child():
             usage.keep_sample(status)
+            usage.refresh_fable()
     except Exception:  # noqa: BLE001 - a status line never fails; the next update tries again
         return 0
     return 0

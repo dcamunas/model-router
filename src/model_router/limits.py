@@ -111,7 +111,9 @@ def _limit(name: str, entry: object) -> Limit | None:
 
 
 def windows() -> dict[str, dict[str, Any]]:
-    """Return the account's windows as the last probe saw them: use from 0 to 1 and the reset, by window name."""
+    """Return the account's windows as the probes saw them: use from 0 to 1, the reset and when it was seen, by
+    window name. A window only some models report (Fable's weekly one) keeps the moment its model was last asked.
+    """
     data = read_json(limits_path()).get("windows")
     return data if isinstance(data, dict) else {}
 
@@ -156,9 +158,12 @@ def _store(model: str, probe: Probe, *, hold_unknown: bool) -> Limit | None:
         elif hold_unknown and not (known is not None and known.until is not None and known.active(now)):
             models[key] = _entry(None, window=probe.window or "unknown", now=now)
         data["models"] = {k: v for k, v in models.items() if _worth_keeping(_limit(k, v), now)}
-        if probe.windows:
-            data["windows"] = probe.windows
-            data["checked"] = now.isoformat(timespec="seconds")
+        if probe.windows:  # merged: a probe of one model does not see another model's own window
+            seen = now.isoformat(timespec="seconds")
+            stored_windows = data.get("windows")
+            old: dict[str, Any] = stored_windows if isinstance(stored_windows, dict) else {}
+            data["windows"] = {**old, **{k: {**v, "seen": seen} for k, v in probe.windows.items()}}
+            data["checked"] = seen
         replace_file(path, json.dumps(data, indent=1))
     held = _limit(key, data["models"].get(key))
     return held if held is not None and held.active(now) else None
