@@ -220,3 +220,15 @@ def test_a_profile_agent_without_a_model_is_routed_too(tmp_path):
     _agent_file(claude_profile() / "agents", "helper", "")
     updated, _ = decide({"subagent_type": "helper", "prompt": "Write the release notes"}, cwd=str(tmp_path))
     assert updated is not None and updated["subagent_type"] == "helper" and updated["model"]
+
+
+def test_a_custom_agent_is_found_by_the_name_in_its_frontmatter(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    folder = repo / ".claude" / "agents"
+    folder.mkdir(parents=True)
+    (folder / "data-reviewer-v2.md").write_text("---\nname: data-reviewer\ndescription: x\n---\nReview.\n")
+    (folder / "data-reviewer.md").write_text("---\nname: something-else\nmodel: opus\n---\n")
+    updated, record = decide({"subagent_type": "data-reviewer", "prompt": "Review the SQL"}, cwd=str(repo))
+    assert updated is not None and updated["subagent_type"] == "data-reviewer" and record["agent"] == "data-reviewer"
+    assert decide({"subagent_type": "something-else", "prompt": "Review the SQL"}, cwd=str(repo))[0] is None  # pinned
