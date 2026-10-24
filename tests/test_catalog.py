@@ -1,6 +1,6 @@
 import pytest
 
-from model_router.catalog import MODELS, Cell, Usage, cost_usd, ladder, lattice, parse_cell, step_down, step_up
+from model_router.catalog import MODELS, Cell, Usage, cost_usd, lattice, parse_cell, step_down, step_up
 
 
 def test_prices_match_catalogue_rates():
@@ -46,11 +46,6 @@ def test_escalation_prefers_frontier_low_effort_over_lower_tier_max_effort():
     assert step_up(parse_cell("opus/low"), cells) == parse_cell("fable/low")
     assert step_up(parse_cell("fable/low"), cells) == parse_cell("fable/xhigh")
     assert step_up(parse_cell("fable/xhigh"), cells) is None
-
-
-def test_ladder_stops_when_nothing_is_more_capable():
-    steps = ladder(parse_cell("opus/high"), lattice(), steps=6)
-    assert [c.label for c in steps] == ["opus/high", "fable/low", "fable/xhigh"]
 
 
 def test_step_down_gives_up_little_capability_for_a_real_saving():

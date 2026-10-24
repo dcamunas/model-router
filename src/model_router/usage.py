@@ -4,9 +4,9 @@ Claude Code hands the status line command, on every update, the share of the acc
 windows already used (`rate_limits`) and the size of the last turn's context (`context_window`). `router
 statusline` prints them in one line, with Fable's own week from a background probe, and keeps a sample in
 `usage.jsonl` whenever they move: numbers only, never text. Keeping the context small is Claude Code's own
-`autoCompactWindow`. `router usage` adds up what the transcripts of one or more profiles
-spent (the windows belong to the account, which several profiles may share) and fits which weighting of those
-tokens best follows how the seven-day window rose: the one that prices every point of the week the same.
+`autoCompactWindow`. `router usage` reads the calls in the transcripts of one or more profiles (the windows
+belong to the account, which several profiles may share) and fits which weighting of those tokens best follows how
+the seven-day window rose: the one that prices every point of the week the same.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ CONTEXT_STEP = 10_000  # a context change smaller than this is not worth a sampl
 STATE_DAYS = 7  # sessions older than this leave the state file
 MAX_LOG_BYTES = 4_000_000  # past this the usage log keeps only its newer half (a few weeks of samples)
 SAMPLES_TAIL_BYTES = 8_000_000  # the end of each usage log `router usage` reads
-REPORT_BANDS = (0, 100_000, 200_000, 400_000, 700_000)  # context bands of the main conversation's calls
 MAX_GAP_SECONDS = 2 * 3600  # two samples further apart than this are not one interval of the fit
 MIN_INTERVALS = 20  # fewer intervals than this give no weighting
 RESET_TOLERANCE = 120  # seconds: two samples name the same weekly reset when their reset times are this close
@@ -224,50 +223,21 @@ def _start_fable_probe() -> None:
 
 
 @dataclass
-class Tally:
-    """Tokens of a set of calls, by kind, with the number of calls."""
-
-    calls: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-
-    def add(self, usage: Usage) -> None:
-        """Count one call's usage."""
-        self.calls += 1
-        self.input_tokens += usage.input_tokens
-        self.output_tokens += usage.output_tokens
-        self.cache_read_tokens += usage.cache_read_tokens
-        self.cache_write_tokens += usage.cache_write_tokens
-
-    @property
-    def total(self) -> int:
-        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
-
-
-@dataclass
 class Call:
-    """One API call found in a transcript: when, on which model, its usage, and whether a subagent made it."""
+    """One API call found in a transcript: when, on which model, and its usage."""
 
     at: float  # epoch seconds
     model_id: str
     usage: Usage
-    subagent: bool
 
 
 @dataclass
 class Spent:
-    """What the transcripts of some profiles spent in a period: per part (main, subagents) and model, per context
-    band of the main conversation, and every call in time order for the fit.
-    """
+    """The calls the transcripts of some profiles made in a period, in time order, for the fit."""
 
     profiles: list[Path]
     since: datetime
-    parts: dict[str, dict[str, Tally]] = field(default_factory=dict)
-    bands: dict[int, Tally] = field(default_factory=dict)
     calls: list[Call] = field(default_factory=list)
-    unknown_models: int = 0
 
 
 def model_id(name: str) -> str | None:
@@ -279,7 +249,7 @@ def model_id(name: str) -> str | None:
     return next((mid for mid, spec in MODELS.items() if spec.claude and spec.short in name.lower()), None)
 
 
-def transcript_calls(path: Path, *, subagent: bool, seen: set[str] | None = None) -> Iterator[Call]:
+def transcript_calls(path: Path, *, seen: set[str] | None = None) -> Iterator[Call]:
     """Yield the calls of one transcript, once per message id (a transcript repeats a message's usage on every
     content block), skipping entries without usage; a model outside the catalogue is yielded with model_id ''.
     `seen` carries the ids already counted across transcripts: a resumed or forked session copies earlier messages,
@@ -298,12 +268,13 @@ def transcript_calls(path: Path, *, subagent: bool, seen: set[str] | None = None
         if key in seen:
             continue
         seen.add(key)
-        yield Call(moment.timestamp(), model_id(str(message.get("model") or "")) or "", _usage(usage),
-                   subagent or bool(entry.get("isSidechain")))
+        yield Call(moment.timestamp(), model_id(str(message.get("model") or "")) or "", _usage(usage))
 
 
 def spent(profiles: list[Path], *, since: datetime) -> Spent:
-    """Add up the calls in every transcript of `profiles` (their `projects/` folders) made since `since`."""
+    """Collect the calls in every transcript of `profiles` (their `projects/` folders) made since `since`, each once,
+    skipping models outside the catalogue.
+    """
     out = Spent(profiles=profiles, since=since)
     cutoff = since.timestamp()
     seen: set[str] = set()
@@ -314,24 +285,11 @@ def spent(profiles: list[Path], *, since: datetime) -> Spent:
                     continue
             except OSError:
                 continue
-            for call in transcript_calls(path, subagent="subagents" in path.parts, seen=seen):
-                if call.at < cutoff:
-                    continue
-                if not call.model_id:
-                    out.unknown_models += 1
-                    continue
-                out.calls.append(call)
-                part = "subagents" if call.subagent else "main"
-                out.parts.setdefault(part, {}).setdefault(MODELS[call.model_id].short, Tally()).add(call.usage)
-                if not call.subagent:
-                    out.bands.setdefault(_band(call.usage), Tally()).add(call.usage)
+            for call in transcript_calls(path, seen=seen):
+                if call.at >= cutoff and call.model_id:
+                    out.calls.append(call)
     out.calls.sort(key=lambda c: c.at)
     return out
-
-
-def _band(usage: Usage) -> int:
-    context = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
-    return REPORT_BANDS[bisect.bisect_right(REPORT_BANDS, context) - 1]
 
 
 # ---- the fit: which weighting of tokens moves the seven-day window ---------------------------------------------

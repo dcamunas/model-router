@@ -1,5 +1,5 @@
-"""Backend without an API key: Claude through the `claude` CLI in headless mode (`claude -p`), so
-the router runs on a Claude.ai subscription. Each completion is one short-lived CLI process with a
+"""Claude through the `claude` CLI in headless mode (`claude -p`), on the Claude.ai subscription of the profile
+in use. Each completion is one short-lived CLI process with a
 fresh context, the cell's model and effort, no MCP servers, a minimal system prompt (without `--system-prompt`
 the CLI sends its own prompt of about 100K tokens on every call) and no tools unless the caller names some.
 
@@ -10,7 +10,7 @@ What differs from the API backend (`client.LiveClient`):
   as `stop_reason == "refusal"`.
 * Structured outputs go through `--json-schema` with the Pydantic model's JSON schema; the CLI
   validates and returns `structured_output`.
-* Dollar amounts in the ledger are list-price equivalents: a subscription is billed by quota, not
+* Dollar amounts priced from its usage are list-price equivalents: a subscription is billed by quota, not
   per token, so read them as a proxy for quota consumption.
 
 Profile: the subprocess runs on the Claude profile in use ($CLAUDE_CONFIG_DIR, else ~/.claude), the one whose
@@ -76,7 +76,7 @@ class CliClient:
     ) -> None:
         path = shutil.which(binary)
         if path is None:
-            raise ClientUnavailableError(f"cannot find the executable {binary!r}; install Claude Code or pass --backend api")
+            raise ClientUnavailableError(f"cannot find the executable {binary!r}; install Claude Code")
         self.binary = path
         self.config_dir = config_dir or claude_profile()
         self.timeout = timeout

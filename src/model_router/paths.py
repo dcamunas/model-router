@@ -1,9 +1,9 @@
 """Where the router keeps its state, how it reads and writes it, and the environment variables it reads.
 
 State lives in the Claude profile in use, `<profile>/model-router`, where the profile is $CLAUDE_CONFIG_DIR or
-~/.claude. Two profiles on one machine never share decisions, measurements, limits or settings, and `router run`
-calls Claude on the profile in use. `config.json` holds what `router config` sets for that profile: the models
-this installation may route to, the judge cell and the read-only agent switch. The router's own environment
+~/.claude. Two profiles on one machine never share decisions, measurements, limits or settings. `config.json` holds
+what `router config` sets for that profile: the models this installation may route to, the judge cell of the
+cross-check, the read-only agent switch and the profiles `router usage` reads. The router's own environment
 variables are named here, except MODEL_ROUTER_SHARE, which belongs to `shared.py`.
 """
 
@@ -19,7 +19,6 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any  # Any: decoded JSON (config.json, logs)
 
-MAIN_LEDGER = "ledger.jsonl"  # the ledger of `router run` and `router judge`
 DECISION_LOG = "hook.jsonl"  # the hook's routing decisions
 HOOK_ENV = "MODEL_ROUTER_HOOK"  # "0" disables the Claude Code hook without uninstalling it
 HOOK_LOG_ENV = "MODEL_ROUTER_HOOK_LOG"  # "0" stops the hook's decisions log, its measurements and all learning

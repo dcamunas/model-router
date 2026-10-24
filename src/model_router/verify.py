@@ -1,25 +1,17 @@
-"""Verification by risk. Order of trust: the task's programmatic checker (free, authoritative when it fails),
-then one judge model with a structured verdict, in a fresh context. `light` uses the nearest other model at
-low effort; `full` uses the configured judge cell on another model than the worker, a blind cross-check.
-Every judge's own verdict is kept in the ledger.
-
-`ask` is the building block: one judge, one prompt, one verdict. Another package can compose more judges on it;
-the router itself asks one.
+"""One judge model, one structured verdict, in a fresh context. `ask` is the building block: one judge, one prompt,
+one verdict. Another package (model-tribunal) composes more judges on it; the router itself asks none.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any  # Any: verdicts are written out as JSON
+from typing import Any  # Any: verdicts are written out as JSON
 
 from pydantic import BaseModel, Field
 
 from .catalog import Cell, Usage, cost_usd
 from .client import ClaudeClient
 from .task import Task
-
-if TYPE_CHECKING:
-    from .policy import Policy
 
 
 class Verdict(BaseModel):
@@ -91,31 +83,6 @@ class VerifyResult:
     confidence: float | None = None
     judges: list[Cell] = field(default_factory=list)
     verdicts: list[JudgeVerdict] = field(default_factory=list)
-
-
-class Verifier:
-    """Verifies answers by mode: the task's checker first, then the judge cell the policy chooses."""
-
-    def __init__(self, client: ClaudeClient, policy: Policy) -> None:
-        self.client = client
-        self.policy = policy
-
-    def verify(self, task: Task, answer: str, *, mode: str, worker: Cell) -> VerifyResult:
-        """Verify `answer` to `task` in `mode` (none, light, full); `worker` is the cell that answered, so the judge
-        is chosen relative to it.
-        """
-        if task.checker is not None:
-            check = task.checker(answer)
-            if not check.passed:
-                return VerifyResult(False, "checker", check.reason)
-            if mode == "none":
-                return VerifyResult(True, "checker", check.reason)
-        elif mode == "none":
-            return VerifyResult(True, "none", "no verification requested")
-        judges = self.policy.judges_for(worker, mode)
-        if not judges:
-            return VerifyResult(True, "none", "no verifier cell")
-        return ask(self.client, task, answer, cell=judges[0])
 
 
 def ask(client: ClaudeClient, task: Task, answer: str, *, cell: Cell, prompt: str | None = None,

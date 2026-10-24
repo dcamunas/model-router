@@ -1,6 +1,6 @@
 ---
 name: router
-description: Verify and escalate subagent work by risk with the model router (`router` on the command line). The hook already picks model and effort on its own; use this skill when the user says "use the router", "verify this", "make it cheap but verified", or when a subtask is high or critical risk and a second subagent has to check it.
+description: Check and relaunch subagent work by risk with the model router (`router` on the command line). The hook already picks model and effort on its own; use this skill when the user says "use the router", "verify this", "make it cheap but verified", or when a subtask is high or critical risk and a second subagent has to check it.
 ---
 
 # The model router inside Claude Code
@@ -25,7 +25,7 @@ relaunch the same task higher (set `model`, or more effort) rather than rephrasi
 that as a fail of its first choice and, after a few in the same repository, starts that kind of task
 higher there (`router project` shows it). Keep the declaration line the same when you relaunch, apart
 from `access`: a relaunch counts only for the same kind and risk.
-What this skill adds is the rest of the loop: verify by risk and escalate on failure.
+What this skill adds is the rest of the loop: check by risk and relaunch higher on failure.
 
 ## When not to launch a subagent
 
@@ -48,22 +48,6 @@ call its own options from the router, by the kind and risk of that stage:
 router plan --kind search --risk low --workflow     # {model: 'haiku', effort: 'medium'}
 ```
 
-## Plain text: `router run`, not a subagent
-
-A Claude Code subagent drags the whole session prompt along (tools, MCP, skills: about 100K tokens).
-For a subtask that needs no tools (classify, extract, summarise, draft, review a text you already
-have) use the router directly: about 900 tokens of context, model and effort by kind and risk, an
-optional checker, one judge by risk on another model than the worker, and an entry in the ledger.
-
-```bash
-router run "<task>" --kind <kind> --risk <risk>              # the answer goes to stdout
-router run --file brief.md --check-json name,date,amount     # programmatic checker
-router run "..." --json                                      # answer + attempts as JSON
-```
-
-It uses the Claude account of this session's profile, with no API key. The plugin brings the `router` command; until the first session has built its environment it says
-"not ready yet", and after that `router doctor` explains anything that fails.
-
 ## When to step in yourself
 
 - Do not set `model` on the Agent unless the user asks for it or the task is high risk. If you set
@@ -72,8 +56,15 @@ It uses the Claude account of this session's profile, with no API key. The plugi
 - Agents defined in `.claude/agents/*.md` do not go through the hook: their frontmatter rules.
   `router agents` says, from what they spent and how often they were repeated, which look too high or too
   low; the change is the user's.
-- High or critical risk (production, money, customers, deletions, legal): ask for the plan and follow
-  its verification. The hook does not do this part.
+- High or critical risk (production, money, customers, deletions, legal): follow the steps below. The
+  hook does not do this part.
+- A repository can raise the risk from what its briefs say, in `.claude/model-router.json` (its risk
+  floors), never lower it; `router project` lists the rules and how often each fired.
+- A model over its usage limit is refused until its reset, which the session context and `router limits`
+  give; launch without `model` and the hook picks an available one.
+
+The plugin brings the `router` command; until the first session has built its environment it says
+"not ready yet", and after that `router doctor` explains anything that fails.
 
 ## Steps for a subtask with risk
 
@@ -84,29 +75,20 @@ It uses the Claude account of this session's profile, with no API key. The plugi
    ```
 
    Kinds: classify, extract, summarize, search, chat, write, code, review, analysis, agentic.
-   Risks: low, medium, high, critical. It prints the start cell, the ladder, the verification mode,
-   and the verifier.
+   Risks: low, medium, high, critical. It prints the classification and the start cell.
 
 2. Launch the subagent with the `model` and `effort` of the start cell and the full brief.
 
-3. Verify as the plan says. The default is the router itself: save the subagent's result to a file
-   and run
+3. Check by risk, never with the subagent that did the work:
+   - low or medium: accept.
+   - high: check the result against the brief yourself, or with a test (run it, validate the JSON).
+   - critical: launch **another** subagent without `model`, first line `kind: review, risk: critical`,
+     fresh context, with the brief and the result, and ask it for `passed / reason / issues`. The hook
+     keeps it off the chat's model.
 
-   ```bash
-   router judge "<the same subtask>" --kind <kind> --risk <risk> --cell <start cell> --answer result.md
-   ```
-
-   It runs the plan's judge (light or full), records every verdict in the ledger, prints
-   the reasons and exits 1 on a fail. About 900 tokens of context per judge instead of a subagent.
-
-   Launch judge subagents instead only when the verdict needs tools (run the tests, read the repo):
-   - `none`: accept.
-   - `light`: check the result against the brief yourself, or with a checker (tests, valid JSON).
-   - `full`: launch **another** subagent on the verifier's cell, fresh context, with the brief and
-     the result, and ask it for `passed / reason / issues`. Never the subagent that did the work.
-
-4. On failure, relaunch on the next cell of the ladder with the reason for the failure in the brief.
-   Stop when it passes, when the ladder runs out, or when the cost is not worth it.
+4. On failure, relaunch the task one step up (set `model`, or more effort) with the reason for the
+   failure in the brief and the same declaration line. Stop when it passes, or when the cost is not
+   worth it.
 
 5. In the final message say which cell solved it and how many attempts it took.
 
@@ -124,7 +106,6 @@ the design is yours and it touches production, money, customers or deletions:
 
 ## Rules
 
-- A programmatic checker beats any judge. If there are tests, the verdict is "they pass or they
-  don't".
+- A test beats any judge. If there are tests, the verdict is "they pass or they don't".
 - Do not change cells inside one subagent conversation: the cache is per model.
 - The hook's decisions are kept in `<profile>/model-router/hook.jsonl`; `router stats` summarises them.

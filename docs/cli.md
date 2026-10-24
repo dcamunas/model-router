@@ -2,22 +2,17 @@
 
 [← README](../README.md)
 
-The `router` command and the Python API: every command with an example, running with your Claude account
-instead of an API key, and using it as a library. Jump to
-[Commands](#commands), [Without an API key](#without-an-api-key-with-your-claude-account) or
+The `router` command and the Python modules other packages import. Jump to [Commands](#commands) or
 [As a library](#as-a-library).
 
 ## Commands
 
 ```bash
-# What the router would do with a task, at no cost
+# Where the router would start a task, at no cost
 router plan "Review this SQL migration script before it goes to production"
 #   classification: review / high  (rule 'review'; risk: high-risk keyword)
 #   start: opus/medium  -> Claude Code {'model': 'opus', 'effort': 'medium'}
 #     - table review x high -> opus/medium
-#     - ladder: opus/medium -> fable/low -> fable/xhigh
-#     - verification light (risk high); budget $2.00; max 4 attempts
-#   verifier (light): fable/low
 
 # Only model/effort, for the frontmatter of a Claude Code agent
 router plan "classify these tickets" --claude-code
@@ -28,30 +23,23 @@ router plan "classify these tickets" --claude-code
 router plan --kind search --risk low --workflow
 #   {model: 'haiku', effort: 'medium'}
 
-# Run it for real, with a programmatic checker
-router run "Return a JSON object with the keys name, tax_id and date from: ..." \
-    --kind extract --risk high --check-json name,tax_id,date
-
-# Judge an answer written elsewhere (a subagent, a person) with the task's judges; exit 1 on a fail
-router judge "Write the incident notice for ..." --kind write --risk critical --answer notice.md
-
 # Advice for the agents whose model and effort are fixed by hand, in this repository
 router agents
 
 # Models over their usage limit and the exact moment each resets; --check asks now (a refused question is free)
 router limits --check fable
 
-# What has happened so far and what it has learned
+# The hook's decisions and what each measured subagent spent
 router stats
 
-# The tokens of the last 7 days: kind, main conversation vs subagents, model, context size; and, once the status
-# line has seen 20 rises of the seven-day window, which weighting of tokens the window follows
+# The seven-day window day by day and, once the status line has seen 20 rises of it, which weighting of tokens
+# the window follows
 router usage --days 7
 
 # The status line command: reads the JSON Claude Code sends on stdin, prints one line, keeps a sample
 router statusline
 
-# The models it may use, the judge for full verification, the read-only agent
+# The models it may use, the judge for critical reviews on the chat's model, the read-only agent
 router config --models haiku,sonnet,opus --judge opus/xhigh --lean on
 
 # The other profiles signed in to the same account, which `router usage` reads too
@@ -61,41 +49,33 @@ router config --usage-profiles ~/.claude-other
 router doctor
 ```
 
-Exit codes: 0 when the command did its job (a task solved, a verdict passed), 1 when a task was not solved or a
-verdict failed, 2 when the command could not run, with one line on stderr saying why.
+Exit codes: 0 when the command did its job, 1 when a check of `router doctor` failed, 2 when the command could
+not run, with one line on stderr saying why.
 
-## Without an API key: with your Claude account
-
-`router run` and `router judge` do not need `ANTHROPIC_API_KEY`. Without it they use the `cli`
-backend: every call is one `claude -p` process (Claude Code's headless mode) with the cell's model
-and effort, no tools, no MCP and a minimal system prompt, about 900 tokens per call (without
-`--system-prompt`, Claude Code would send its full prompt, about 100K). Structured outputs go
-through `--json-schema`. It spends your subscription's quota, not dollars: the amounts in the ledger
-are the list-price equivalent, a proxy for quota use.
-
-It runs on the Claude profile in use (`CLAUDE_CONFIG_DIR`, else `~/.claude`), the one that holds the router's
-state, so a work profile never spends a personal account's quota. `router doctor` names it.
-
-Differences from the `api` backend: no `max_tokens` and no server-side refusal fallbacks, and every
-call takes one or two seconds more because of the process start-up. `--backend api|cli` forces one
-or the other.
+`router doctor --live` and `router limits --check` are the only commands that call Claude (the status line runs
+the second one in the background for Fable's weekly window). They do it through
+`claude -p` on the Claude profile in use (`CLAUDE_CONFIG_DIR`, else `~/.claude`), so a work profile never spends
+a personal account's quota. `router doctor` names the profile.
 
 ## As a library
 
-```python
-from model_router import Router, Task, json_checker
-from model_router.client import LiveClient
+The router has no Python API of its own to drive. Its modules are shared with
+[model-tribunal](https://github.com/dcamunas/model-tribunal), which builds its judges on them and imports these
+names:
 
-router = Router(LiveClient())
-result = router.run(Task(
-    prompt="Extract name, tax id and date from the text as JSON: ...",
-    kind="extract", risk="high", checker=json_checker(("name", "tax_id", "date")),
-))
-print(result.status, result.final_cell, f"${result.total_cost_usd:.4f}")
-print(result.answer)
-```
+| Module | Names |
+|---|---|
+| `model_router.task` | `Task`, `KINDS`, `RISKS`, `json_payload` |
+| `model_router.client` | `ClaudeClient`, `ClientUnavailableError`, `LiveClient`, `Completion`, `NON_STREAMING_MAX_TOKENS` |
+| `model_router.cli_client` | `CliClient`, `DEFAULT_SYSTEM` |
+| `model_router.verify` | `ask`, `judge_prompt`, `JUDGE_SYSTEM`, `JudgeVerdict`, `VerifyResult`, `Verdict` |
+| `model_router.catalog` | `MODELS`, `ModelSpec`, `register`, `unregister`, `Cell`, `Usage`, `parse_cell`, `available_models`, `nearest_available`, `nearest_effort`, `UnknownModelError` |
+| `model_router.classify` | `head`, `classify_rules` |
+| `model_router.hook` | `main_model` |
+| `model_router.paths` | `claude_profile`, `read_json`, `merge_json`, `read_jsonl`, `parse_jsonl`, `append_jsonl`, `replace_file`, `locked`, `is_child` |
+| `model_router.fmt` | `money`, `table` |
+| `model_router.clock` | the module |
 
-`Task` takes `output_schema` (a pydantic model for structured output), `system`, `budget_usd`,
-`max_attempts` and `verify` to force the mode. `Router` accepts any object with
-`complete(cell, prompt=..., ...)`, so it can be tested without a network
+`ask` puts one judge cell to one answer and returns its verdict. A client is any object with
+`complete(cell, prompt=..., ...)`, so a caller can be tested without a network
 (`model_router.testing.FakeClient`).

@@ -1,4 +1,4 @@
-"""Build the README's two animated figures. Every frame is an HTML page on a 1920x1080 canvas; headless Chrome
+"""Build the README's animated figure. Every frame is an HTML page on a 1920x1080 canvas; headless Chrome
 captures it and Pillow stitches the GIF (half size, 64 colours).
 
     uv run --with pillow docs/showcase/build.py [--carousel out.pdf] [--frames DIR]
@@ -8,9 +8,6 @@ Needs Google Chrome; no other tool.
 - `sprint.gif`: the router's rules told as sprint planning, an illustration. The same board in every frame, so
   only what changes moves; each ticket's plan is what `router plan` gives with the code tables and all four
   models. `--carousel` also writes its frames as a PDF, one page each.
-- `router-run.gif`: the lines of `router-run.txt`, the exact output of
-  `router run --file docs/showcase/notice.md --kind write --risk critical` in a terminal of 126 columns
-  (COLUMNS=126, what the drawn window holds at 22 px), never text typed in.
 """
 
 from __future__ import annotations
@@ -46,25 +43,6 @@ def _page(body: str) -> str:
     return (f'<!doctype html><html><head><meta charset="utf-8"></head>'
             f'<body style="margin:0;width:{CANVAS[0]}px;height:{CANVAS[1]}px;background:{LIGHT};'
             f'position:relative;overflow:hidden">{body}</body></html>')
-
-
-def terminal_html(command: str, lines: list[str]) -> str:
-    """Return a terminal window on the canvas showing `command` and the output lines revealed so far."""
-    shown = "\n".join(html.escape(line) for line in lines)
-    window = (f'<div style="position:absolute;left:48px;top:72px;width:1824px;height:936px;background:{DARK};'
-              f'border-radius:16px;box-sizing:border-box;padding:32px;overflow:hidden">')
-    prompt = f'<div style="font:22px {MONO_FONT};color:#9fc0e8;white-space:pre-wrap">$ {html.escape(command)}</div>'
-    output = (f'<pre style="margin:24px 0 0;font:22px/1.45 {MONO_FONT};color:{LIGHT};white-space:pre-wrap;'
-              f'word-break:break-word">{shown}</pre>')
-    return _page(window + prompt + output + "</div>")
-
-
-def terminal_frames(command: str, output: str) -> list[str]:
-    """Split a real output into the reveal steps: the command alone, the answer, the attempts table, the status line."""
-    lines = output.rstrip("\n").split("\n")
-    table_start = next((i for i, line in enumerate(lines) if line.startswith("#  cell")), len(lines))
-    steps = [[], lines[:table_start], lines[: table_start + 3], lines]
-    return [terminal_html(command, step) for step in steps]
 
 
 # ---- the sprint: the rules as an illustration -------------------------------------------------------------------
@@ -107,14 +85,14 @@ SPRINT = [
                 "Migrate payments", "code · critical risk", "opus/high", active=2, muted=(0, 1),
                 note="senior · high effort"),
     SprintFrame("It does not merge until someone else reviews it.",
-                "critical work is checked by a judge on another model: opus/high checked by fable/low",
+                "critical work is checked by a second subagent on another model: opus/high checked by fable/low",
                 "Migrate payments", "code · critical risk", "opus/high", active=2, muted=(0, 1), judge=3),
     SprintFrame("CI goes red on the CSV export. A senior takes it, with the log.",
-                "a failed check climbs the ladder (sonnet/medium, then opus/low), with the reason, within budget",
+                "a failed check is relaunched one step up (sonnet/medium, then opus/low), with the reason",
                 "CSV export", "code · low risk", "sonnet/medium", active=1, muted=(0,), escalate=(1, 2),
                 note="takes it with the failing log", fail="✗ CI fails"),
     SprintFrame("Every ticket is logged. The retro moves CSV work up a level.",
-                "the ledger keeps every run and its cost; each repository learns from its own relaunches",
+                "every subagent is measured with its cost; each repository learns from its own relaunches",
                 "Next CSV ticket", "code · low risk", "opus/low", active=2, note="this repo starts here", report=True),
 ]
 
@@ -262,7 +240,7 @@ def carousel(pngs: list[Path], target: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build docs/showcase/sprint.gif and router-run.gif (and the carousel and the frames when asked)."""
+    """Build docs/showcase/sprint.gif (and the carousel and the frames when asked)."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--carousel", type=Path, help="also write the sprint's frames as a PDF carousel here")
     parser.add_argument("--frames", type=Path, help="keep the full-size PNG frames in this directory")
@@ -270,8 +248,6 @@ def main(argv: list[str] | None = None) -> int:
     if not Path(CHROME).exists():
         print(f"Google Chrome not found at {CHROME}", file=sys.stderr)
         return 1
-    output = (HERE / "router-run.txt").read_text(encoding="utf-8")
-    command = "router run --file docs/showcase/notice.md --kind write --risk critical"
     with tempfile.TemporaryDirectory() as tmp:
         work = args.frames or Path(tmp)
         work.mkdir(parents=True, exist_ok=True)
@@ -281,9 +257,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.carousel:
             carousel(sprint_pngs, args.carousel)
             print(f"carousel: {args.carousel}")
-        run_pngs = capture(terminal_frames(command, output), work, "run")
-        size = gif(run_pngs, HERE / "router-run.gif")
-        print(f"router-run.gif: {len(run_pngs)} frames, {size / 1024:.0f} KB")
     return 0
 
 

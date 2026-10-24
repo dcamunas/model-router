@@ -2,33 +2,31 @@
 
 [← README](../README.md)
 
-The rules behind each task: how kind and risk are read, where the task starts, how the answer is
-checked, when it climbs and when it stops. This is the loop `router run` runs; in Claude Code the
-plugin applies the first two steps to every subagent.
+The rules behind each subagent: how kind and risk are read, where the task starts, what one step up is,
+and who checks the work by risk. The hook applies the first two steps to every routed subagent; the
+`router` skill asks Claude for the check and the relaunch.
 
 ```mermaid
 flowchart LR
-  T[task: kind + risk] --> P[plan: start cell, ladder, verification, budget]
-  P --> A[attempt on the cell]
-  A --> C{checker}
-  C -- fails --> N[next cell up the ladder]
-  C -- passes or none --> J{judge}
-  J -- pass --> L[(ledger)]
-  J -- fail --> N
+  T[task: kind + risk] --> S[start cell: table, floors, the repository's tuning]
+  S --> A[subagent on the cell]
+  A --> C{check by risk}
+  C -- fails --> N[relaunch one step up, with the reason]
   N --> A
-  N -- ladder or budget exhausted --> U[unsolved]
+  C -- passes or none --> D[done]
+  N -. relaunches .-> R[(the repository's starts move up)]
 ```
 
 ## By risk, at a glance
 
-| Risk | Meaning | Verification | Lowest start | Budget per task |
-|---|---|---|---|---|
-| `low` | you read the result and can redo it | none | any cell | 0.10 USD |
-| `medium` | the result is used without a second read | none | any cell | 0.50 USD |
-| `high` | money, customers, production, legal, deletions, publishing | light: one judge on another model | `sonnet/low` | 2 USD |
-| `critical` | as high, and hard to detect | full: one fixed judge | `opus/medium` | 10 USD |
+| Risk | Meaning | Check | Lowest start |
+|---|---|---|---|
+| `low` | you read the result and can redo it | none | any cell |
+| `medium` | the result is used without a second read | none | any cell |
+| `high` | money, customers, production, legal, deletions, publishing | against the brief, or with a test | `sonnet/low` |
+| `critical` | as high, and hard to detect | another subagent on another model | `opus/medium` |
 
-A programmatic checker, when the task has one, always runs first and is final when it fails.
+A test, when there is one, always comes first and is final when it fails.
 
 ## Step by step
 
@@ -38,7 +36,7 @@ A programmatic checker, when the task has one, always runs first and is final wh
 
 - The kinds: `classify`, `extract`, `summarize`, `search`, `chat`, `write`, `code`, `review`,
   `analysis`, `agentic`. The risks: `low`, `medium`, `high`, `critical`.
-- You pass them (`--kind`, `--risk`), or the first two lines of the text declare them
+- You pass them (`router plan --kind --risk`), or the first two lines of the text declare them
   (`kind: review, risk: high`; also `tipo:` and `riesgo: alto`). A value ends the line or is followed
   by a comma or a full stop, and material pasted below the head never counts.
 - Otherwise rules infer them; the rules know English and Spanish prompts.
@@ -64,80 +62,55 @@ A programmatic checker, when the task has one, always runs first and is final wh
 - No cell the router picks on its own is at `max` effort: a `max` cell from a tuning runs at `xhigh`, and
   the plan says so.
 
-### 3. Ladder
+### 3. One step up
 
 **Each step up is the cheapest cell that is clearly more capable.**
 
 "Clearly" means +0.08 capability, among the available models. With the current assumptions:
-`sonnet/medium`, then `opus/low`, `fable/low` and `fable/xhigh`.
+`sonnet/medium`, then `opus/low`, `fable/low` and `fable/xhigh`. A repository's raise and the advice of
+`router agents` both take this step.
 
-### 4. Verification
+### 4. The check
 
-**A checker first, then a judge by risk, on another model than the worker.**
+**A test first, then a check by risk, on another model than the worker.**
 
-- `low` and `medium` go unverified, `high` gets `light`, `critical` gets `full`. Full verification
-  was the biggest cost sink; raise `high` to `full` with `--verify full` when a task needs it.
-- `light` is the nearest other model at low effort (the tier above first), in a fresh context. A
-  worker judging itself passed a quarter of the answers an independent judge failed.
-- `full` is one fixed judge, `opus/xhigh` unless `router config --judge` says otherwise, on another model
-  than the worker (see [Who judges](#who-judges)).
+- `low` and `medium` go unchecked. For `high`, Claude checks the result against the brief, or with a
+  test. For `critical`, another subagent on another model reads the brief and the result in a fresh
+  context and answers `passed / reason / issues`.
+- A worker judging itself passed a quarter of the answers an independent judge failed, so the check
+  never runs on the worker's own subagent.
+- On a fail, Claude relaunches the task one step up with the reason in the brief, and keeps the
+  declaration line the same. The hook counts that relaunch as a fail of its first choice.
 
-### 5. Stopping
-
-**A pass, or one of the limits.**
-
-A passing verdict, the ladder exhausted, the budget by risk (table above), two refusals in the same
-task, the API down, or a judge that cannot be reached (the answer is kept and the status is `error`).
-An answer cut by `max_tokens` is retried once on the same cell with twice the room.
-
-### 6. Ledger
-
-**Every attempt, with what it really cost.**
-
-- `ledger.jsonl` in the router's folder of the Claude profile (`~/.claude/model-router` by default) keeps
-  every attempt of `router run` and `router judge` with its real tokens and cost, the model that served it
-  (when a fallback ran), the verdict, the reason and the router version. No prompt and no answer.
-
-### 7. Escalation
-
-**The next cell gets the reason the last one failed.**
-
-After a verified fail, the next attempt's prompt carries the reason, so the next cell does not repeat
-the mistake. `router stats` counts the retries that repeat it anyway.
-
-## Who judges
+## Who judges a critical review
 
 **A fixed choice, not a climb up the lattice.**
 
-- `full` uses one judge cell, `opus/xhigh` unless `router config --judge` says otherwise, in a fresh
-  context.
-- When the worker is already on that model, the judge moves to the next model up at low effort (Fable
-  at low for an Opus worker), or to the model below when there is nothing above. The check stays a
+A critical review never runs on the model serving the chat: it is the only check the chat's own work gets,
+since no hook can change the chat's model. When the start cell is on the chat's model, the hook moves the
+review to the judge cell:
+
+- `opus/xhigh` unless `router config --judge` says otherwise.
+- When the start cell is already on that model, the judge moves to the next model up at low effort (Fable
+  at low for an Opus review), or to the model below when there is nothing above. The check stays a
   cross-check between models.
-- No judge thinks above `xhigh`. `router config --judge opus/high` is the cheaper setting when
-  verification is most of the bill: a judge at `high` writes about 60 % less thinking than one at
-  `xhigh`. Verifying is easier than producing, so the judge does not have to outrank the worker; it
-  has to be independent and good enough.
+- No judge thinks above `xhigh`. Verifying is easier than producing, so the judge does not have to
+  outrank the worker; it has to be independent and good enough.
 
-`light` is the nearest other model at low effort, the tier above before the one below, and never the worker's
-own model when another is there. On a private eval of 28 real tasks, Haiku and Sonnet judging their own answers
-in a fresh context passed 89 % and 93 % of first attempts. An Opus judge passed 64 % and 68 % of the same
-answers, for word limits broken, formats ignored and facts invented. A model does not see its own
-blind spots in a fresh context either.
-
-Every judge's own verdict goes to the ledger, so `router stats` shows each judge cell's verdicts and pass
-rate.
+On a private eval of 28 real tasks, Haiku and Sonnet judging their own answers in a fresh context passed 89 %
+and 93 % of first attempts. An Opus judge passed 64 % and 68 % of the same answers, for word limits broken,
+formats ignored and facts invented. A model does not see its own blind spots in a fresh context either.
 
 ## What is assumed
 
-Read these before you believe a number. The only measured ones are the ledger's real cost per solved
-task and, in Claude Code, what each subagent spent.
+Read these before you believe a number. The only measured ones are, in Claude Code, what each subagent
+spent and how often a start was relaunched.
 
-- **Prices** in `catalog.py`, Anthropic API as of 2026-10-06. The ledger prices the real `usage`.
+- **Prices** in `catalog.py`, Anthropic API as of 2026-10-06. Measurements price the real `usage`.
 - **`EFFORT_OUTPUT_MULT`**: output tokens per effort relative to `high` (0.5 / 0.75 / 1 / 1.6 / 2.5).
 - **`CAPABILITY_TIER` + `CAPABILITY_EFFORT`**: capability 0-1 per cell. Haiku 0.40, Sonnet 0.60, Opus 0.75,
-  Fable 0.90; effort adds between −0.06 and +0.05. An opinion, not a measurement: it orders the ladder.
+  Fable 0.90; effort adds between −0.06 and +0.05. An opinion, not a measurement: it orders the steps up.
 - **The `START` table** is a judgement per kind and risk. Per-repository learning corrects it where
   subagents keep failing.
-- **Prompt caches are per model**: every model change in the ladder loses the cache. For a long
-  conversation, change cells between conversations, not inside one.
+- **Prompt caches are per model**: every model change loses the cache. For a long conversation, change
+  cells between conversations, not inside one.

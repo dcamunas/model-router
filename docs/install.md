@@ -43,7 +43,7 @@ router doctor                               # claude, profile, plugin, available
 ```
 
 The tables do not change: when they ask for a model you do not have, the router drops to the most capable
-available model at the same effort and the ladder goes on from there (`router plan` says so in its
+available model at the same effort and the steps up go on from there (`router plan` says so in its
 explanation).
 
 ## In a team repository
@@ -88,7 +88,5 @@ claude --plugin-dir .           # the plugin as it is in the repository, for tha
 
 ## Credentials
 
-Real calls from the command line (`router run`, `router judge`, `router doctor --live`) use your Claude Code
-account through `claude -p`, or `ANTHROPIC_API_KEY` when it is set (see
-[Without an API key](cli.md#without-an-api-key-with-your-claude-account)). The other commands do not call
-the API.
+The commands that call Claude (`router doctor --live`, `router limits --check`) use your Claude Code account
+through `claude -p`, on the profile in use. The other commands do not call the API.

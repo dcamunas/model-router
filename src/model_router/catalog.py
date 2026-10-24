@@ -4,7 +4,7 @@ rules that walk between cells.
 Prices are Anthropic first-party API rates in USD per million tokens as cached by the claude-api
 skill on PRICES_AS_OF. Cache writes cost 1.25x input on every model; cache reads are the documented
 per-model rate (Haiku 5.5's is an assumption: 10% of input). Haiku 5.5 bills 5x above 100K prompt
-tokens. The ledger always prices the real `usage` returned by the API.
+tokens. Measurements always price the real `usage` a call reports.
 
 Two tables are assumptions, not measurements. They drive planning (expected cost of a cell, which
 cell to escalate to); a project's tuning (`projects.py`) moves a start cell on what really happened:
@@ -365,15 +365,3 @@ def step_down(current: Cell, cells: Iterable[Cell]) -> Cell | None:
     if not cands:
         return None
     return max(cands, key=lambda c: (c.capability, -c.expected_cost()))
-
-
-def ladder(start: Cell, cells: Iterable[Cell], *, steps: int) -> list[Cell]:
-    """Return `start` followed by up to `steps - 1` escalations, each the cell `step_up` picks from `cells`."""
-    cells = list(cells)
-    out = [start]
-    while len(out) < steps:
-        nxt = step_up(out[-1], cells)
-        if nxt is None:
-            break
-        out.append(nxt)
-    return out

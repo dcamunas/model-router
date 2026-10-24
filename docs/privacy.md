@@ -25,8 +25,4 @@ profiles on one machine share no decisions, measurements, limits or settings.
   and nothing else: launches and relaunches per kind, risk and cell, and runs and repeats of the agents
   committed in the repository itself. An agent from your profile, a plugin, a link or an untracked file is
   never named there, nor is one whose name has spaces or characters beyond letters, digits, `.`, `_` and `-`. They leave your machine only when you commit and push them.
-- `router run` and `router judge` send the prompt to Anthropic, through your API key or your Claude Code
-  account, and to nobody else.
-- The ledger keeps tokens, cost, cell, verdict and the judges' reasons for every attempt; it keeps neither
-  the prompt nor the answer. A reason may quote a few words of either.
 - `router plan`, `router stats`, `router cells` and `router doctor` without `--live` call nothing.

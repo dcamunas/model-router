@@ -105,7 +105,7 @@ def test_router_plan_in_a_repository_follows_its_floors(tmp_path, monkeypatch, c
     monkeypatch.chdir(repo)
     assert main(["plan", "Summarise the migration notes", "--kind", "summarize", "--risk", "low"]) == 0
     captured = capsys.readouterr()
-    assert "raised to critical" in captured.err and "verification full (risk critical)" in captured.out
+    assert "raised to critical" in captured.err and "table summarize x critical" in captured.out
 
 
 def test_a_pattern_that_takes_too_long_counts_as_not_matching_and_is_named(tmp_path, monkeypatch):

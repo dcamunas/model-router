@@ -154,8 +154,8 @@ class Figure:
 ROUTER = Figure("flow", 1480, 480, [
     Node(200, 120, "Task", "kind and risk, declared<br>or read from the text", _icon_task),
     Node(560, 120, "Start cheap", "the cheapest model<br>and effort the risk allows", _icon_stairs),
-    Node(920, 120, "Check", "a test, if there is one;<br>from high risk, a judge<br>on another model", _icon_check),
-    Node(1280, 120, "Log", "every attempt, and<br>what the solved task cost", _icon_log),
+    Node(920, 120, "Check", "a test, if there is one;<br>for critical work, a second<br>subagent on another model", _icon_check),
+    Node(1280, 120, "Learn", "what each subagent cost;<br>relaunches move a<br>repository's starts up", _icon_log),
 ], _router_wires)
 
 def _node_html(node: Node, t: Theme) -> str:

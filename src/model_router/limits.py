@@ -3,7 +3,7 @@
 A subscription caps usage in windows (five hours, seven days, and a separate weekly allowance for some models,
 Fable among them). When a window is spent, a call is refused with HTTP 429 until the window resets. The router
 learns it from the failure itself: Claude Code fires `StopFailure` with `error: rate_limit` when a subagent dies on
-a limit, and `router run` gets the same 429 back from `claude -p`.
+a limit.
 
 Neither says when the window resets. `claude -p --output-format stream-json --verbose` does: before its answer it
 prints a `rate_limit_event` with the window that decided (`rateLimitType`), its `status` (`allowed`,

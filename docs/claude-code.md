@@ -72,12 +72,12 @@ some models, Fable among them. When one is spent, every call to that model is re
 resets. The router finds out from the failure and then knows the exact moment:
 
 - **Detected.** A subagent that dies on a limit fires `StopFailure` with `error: rate_limit` (it never
-  reaches `SubagentStop`), and `router run` gets the same 429 back.
+  reaches `SubagentStop`).
 - **Exact reset.** The router then asks that model for one word through `claude -p --output-format
   stream-json`, whose `rate_limit_event` carries the window and its `resetsAt`. A refused question
   reports a cost of 0. What it learns goes to `~/.claude/model-router/limits.json`.
-- **Routed around.** Until that moment the model is left out of the available ones: the hook, plans,
-  judges and `router run` pick the next model, and each launch's notice says until when. At the reset it
+- **Routed around.** Until that moment the model is left out of the available ones: the hook and
+  `router plan` pick the next model, and each launch's notice says until when. At the reset it
   is back with no other step. A launch that names the limited model with `model` is refused, with the
   time, so it does not fail later.
 - **Told.** The session context names the limited models, `router doctor` lists them, and `router limits`
@@ -125,10 +125,9 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
   Below 400k each extra compaction saves less than half as much as the ones above it, and every compaction
   summarises away some detail; 400k is where that person set it. The replay keeps each session's growth after a
   compaction as it was, so it does not count files read again because the summary dropped them.
-- **What spent the windows.** `router usage` adds up the transcripts of the last seven days (`--days`): tokens by
-  kind, main conversation against subagents, by model, and the main conversation's calls by context size. The
-  windows belong to the account, so when two profiles share one, `router config --usage-profiles ~/.claude-other`
-  makes it read both.
+- **The week, day by day.** `router usage` shows how many points of the seven-day window each day used, from the
+  status line's samples, and reads the transcripts of the last seven days (`--days`) for the fit below. For the
+  tokens themselves, use the official `session-report` plugin. The windows belong to the account, so when two profiles share one, `router config --usage-profiles ~/.claude-other` makes it read both.
 - **Which tokens count.** Anthropic does not publish how each kind of token weighs on the windows. Claude Code
   reports them in whole percents, so `router usage` takes the tokens spent between two rises of the seven-day
   window as the price of a point, in three weightings: list price, list price with cache reads free, and raw
@@ -155,7 +154,7 @@ committed with the code:
   make work dearer, never cheaper.
 - **Visible.** Each decision records the rule that raised it; `router project` lists the rules with how
   often each fired, and `router doctor` flags a rule it cannot use (a bad pattern, an unknown risk).
-- **Also outside the hook.** `router plan` and `router run` in that repository follow the same floors.
+- **Also outside the hook.** `router plan` in that repository follows the same floors.
 - **Safe to commit.** The file is read as a regular file, never through a link, with limits on its
   size, the number of rules and the length of a pattern. Each search has 0.05 seconds: a pattern that
   takes longer (some regular expressions take exponential time) counts as not matching, and the
@@ -231,7 +230,7 @@ router project --share       # pool counts with the team through .claude/model-r
 router project --team        # turn the plugin on for everyone in the repo (Install, "In a team repository")
 router agents                # advice for the agents fixed by hand in this repo
 router limits                # models over their usage limit, until the exact reset; --check asks now
-router usage                 # tokens of the last 7 days: main vs subagents, by context size; what moves the week
+router usage                 # the seven-day window day by day, and which tokens move it
 router statusline            # the status line command (reads Claude Code's JSON on stdin)
 router config --lean off     # keep every subagent on the agent Claude chose (`--lean on` undoes it)
 ```
@@ -239,8 +238,7 @@ router config --lean off     # keep every subagent on the agent Claude chose (`-
 ## What else the plugin does
 
 `SessionStart` tells Claude the hook exists and what to declare. The skill `router` covers what a
-hook cannot do: verify a subagent's result, escalate, and send text-only subtasks through `router
-run`, which carries no session context at all. A launch takes the hook about 50 milliseconds, and the
+hook cannot do: check a subagent's result by risk and relaunch it higher when it fails. A launch takes the hook about 50 milliseconds, and the
 hooks call no API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
 word (a `claude -p` call of up to 30 seconds) to learn its reset. The status line, when you set it, asks Fable for one
 word at most every 30 minutes, in the background, to read Fable's weekly window. They block only a launch that names a

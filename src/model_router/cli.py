@@ -1,7 +1,7 @@
-"""`router` on the command line: plan (no API), run (live), judge (verify an answer written elsewhere), stats,
-doctor, cells, config, project (what the hook learned in a repository, its floors, its team setup), agents (advice
-for agents fixed by hand), limits (the models over their usage limit and their exact reset), usage (the tokens the
-transcripts spent and what moves the account's windows) and statusline (the status line command).
+"""`router` on the command line: plan (the start cell of a task, no API), stats, doctor, cells, config, project
+(what the hook learned in a repository, its floors, its team setup), agents (advice for agents fixed by hand),
+limits (the models over their usage limit and their exact reset), usage (what moves the account's seven-day window)
+and statusline (the status line command).
 docs/cli.md documents each command.
 """
 
@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -29,7 +28,6 @@ from .catalog import (
     SHORT_TO_ID,
     UnknownModelError,
     configured_models,
-    cost_usd,
     lattice,
     parse_cell,
     parse_models,
@@ -37,13 +35,11 @@ from .catalog import (
 )
 from .classify import Classification, classify_rules
 from .cli_client import CliClient
-from .client import ClaudeClient, ClientUnavailableError, Completion, LiveClient
+from .client import ClientUnavailableError, Completion
 from .fmt import money, table
 from .hook import start_in_force
-from .ledger import Ledger, summarize
 from .paths import (
     DECISION_LOG,
-    MAIN_LEDGER,
     claude_profile,
     config_path,
     home,
@@ -54,25 +50,22 @@ from .paths import (
     write_config,
 )
 from .policy import DEFAULT_JUDGE, FLOOR, Policy, default_judge
-from .runner import Router, TaskResult
 from .subagents import LOG_FILE as SUBAGENT_LOG
 from .subagents import finalize as finalize_subagents
 from .subagents import load as load_subagents
 from .subagents import summary_rows
-from .task import DEFAULT_MAX_TOKENS, KINDS, RISKS, VERIFY_MODES, Task, json_checker, regex_checker
+from .task import KINDS, RISKS, Task
 from .team import PLUGIN_ID
 
 if TYPE_CHECKING:
     from .projects import Change, Counts
 
-REASON_COLUMN_CHARS = 70  # the reason column of the attempts table, at most; it shrinks to fit the terminal
-MIN_REASON_CHARS = 16
 DECLARED_ONLY_PROMPT = "(kind and risk declared, no text)"  # what `router plan` plans when it is given no text
 CLAUDE_VERSION_SECONDS = 20  # `claude --version` answers in well under a second; this only guards a hung binary
 MINUTE_CHARS = 16  # an ISO moment cut to the minute: 2026-10-23T12:13
 CHANGES_SHOWN = 5  # the last changes of a project's tuning `router project` prints
 ANSWER_SHOWN_CHARS = 20  # how much of the live check's answer doctor prints
-CANNOT_RUN = 2  # the exit code of a command that could not run; 1 is a task not solved or a verdict failed
+CANNOT_RUN = 2  # the exit code of a command that could not run; 1 is a check of `router doctor` failed
 
 
 class CommandError(ValueError):
@@ -89,15 +82,6 @@ def _add_task_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--file", "-f", help="file with the task")
     p.add_argument("--kind", "-k", choices=KINDS, help="task kind (inferred by rules when missing)")
     p.add_argument("--risk", "-r", choices=RISKS, help="how bad a wrong answer is (inferred when missing)")
-    p.add_argument("--verify", choices=VERIFY_MODES, help="force the verification mode")
-    p.add_argument("--budget", type=float, help="spending cap in USD for the task")
-    p.add_argument("--max-attempts", type=int, help="maximum attempts")
-    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
-                   help="api backend only; the cli backend manages it itself")
-    p.add_argument("--system", help="file with the worker's system prompt")
-    p.add_argument("--check-regex", help="the answer must match this regex (programmatic checker)")
-    p.add_argument("--check-json",
-                   help="the answer must be JSON with these comma-separated keys (empty = any valid JSON)")
 
 
 def _prompt_from(args: argparse.Namespace) -> str:
@@ -126,15 +110,7 @@ def _task_from(args: argparse.Namespace, prompt: str) -> tuple[Task, Classificat
         for label in raised.unsearched:
             print(f"floor not searched (too slow, or no timer here): {label}", file=sys.stderr)
         risk = raised.risk
-    checker = None
-    if args.check_regex:
-        checker = regex_checker(args.check_regex)
-    elif args.check_json is not None:
-        checker = json_checker(tuple(k.strip() for k in args.check_json.split(",") if k.strip()))
-    system = Path(args.system).read_text(encoding="utf-8") if args.system else None
-    task = Task(prompt=prompt, kind=kind, risk=risk, system=system, checker=checker, max_tokens=args.max_tokens,
-                budget_usd=args.budget, max_attempts=args.max_attempts, verify=args.verify)
-    return task, cls
+    return Task(prompt=prompt, kind=kind, risk=risk), cls
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
@@ -143,8 +119,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     prompt = DECLARED_ONLY_PROMPT if declared_only else _prompt_from(args)
     task, cls = _task_from(args, prompt)
     tuning = projects.load_tuning(_here())  # what the hook would start a subagent on, here
-    policy = Policy(tuning=tuning)
-    plan = policy.plan(task)
+    plan = Policy(tuning=tuning).plan(task)
     if args.claude_code:
         cc = plan.start.claude_code()
         print(f"model: {cc['model']}\neffort: {cc['effort']}")
@@ -158,113 +133,24 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     print(f"start: {plan.start}  -> Claude Code {plan.start.claude_code()}")
     for line in plan.rationale:
         print("  - " + line)
-    judges = policy.judges_for(plan.start, plan.verify)
-    if judges:
-        print(f"verifier ({plan.verify}): {' then '.join(map(str, judges))}")
-    first = plan.start.expected_cost(task.estimated_input_tokens, task.planned_output_tokens)
-    print(f"estimated cost of the first attempt: {money(first)}"
-          f"  (prices {PRICES_AS_OF})")
     return 0
 
 
-def _attempts_table(result: TaskResult, *, width: int | None = None) -> str:
-    """Render the attempts as a table that fits `width` columns (the terminal's when None): the reason
-    column takes what the other columns leave, between MIN_REASON_CHARS and REASON_COLUMN_CHARS.
-    """
-    headers = ["#", "cell", "fallback", "stop", "tok in/out", "cost", "verdict", "verif.", "reason"]
-    rows = []
-    for a in result.attempts:
-        verdict = "-" if a.verdict is None else ("pass" if a.verdict else "fail")
-        served = a.served_model if a.fallback_ran else ""
-        judged = "+".join(j.label for j in a.judges)
-        rows.append([a.n, a.cell.label, served, a.stop_reason, f"{a.usage.input_tokens:,}/{a.usage.output_tokens:,}",
-                     money(a.cost_usd), f"{verdict} ({a.verdict_source}{', ' + judged if judged else ''})",
-                     money(a.verify_cost_usd), a.reason])
-    columns = width if width is not None else shutil.get_terminal_size((200, 24)).columns
-    fixed = sum(max(len(str(r[i])) for r in [headers, *rows]) for i in range(len(headers) - 1)) + 2 * (len(headers) - 1)
-    reason_chars = max(MIN_REASON_CHARS, min(REASON_COLUMN_CHARS, columns - fixed))
-    for r in rows:
-        r[-1] = str(r[-1])[:reason_chars]
-    return table(headers, rows)
-
-
-def _add_backend_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--backend", choices=("auto", "api", "cli"), default="auto",
-                   help="api = SDK with ANTHROPIC_API_KEY; cli = `claude -p` with your account; "
-                        "auto = api when there is a key, else cli")
-    p.add_argument("--no-fallbacks", action="store_true", help="api backend: no server-side refusal fallbacks")
-
-
-def _live_client(args: argparse.Namespace) -> ClaudeClient:
-    backend = args.backend
-    if backend == "auto":
-        backend = "api" if os.environ.get("ANTHROPIC_API_KEY") else "cli"
-    if backend == "api":
-        return LiveClient(server_fallbacks=not args.no_fallbacks)
-    return CliClient()
-
-
-def _cmd_run(args: argparse.Namespace) -> int:
-    prompt = _prompt_from(args)
-    client = _live_client(args)
-    task, cls = _task_from(args, prompt)
-    result = Router(client, ledger=Ledger(home() / MAIN_LEDGER)).run(task)
-    if args.json:
-        print(json.dumps({**result.to_dict(), "answer": result.answer}, ensure_ascii=False, indent=1))
-        return 0 if result.solved else 1
-    print(result.answer)
-    print()
-    if cls is not None:
-        print(f"classification: {cls.kind} / {cls.risk}  ({cls.reason})")
-    print(_attempts_table(result))
-    print(f"status {result.status} · cost {money(result.total_cost_usd)} (verification {money(result.verify_cost_usd)})"
-          f" · retries {result.retries} · id {task.id}")
-    if not result.solved:
-        print("the last answer did not pass verification; review it before using it", file=sys.stderr)
-    return 0 if result.solved else 1
-
-
-def _cmd_judge(args: argparse.Namespace) -> int:
-    prompt = _prompt_from(args)
-    answer = sys.stdin.read() if args.answer == "-" else Path(args.answer).read_text(encoding="utf-8")
-    if not answer.strip():
-        raise CommandError("the answer is empty")
-    client = _live_client(args)
-    task, cls = _task_from(args, prompt)
-    router = Router(client, ledger=Ledger(home() / MAIN_LEDGER))
-    result = router.judge(task, answer, worker=parse_cell(args.cell) if args.cell else None)
-    if args.json:
-        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=1))
-        return 0 if result.solved else 1
-    if cls is not None:
-        print(f"classification: {cls.kind} / {cls.risk}  ({cls.reason})")
-    print(_attempts_table(result))
-    verdict = {"solved": "pass", "unsolved": "fail"}.get(result.status, result.status)
-    print(f"verdict {verdict} · cost {money(result.verify_cost_usd)} · id {task.id}")
-    return 0 if result.solved else 1
-
-
-def _cmd_stats(args: argparse.Namespace) -> int:
-    ledger = Ledger(Path(args.ledger) if args.ledger else home() / MAIN_LEDGER)
-    records = ledger.tasks()
-    if ledger.corrupt:
-        print(f"warning: {ledger.corrupt} unreadable lines in {ledger.path}, not counted", file=sys.stderr)
-    if not records:
-        print(f"no tasks in {ledger.path}")
-    else:
-        print(summarize(records).text())
+def _cmd_stats(_args: argparse.Namespace) -> int:
     hook_rows = _hook_decisions(home() / DECISION_LOG)
     if hook_rows:
-        print("\nClaude Code hook decisions (routed subagents)")
+        print("Claude Code hook decisions (routed subagents)")
         print(table(["cell", "kind", "risk", "times"], hook_rows))
     with contextlib.suppress(OSError):
         finalize_subagents(home() / SUBAGENT_LOG)  # transcripts that have settled since their subagent ended
     measured = load_subagents(home() / SUBAGENT_LOG)
     if measured:
         rows = summary_rows(measured)
-        print("\nClaude Code subagents, measured from their transcripts (list price, at least: output tokens are a "
-              "lower bound; cache reads are the context read again every turn)")
+        print(("\n" if hook_rows else "") + "Claude Code subagents, measured from their transcripts (list price, at "
+              "least: output tokens are a lower bound; cache reads are the context read again every turn)")
         print(table(["agent", "model/effort", "n", "turns", "peak ctx", "cache read", "cost ≥", "total ≥"], rows))
+    if not hook_rows and not measured:
+        print(f"no hook decisions and no measured subagents in {home()} yet")
     return 0
 
 
@@ -357,14 +243,9 @@ def _cmd_usage(args: argparse.Namespace) -> int:
     if not spent.calls:
         print("no calls found")
         return 0
-    print(_spent_table(spent))
-    print("\nby model (tokens; list price as a weight, not a bill)")
-    print(table(["part", "model", "calls", "tokens", "cache read", "list price"], _model_rows(spent)))
-    print("\nthe main conversation's calls by context size (every call reads its whole context again)")
-    print(table(["context", "calls", "tokens", "share"], _band_rows(spent)))
     rows = usage.samples(profiles)
     spans = usage.intervals(rows, since=spent.since.timestamp())  # only intervals whose calls were all read
-    print(f"\nseven-day window: {len(rows)} status line samples, {len(spans)} intervals")
+    print(f"{len(spent.calls):,} calls; seven-day window: {len(rows)} status line samples, {len(spans)} intervals")
     daily = _daily_window(spans)
     if daily:
         print(table(["day", "points of the week used"], daily))
@@ -397,51 +278,6 @@ def _home_relative(path: Path) -> str:
     with contextlib.suppress(ValueError):
         return "~/" + str(path.relative_to(Path.home()))
     return str(path)
-
-
-def _spent_table(spent: usage.Spent) -> str:
-    parts = ("main", "subagents")
-    sums = {part: usage.Tally() for part in parts}
-    for part in parts:
-        for tally in spent.parts.get(part, {}).values():
-            for name in ("calls", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
-                setattr(sums[part], name, getattr(sums[part], name) + getattr(tally, name))
-    grand = sum(t.total for t in sums.values()) or 1
-    rows = []
-    for label, name in (("cache read", "cache_read_tokens"), ("cache write", "cache_write_tokens"),
-                        ("output", "output_tokens"), ("input", "input_tokens")):
-        values = [getattr(sums[p], name) for p in parts]
-        rows.append([label, *(_millions(v) for v in values), f"{sum(values) / grand:.1%}"])
-    rows.append(["all tokens", *(_millions(sums[p].total) for p in parts), "100%"])
-    rows.append(["share", *(f"{sums[p].total / grand:.0%}" for p in parts), ""])
-    rows.append(["calls", *(f"{sums[p].calls:,}" for p in parts), ""])
-    return table(["tokens", "main", "subagents", "of all"], rows)
-
-
-def _model_rows(spent: usage.Spent) -> list[list[object]]:
-    weights: dict[tuple[str, str], float] = {}
-    for call in spent.calls:
-        key = ("subagents" if call.subagent else "main", MODELS[call.model_id].short)
-        weights[key] = weights.get(key, 0.0) + cost_usd(call.model_id, call.usage)
-    rows = []
-    for part in ("main", "subagents"):
-        for model, tally in sorted(spent.parts.get(part, {}).items(), key=lambda kv: -kv[1].total):
-            rows.append([part, model, f"{tally.calls:,}", _millions(tally.total), _millions(tally.cache_read_tokens),
-                         money(weights.get((part, model), 0.0))])
-    return rows
-
-
-def _band_rows(spent: usage.Spent) -> list[list[object]]:
-    total = sum(t.total for t in spent.bands.values()) or 1
-    edges = [*usage.REPORT_BANDS, None]
-    rows = []
-    for low, high in zip(edges, edges[1:], strict=False):
-        if low is None:
-            continue
-        tally = spent.bands.get(low, usage.Tally())
-        label = f"{usage.tokens(low)}-{usage.tokens(high)}" if high else f"{usage.tokens(low)}+"
-        rows.append([label, f"{tally.calls:,}", _millions(tally.total), f"{tally.total / total:.0%}"])
-    return rows
 
 
 def _daily_window(spans: list[usage.Interval]) -> list[list[object]]:
@@ -692,7 +528,7 @@ def _claude_check() -> tuple[bool, str]:
     """Check that the `claude` command is on the PATH and say its version."""
     claude = shutil.which("claude")
     if not claude:
-        return False, "claude is not on the PATH: install Claude Code or use --backend api with ANTHROPIC_API_KEY"
+        return False, "claude is not on the PATH: install Claude Code"
     try:
         version = subprocess.run([claude, "--version"], capture_output=True, text=True, timeout=CLAUDE_VERSION_SECONDS,
                                  check=False).stdout.strip()
@@ -702,7 +538,7 @@ def _claude_check() -> tuple[bool, str]:
 
 
 def _settings_checks() -> list[tuple[bool, str]]:
-    """Check the models and the judge `router config` set, and report where each came from."""
+    """Check the models and the cross-check judge `router config` set, and report where each came from."""
     cfg = read_config()
     names = ", ".join(MODELS[m].short for m in configured_models())
     checks = [(True, f"available models: {names} (via {'config.json' if cfg.get('models') else 'catalogue'})")]
@@ -711,10 +547,10 @@ def _settings_checks() -> list[tuple[bool, str]]:
         checks.append((False, f"the models setting names models this router does not know, ignored: "
                               f"{', '.join(unknown)} (`router config --models`)"))
     try:
-        checks.append((True, f"judge for full verification: {default_judge()} "
+        checks.append((True, f"judge for critical reviews on the chat's model: {default_judge()} "
                              f"(via {'config.json' if cfg.get('judge') else 'default'})"))
     except ValueError as exc:  # UnknownModelError is one too
-        checks.append((False, f"judge for full verification: {exc} (`router config --judge`)"))
+        checks.append((False, f"judge for critical reviews on the chat's model: {exc} (`router config --judge`)"))
     return checks
 
 
@@ -735,9 +571,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         if team_check is not None:
             checks.append(team_check)
         checks += _profile_checks(profile, enabled_by=enabled_by)
-    ledger_n = len(Ledger(home() / MAIN_LEDGER).tasks())
     hook_n = sum(n for *_, n in _hook_decisions(home() / DECISION_LOG))
-    checks.append((True, f"state in {home()}: {ledger_n} tasks in the ledger, {hook_n} hook decisions"))
+    checks.append((True, f"state in {home()}: {hook_n} hook decisions"))
     if args.live and claude[0]:
         checks.append(_live_check("claude", lambda: CliClient().complete(
             parse_cell("haiku/low"), prompt="Answer only OK.", system="Answer only what is asked.")))
@@ -779,9 +614,9 @@ def _cmd_config(args: argparse.Namespace) -> int:
             str(Path(p.strip()).expanduser().absolute()) for p in args.usage_profiles.split(",") if p.strip()]
         write_config(usage_profiles=listed or None)
     cfg = read_config()
-    print(f"profile for `router run`: {claude_profile()}")
+    print(f"Claude profile: {claude_profile()}")
     print(f"available models: {', '.join(MODELS[m].short for m in configured_models())}")
-    print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
+    print(f"judge for critical reviews on the chat's model: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
     print(f"read-only agent for reading tasks: {'off' if cfg.get('lean') is False else 'on'}")
     print(f"profiles `router usage` reads: {', '.join(_home_relative(p) for p in _usage_profiles(None))}")
     print(f"(in {config_path()})")
@@ -803,7 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Return the `router` argument parser; each subcommand sets `func` to its handler."""
     p = argparse.ArgumentParser(
         prog="router",
-        description="Claude model router: picks model + effort, verifies by risk, escalates on failure and keeps the ledger.",
+        description="Claude model router: picks model + effort for subagents, measures them and learns per repository.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -815,24 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="print only the options of a workflow agent() call, e.g. {model: 'opus', effort: 'medium'}")
     sp.set_defaults(func=_cmd_plan)
 
-    sr = sub.add_parser("run", help="run the task through the router (real calls)")
-    _add_task_args(sr)
-    _add_backend_args(sr)
-    sr.add_argument("--json", action="store_true", help="JSON output with the answer and the attempts")
-    sr.set_defaults(func=_cmd_run)
-
-    sj = sub.add_parser("judge", help="verify an answer written elsewhere (a subagent, a person) with the task's judges")
-    _add_task_args(sj)
-    _add_backend_args(sj)
-    sj.add_argument("--answer", required=True, metavar="FILE",
-                    help="the answer to judge; `-` reads it from stdin (then give the task as an argument or with --file)")
-    sj.add_argument("--cell", help="the cell that produced the answer, e.g. opus/medium (default: the plan's start cell)")
-    sj.add_argument("--json", action="store_true", help="JSON output with every judge's verdict")
-    sj.set_defaults(func=_cmd_judge)
-
-    ss = sub.add_parser("stats", help="what `router run` and `router judge` cost, the hook's decisions and the "
-                                      "measured subagents")
-    ss.add_argument("--ledger", help="another ledger file")
+    ss = sub.add_parser("stats", help="the hook's decisions and the measured subagents")
     ss.set_defaults(func=_cmd_stats)
 
     sd = sub.add_parser("doctor", help="check claude, the profile, the plugin, settings, limits, floors and state; "
@@ -868,17 +686,19 @@ def build_parser() -> argparse.ArgumentParser:
     sa.add_argument("--json", action="store_true", help="the advice as JSON")
     sa.set_defaults(func=_cmd_agents)
 
-    sg = sub.add_parser("config", help="show or set the available models, the judge and the read-only agent")
+    sg = sub.add_parser("config", help="show or set the available models, the judge, the read-only agent and the "
+                                       "profiles `router usage` reads")
     sg.add_argument("--models", help="Claude models that may do the work, e.g. haiku,sonnet,opus; all = every Claude model")
-    sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
+    sg.add_argument("--judge", help="cell a critical review moves to when it would run on the chat's model, e.g. "
+                    "opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
                     "to the read-only agent, which carries a fraction of the general agent's context (default on)")
     sg.add_argument("--usage-profiles", metavar="DIR,DIR", help="other Claude profiles signed in to the same account, "
                     "which `router usage` reads too (they share its windows); none clears them")
     sg.set_defaults(func=_cmd_config)
 
-    su = sub.add_parser("usage", help="the tokens the transcripts spent, main conversation and subagents, by context "
-                        "size, and which of them move the account's seven-day window")
+    su = sub.add_parser("usage", help="the account's seven-day window day by day, and which tokens of the transcripts "
+                        "move it")
     su.add_argument("--days", type=int, default=7, help="how many days back (default 7)")
     su.add_argument("--profile", type=Path, action="append", help="a Claude profile to read (repeatable; default: the "
                     "one in use plus `router config --usage-profiles`)")
@@ -892,9 +712,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run `router` with `argv` (the process arguments when None) and return the exit code: 0 done (a task solved,
-    a verdict passed), 1 a task not solved or a verdict failed, CANNOT_RUN when the command could not run, said in
-    one line on stderr instead of a traceback.
+    """Run `router` with `argv` (the process arguments when None) and return the exit code: 0 done, 1 a check of
+    `router doctor` failed, CANNOT_RUN when the command could not run, said in one line on stderr instead of a
+    traceback.
     """
     args = build_parser().parse_args(argv)
     try:

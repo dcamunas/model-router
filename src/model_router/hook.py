@@ -21,7 +21,7 @@ Events handled (one entry point, dispatch on `hook_event_name`):
   repository shares them (`shared.py`), and gives Claude the context it needs to declare kind,
   risk and access, naming any model over its usage limit. A raise comes with a one-line notice.
 
-Cross-check rule: a review subagent whose risk calls for full verification (see VERIFY_BY_RISK)
+Cross-check rule: a review subagent whose risk calls for a full check (see VERIFY_BY_RISK)
 never runs on the model that serves the main chat. The chat's model is read from the last
 assistant entry of the session transcript (`transcript_path` in the event); when it is unknown
 the rule does nothing. This is the only verification the orchestrator itself gets: it has no
@@ -84,11 +84,11 @@ SESSION_CONTEXT = (
     "`access: read` when the subagent only reads, `access: write` when it must edit, save, run commands or use "
     "MCP tools. Without `access: read` on that first line the subagent stays on the general agent. If the read-only "
     "agent says it cannot do a task, relaunch it with `access: write`. Do not set `model` yourself unless the user asks or the "
-    "task is high risk. A critical review goes to a model other than the one serving this chat. Text-only "
-    "subtasks with no tools (classify, extract, summarise, draft) are cheaper through `router run \"...\"` than "
-    "as a subagent. Do not launch a subagent for what you would do in two or three steps, or for work that depends "
-    "on this conversation and does not fit in a short brief: a subagent costs the brief and the reading of its answer. "
-    "The `router` skill has the rest: verifying and escalating by risk."
+    "task is high risk. A critical review goes to a model other than the one serving this chat. If a subagent's "
+    "result fails, relaunch it on the next model up with the reason in the brief. Do not launch a subagent "
+    "for what you would do in two or three steps, or for work that depends on this conversation and does not fit "
+    "in a short brief: a subagent costs the brief and the reading of its answer. The `router` skill has the rest: "
+    "checking and relaunching by risk, limits and floors."
 )
 
 
@@ -181,8 +181,8 @@ def _cross_review(cell: Cell, *, kind: str, risk: str, chat_model: str | None, p
     """
     if kind != "review" or VERIFY_BY_RISK[risk] != "full" or cell.claude_code()["model"] != chat_model:
         return cell, None
-    other = policy.verifier_for(cell, "full")
-    if other is None or not other.spec.claude or other.claude_code()["model"] == chat_model or other.tier < cell.tier:
+    other = policy.verifier_for(cell)
+    if not other.spec.claude or other.claude_code()["model"] == chat_model or other.tier < cell.tier:
         return cell, None
     return other, f"{risk} review on another model than the chat ({chat_model}): {cell} -> {other}"
 

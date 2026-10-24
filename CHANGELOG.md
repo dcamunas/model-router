@@ -2,6 +2,27 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.23.0] - 2026-10-24
+
+### Removed
+
+- `router run` and `router judge`, with the runner, the ledger and the ledger's part of `router stats` and
+  `router doctor`. They were used six times in the whole ledger; subagents do the work inside Claude Code.
+- The task checkers (`json_checker`, `regex_checker`, `contains_checker`, `pydantic_checker`), the `Verifier`
+  class, the light judge, budgets, attempt caps and the ladder, which only the runner used.
+- The token tables of `router usage` (by part, model and context size). The official `session-report` plugin
+  shows the same tokens.
+- The `model_router` package exports and `version.py`; other packages import from the modules directly.
+
+### Changed
+
+- `router plan` prints the classification and the start cell only.
+- `router config --judge` now sets only the cell a critical review moves to when it would run on the chat's
+  model, the one use left for it.
+- `router usage` keeps the seven-day window day by day and the fit of which tokens move it.
+- The `router` skill and the session context ask Claude to check by risk and relaunch one step up, without
+  `router run` or `router judge`.
+
 ## [0.22.0] - 2026-10-24
 
 ### Removed

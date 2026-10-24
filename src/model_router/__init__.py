@@ -1,14 +1,4 @@
-"""model-router: picks a Claude model and effort per task, verifies by risk, escalates on failure,
-and keeps the ledger that says what each solved task really cost.
+"""model-router: picks a Claude model and effort for each subagent, measures what it spent and learns per
+repository where each kind of task should start. docs/cli.md has the commands; the modules other packages import
+are named in the README.
 """
-
-from .catalog import MODELS, Cell, Usage, cost_usd, lattice, parse_cell
-from .ledger import Ledger, summarize
-from .policy import Plan, Policy
-from .runner import Attempt, Router, TaskResult
-from .task import Task, contains_checker, json_checker, pydantic_checker, regex_checker
-
-__all__ = [
-    "MODELS", "Cell", "Usage", "cost_usd", "lattice", "parse_cell", "Ledger", "summarize", "Plan", "Policy",
-    "Attempt", "Router", "TaskResult", "Task", "contains_checker", "json_checker", "pydantic_checker", "regex_checker",
-]

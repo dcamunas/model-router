@@ -106,7 +106,7 @@ def test_config_sets_the_profiles_usage_reads(state, tmp_path, capsys):
 # ---- what the transcripts spent -------------------------------------------------------------------------------
 
 
-def test_spent_splits_main_and_subagents_counts_each_message_once_and_bands_the_main_calls(tmp_path):
+def test_spent_reads_main_and_subagent_calls_each_message_once_in_the_period(tmp_path):
     profile = tmp_path / "profile"
     project = profile / "projects" / "-repo"
     _write(project / "session.jsonl", [
@@ -118,10 +118,8 @@ def test_spent_splits_main_and_subagents_counts_each_message_once_and_bands_the_
     _write(project / "session" / "subagents" / "agent-a1.jsonl", _assistant("s1", at=T0, cache_read=20_000,
                                                                             model="claude-haiku-5-5"))
     spent = usage.spent([profile], since=T0 - timedelta(days=1))
-    assert spent.parts["main"]["opus"].calls == 1 and spent.parts["main"]["fable"].cache_read_tokens == 450_000
-    assert spent.parts["subagents"]["haiku"].calls == 1
-    assert spent.bands[100_000].calls == 1 and spent.bands[400_000].calls == 1
-    assert spent.unknown_models == 1 and len(spent.calls) == 3
+    assert sorted(usage.MODELS[c.model_id].short for c in spent.calls) == ["fable", "haiku", "opus"]
+    assert spent.calls[-1].usage.cache_read_tokens == 450_000  # the latest last
 
 
 def test_a_message_copied_into_a_resumed_session_is_counted_once(tmp_path):
@@ -177,7 +175,7 @@ def test_the_fit_finds_the_weighting_the_window_follows():
         # cache reads swing a lot from one interval to the next, output barely: a window that follows list price
         # tells the weightings apart
         call = usage.Call((start + timedelta(minutes=5)).timestamp(), "claude-opus-5-5",
-                          Usage(0, 1000 * (1 + i % 3), 100_000 * (1 + (i * 7) % 5), 0), subagent=False)
+                          Usage(0, 1000 * (1 + i % 3), 100_000 * (1 + (i * 7) % 5), 0))
         calls.append(call)
         week += 0.5 * usage.cost_usd(call.model_id, call.usage)
     rows.append(_sample(T0 + timedelta(minutes=300), round(week, 6)))
@@ -192,12 +190,12 @@ def test_usage_reports_an_empty_profile_without_failing(tmp_path, capsys):
     assert "no calls found" in capsys.readouterr().out
 
 
-def test_usage_prints_the_tables_and_asks_for_samples(tmp_path, capsys, freeze_clock):
+def test_usage_counts_the_calls_and_asks_for_samples(tmp_path, capsys, freeze_clock):
     freeze_clock(T0 + timedelta(hours=1))
     _write(tmp_path / "projects" / "-r" / "s.jsonl", _assistant("m1", at=T0, cache_read=450_000))
     assert main(["usage", "--profile", str(tmp_path), "--days", "2"]) == 0
     out = capsys.readouterr().out
-    assert "cache read" in out and "400k-700k" in out and "not enough samples yet" in out
+    assert "1 calls; seven-day window" in out and "cache read" not in out and "not enough samples yet" in out
 
 
 # ---- Fable's own weekly window --------------------------------------------------------------------------------

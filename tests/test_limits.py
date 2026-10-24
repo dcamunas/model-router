@@ -1,5 +1,5 @@
 """Usage limits: read from the CLI's rate-limit event (through a fake `claude` that really runs), kept until the
-exact reset, never lost to a failed probe, and acted on by the hook, the plans and `router run`."""
+exact reset, never lost to a failed probe, and acted on by the hook and the plans."""
 
 import json
 import os
