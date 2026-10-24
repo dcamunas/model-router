@@ -85,6 +85,39 @@ resets. The router finds out from the failure and then knows the exact moment:
 - **Account-wide.** When the five-hour or seven-day window is spent, every model is refused: there is
   nowhere to route to, and the router says so.
 
+## Context and the usage windows
+
+On a subscription the limit is the account's two windows, five hours and seven days. The main conversation
+spends most of them, because every turn reads the whole context again from the prompt cache. Over two weeks of
+one person's sessions, 98 % of the tokens were cache reads, and two thirds of the main conversation's tokens went
+to turns above 400k of context. Subagents, the only part the router picks a model for, spent 22 % of the tokens.
+
+- **Status line.** Claude Code gives the status line command the share of both windows already used and the size
+  of the last turn's context, on every update and at no cost. `router statusline` shows them:
+  `ctx 412k/1M · 5h 22% · week 61% (resets Sat 15:00)`, with `⚠` and `/compact?` once the context passes the
+  warning threshold. Set it once in the profile's `settings.json`:
+
+  ```json
+  "statusLine": {"type": "command", "command": "router statusline"}
+  ```
+
+  If `router` is not on the status line's PATH, give the full path of `bin/router` in the plugin's folder.
+- **Samples.** Each time a window or the context moves, the status line appends the numbers to
+  `~/.claude/model-router/usage.jsonl`: the session id, the model, the context, both windows and their resets.
+  It writes no text from the session.
+- **Warning.** The first time a session's context passes 300k, then 500k and 700k, the hook shows you one line
+  saying so, when you send a message. `router config --context-warn 400k` moves the threshold and `0` turns it
+  off. Nothing compacts on its own. No hook can run `/compact`, and only you know whether the task allows it.
+- **What spent the windows.** `router usage` adds up the transcripts of the last seven days (`--days`): tokens by
+  kind, main conversation against subagents, by model, and the main conversation's calls by context size. The
+  windows belong to the account, so when two profiles share one, `router config --usage-profiles ~/.claude-other`
+  makes it read both.
+- **Which tokens count.** Anthropic does not publish how each kind of token weighs on the windows. Claude Code
+  reports them in whole percents, so `router usage` takes the tokens spent between two rises of the seven-day
+  window as the price of a point, in three weightings: list price, list price with cache reads free, and raw
+  tokens. The one whose price stays steadiest from point to point is the one the window counts. It needs 20
+  rises seen without a gap of more than two hours; use on another device in that time shows up as noise.
+
 ## Risk floors per repository
 
 The risk is what Claude declares, and Claude can forget that in one repository a migration or anything
@@ -181,6 +214,8 @@ router project --share       # pool counts with the team through .claude/model-r
 router project --team        # turn the plugin on for everyone in the repo (Install, "In a team repository")
 router agents                # advice for the agents fixed by hand in this repo
 router limits                # models over their usage limit, until the exact reset; --check asks now
+router usage                 # tokens of the last 7 days: main vs subagents, by context size; what moves the week
+router statusline            # the status line command (reads Claude Code's JSON on stdin)
 router config --lean off     # keep every subagent on the agent Claude chose (`--lean on` undoes it)
 ```
 
@@ -202,7 +237,7 @@ environment the update installed, and never puts the older version back.
 | `MODEL_ROUTER_HOOK=0` | Turns the hooks off without uninstalling. |
 | `MODEL_ROUTER_SHARE=0` | Keeps this installation out of a repository's shared counts. |
 | `MODEL_ROUTER_HOOK_QUIET=1` | Removes the one-line notice. |
-| `MODEL_ROUTER_HOOK_LOG=0` | Stops logging decisions and measurements, and with them all learning. |
+| `MODEL_ROUTER_HOOK_LOG=0` | Stops logging decisions, measurements and status line samples, and with them all learning. |
 | `MODEL_ROUTER_UV` | Tells the plugin where `uv` is. |
 
 Decisions go to `~/.claude/model-router/hook.jsonl` and measurements to `~/.claude/model-router/subagents.jsonl`.

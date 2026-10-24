@@ -15,6 +15,10 @@ profiles on one machine share no decisions, measurements, limits or settings.
   `~/.claude/model-router/hook.jsonl` with a hash of the subagent's prompt, never its text; every measurement goes to `~/.claude/model-router/subagents.jsonl` with numbers, that hash, a
   signature of sixteen numbers (no text) and the project's path, read from the transcript Claude Code
   already keeps on your disk. A project's tuning goes to `~/.claude/model-router/projects/`.
+- The status line (`router statusline`) appends to `~/.claude/model-router/usage.jsonl` the numbers Claude Code
+  gives it: the session id, the model, the context size and both usage windows with their resets. The context
+  warning keeps, per session, the highest threshold it warned about in `usage-state.json`. `router usage` reads
+  the transcripts of the profiles it is given to count tokens and keeps nothing; none of them call anything.
 - In a repository that shares counts, the hook adds weekly files to `.claude/model-router/` with counts
   and nothing else: launches and relaunches per kind, risk and cell, and runs and repeats of the agents
   committed in the repository itself. An agent from your profile, a plugin, a link or an untracked file is

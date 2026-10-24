@@ -16,6 +16,9 @@ Events handled (one entry point, dispatch on `hook_event_name`):
   decision that routed it (`subagents.py`).
 * StopFailure: when a subagent or the turn dies on a usage limit, asks that model for its exact reset with
   one `claude -p` probe (a refused one costs nothing) and keeps it (`limits.py`).
+* UserPromptSubmit: the first time the session's context passes each band (300k, 500k, 700k by default;
+  `router config --context-warn`), a message for the person: every turn reads the whole context again
+  from the account's usage windows (`usage.py`).
 * SessionStart: finishes the last session's measurements, raises the repository's start cells that
   keep failing (`projects.py`), writes and prunes this installation's shared counts when the
   repository shares them (`shared.py`), and gives Claude the context it needs to declare kind,
@@ -48,7 +51,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any  # Any: hook events and log records are decoded JSON
 
-from . import clock, floors, limits
+from . import clock, floors, limits, usage
 from .catalog import MODELS, SHORT_TO_ID, Cell, lattice, parse_cell, worker_cell
 from .classify import classify_rules, read_only
 from .paths import DECISION_LOG, HOOK_ENV, append_jsonl, home, is_child, logging_on, quiet, read_config, read_jsonl
@@ -298,6 +301,8 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if name == "StopFailure":
         return _stop_failure(event)
+    if name == "UserPromptSubmit":
+        return None if is_child() else usage.context_warning(event)
     if name != "PreToolUse" or event.get("tool_name") != "Agent":
         return None
     return _pre_agent(event)

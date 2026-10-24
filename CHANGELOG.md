@@ -2,6 +2,25 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.21.0] - 2026-10-24
+
+On a subscription the limit is the account's usage windows, and the main conversation's context spends most of
+them. This version shows them and measures what moves them.
+
+### Added
+
+- `router statusline`, the status line command: the last turn's context and the account's five-hour and seven-day
+  windows, which Claude Code hands the status line on every update at no cost, in one line, marked once the
+  context passes the warning threshold. Each change is kept as numbers in `usage.jsonl`.
+- A context warning: the first time a session's context passes 300k, 500k and 700k tokens, the UserPromptSubmit
+  hook shows one line saying every turn reads it all again. `router config --context-warn` sets the threshold;
+  0 turns it off.
+- `router usage`: the tokens of the last days from the transcripts, by kind, main conversation against subagents,
+  by model and by context size, for one profile or several on one account (`router config --usage-profiles`);
+  the seven-day window day by day from the status line's samples; and, after 20 rises of that window, which of
+  three weightings of tokens (list price, list price with cache reads free, raw tokens) prices every point of the
+  week the same.
+
 ## [0.20.0] - 2026-10-23
 
 The plugin is the product: what a plugin user never runs is gone, and every setting has one place.

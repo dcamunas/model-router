@@ -44,8 +44,18 @@ router limits --check fable
 # What has happened so far and what it has learned
 router stats
 
+# The tokens of the last 7 days: kind, main conversation vs subagents, model, context size; and, once the status
+# line has seen 20 rises of the seven-day window, which weighting of tokens the window follows
+router usage --days 7
+
+# The status line command: reads the JSON Claude Code sends on stdin, prints one line, keeps a sample
+router statusline
+
 # The models it may use, the judge for full verification, the read-only agent
 router config --models haiku,sonnet,opus --judge opus/xhigh --lean on
+
+# The context warning's threshold (0 = off), and the other profiles on the same account for `router usage`
+router config --context-warn 300k --usage-profiles ~/.claude-other
 
 # Is everything in place: claude, the plugin, the settings, limits, floors and state
 router doctor

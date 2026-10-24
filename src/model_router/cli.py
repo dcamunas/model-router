@@ -1,6 +1,7 @@
 """`router` on the command line: plan (no API), run (live), judge (verify an answer written elsewhere), stats,
 doctor, cells, config, project (what the hook learned in a repository, its floors, its team setup), agents (advice
-for agents fixed by hand) and limits (the models over their usage limit and their exact reset).
+for agents fixed by hand), limits (the models over their usage limit and their exact reset), usage (the tokens the
+transcripts spent and what moves the account's windows) and statusline (the status line command).
 docs/cli.md documents each command.
 """
 
@@ -9,16 +10,18 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
 import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any  # Any: decoded JSON (records, tunings, configs)
 
-from . import agents, clock, floors, limits, projects, shared, team
+from . import agents, clock, floors, limits, projects, shared, team, usage
 from .catalog import (
     MODELS,
     PLAN_INPUT_TOKENS,
@@ -27,6 +30,7 @@ from .catalog import (
     SHORT_TO_ID,
     UnknownModelError,
     configured_models,
+    cost_usd,
     lattice,
     parse_cell,
     parse_models,
@@ -38,7 +42,18 @@ from .client import ClaudeClient, ClientUnavailableError, Completion, LiveClient
 from .fmt import money, table
 from .hook import start_in_force
 from .ledger import Ledger, summarize
-from .paths import DECISION_LOG, MAIN_LEDGER, claude_profile, config_path, home, read_config, read_jsonl, write_config
+from .paths import (
+    DECISION_LOG,
+    MAIN_LEDGER,
+    claude_profile,
+    config_path,
+    home,
+    is_child,
+    logging_on,
+    read_config,
+    read_jsonl,
+    write_config,
+)
 from .policy import DEFAULT_JUDGE, FLOOR, Policy, default_judge
 from .runner import Router, TaskResult
 from .subagents import LOG_FILE as SUBAGENT_LOG
@@ -311,6 +326,134 @@ def _cmd_limits(args: argparse.Namespace) -> int:
         print(f"\naccount windows (as of {_local(limits.checked())})")
         print(table(["window", "used", "resets"], rows))
     return 0
+
+
+def _cmd_statusline(_args: argparse.Namespace) -> int:
+    """Print the status line for the JSON Claude Code sends on stdin and keep a sample of it. A status line must
+    never fail: unreadable input prints nothing, a sample that cannot be written is skipped.
+    """
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return 0
+    try:
+        status = usage.read_status(data if isinstance(data, dict) else {})
+        print(usage.statusline_text(status, warn_at=usage.warn_threshold()), flush=True)
+        if logging_on() and not is_child():
+            usage.keep_sample(status)
+    except Exception:  # noqa: BLE001 - a status line never fails; the next update tries again
+        return 0
+    return 0
+
+
+def _cmd_usage(args: argparse.Namespace) -> int:
+    profiles = _usage_profiles(args.profile)
+    spent = usage.spent(profiles, since=usage.since_days(args.days))
+    print(f"last {args.days} days, from the transcripts of {', '.join(_home_relative(p) for p in profiles)}")
+    if not spent.calls:
+        print("no calls found")
+        return 0
+    print(_spent_table(spent))
+    print("\nby model (tokens; list price as a weight, not a bill)")
+    print(table(["part", "model", "calls", "tokens", "cache read", "list price"], _model_rows(spent)))
+    print("\nthe main conversation's calls by context size (every call reads its whole context again)")
+    print(table(["context", "calls", "tokens", "share"], _band_rows(spent)))
+    rows = usage.samples(profiles)
+    spans = usage.intervals(rows, since=spent.since.timestamp())  # only intervals whose calls were all read
+    print(f"\nseven-day window: {len(rows)} status line samples, {len(spans)} intervals")
+    daily = _daily_window(spans)
+    if daily:
+        print(table(["day", "points of the week used"], daily))
+    fits = usage.fit(spent.calls, spans)
+    if not fits:
+        print(f"which tokens move the window: not enough samples yet ({len(spans)} intervals, "
+              f"{usage.MIN_INTERVALS} needed); `router statusline` keeps them while you work")
+        return 0
+    print("\nwhich tokens move the window: one point of the week priced in each weighting; the steadiest price "
+          "(lowest spread) is the weighting the window counts")
+    print(table(["weighting", "intervals", "spread", "one point of the week"],
+                [[f.name, f.intervals, f"{f.spread:.0%}", _per_point(f)] for f in fits]))
+    return 0
+
+
+def _usage_profiles(given: list[Path] | None) -> list[Path]:
+    """Return the profiles `router usage` reads: the ones given, else the profile in use plus `usage_profiles` from
+    config.json (other profiles signed in to the same account, whose windows they share).
+    """
+    if given:
+        paths = [p.expanduser().absolute() for p in given]
+    else:
+        extra = read_config().get("usage_profiles")
+        listed = [Path(str(p)).expanduser().absolute() for p in extra] if isinstance(extra, list) else []
+        paths = [claude_profile(), *listed]
+    return list(dict.fromkeys(paths))
+
+
+def _home_relative(path: Path) -> str:
+    with contextlib.suppress(ValueError):
+        return "~/" + str(path.relative_to(Path.home()))
+    return str(path)
+
+
+def _spent_table(spent: usage.Spent) -> str:
+    parts = ("main", "subagents")
+    sums = {part: usage.Tally() for part in parts}
+    for part in parts:
+        for tally in spent.parts.get(part, {}).values():
+            for name in ("calls", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+                setattr(sums[part], name, getattr(sums[part], name) + getattr(tally, name))
+    grand = sum(t.total for t in sums.values()) or 1
+    rows = []
+    for label, name in (("cache read", "cache_read_tokens"), ("cache write", "cache_write_tokens"),
+                        ("output", "output_tokens"), ("input", "input_tokens")):
+        values = [getattr(sums[p], name) for p in parts]
+        rows.append([label, *(_millions(v) for v in values), f"{sum(values) / grand:.1%}"])
+    rows.append(["all tokens", *(_millions(sums[p].total) for p in parts), "100%"])
+    rows.append(["share", *(f"{sums[p].total / grand:.0%}" for p in parts), ""])
+    rows.append(["calls", *(f"{sums[p].calls:,}" for p in parts), ""])
+    return table(["tokens", "main", "subagents", "of all"], rows)
+
+
+def _model_rows(spent: usage.Spent) -> list[list[object]]:
+    weights: dict[tuple[str, str], float] = {}
+    for call in spent.calls:
+        key = ("subagents" if call.subagent else "main", MODELS[call.model_id].short)
+        weights[key] = weights.get(key, 0.0) + cost_usd(call.model_id, call.usage)
+    rows = []
+    for part in ("main", "subagents"):
+        for model, tally in sorted(spent.parts.get(part, {}).items(), key=lambda kv: -kv[1].total):
+            rows.append([part, model, f"{tally.calls:,}", _millions(tally.total), _millions(tally.cache_read_tokens),
+                         money(weights.get((part, model), 0.0))])
+    return rows
+
+
+def _band_rows(spent: usage.Spent) -> list[list[object]]:
+    total = sum(t.total for t in spent.bands.values()) or 1
+    edges = [*usage.REPORT_BANDS, None]
+    rows = []
+    for low, high in zip(edges, edges[1:], strict=False):
+        if low is None:
+            continue
+        tally = spent.bands.get(low, usage.Tally())
+        label = f"{usage.tokens(low)}-{usage.tokens(high)}" if high else f"{usage.tokens(low)}+"
+        rows.append([label, f"{tally.calls:,}", _millions(tally.total), f"{tally.total / total:.0%}"])
+    return rows
+
+
+def _daily_window(spans: list[usage.Interval]) -> list[list[object]]:
+    days: dict[str, float] = {}
+    for span in spans:
+        day = datetime.fromtimestamp(span.end).astimezone().strftime("%a %d/%m")
+        days[day] = days.get(day, 0.0) + span.used
+    return [[day, f"{used:.1f}"] for day, used in days.items()]
+
+
+def _per_point(f: usage.Fit) -> str:
+    return _millions(int(f.per_point)) + " tokens" if f.unit == "tokens" else f"{money(f.per_point)} ({f.unit})"
+
+
+def _millions(n: int) -> str:
+    return f"{n / 1_000_000:,.1f}M"
 
 
 def _local(moment: object) -> str:
@@ -627,13 +770,37 @@ def _cmd_config(args: argparse.Namespace) -> int:
         write_config(models=_model_names(args.models))
     if args.judge is not None:
         write_config(judge=parse_cell(args.judge).label)
+    if args.context_warn is not None:
+        write_config(context_warn=_token_count(args.context_warn))
+    if args.usage_profiles is not None:
+        listed = [] if args.usage_profiles.strip().lower() == "none" else [
+            str(Path(p.strip()).expanduser().absolute()) for p in args.usage_profiles.split(",") if p.strip()]
+        write_config(usage_profiles=listed or None)
     cfg = read_config()
     print(f"profile for `router run`: {claude_profile()}")
     print(f"available models: {', '.join(MODELS[m].short for m in configured_models())}")
     print(f"judge for full verification: {cfg.get('judge') or DEFAULT_JUDGE + ' (default)'}")
     print(f"read-only agent for reading tasks: {'off' if cfg.get('lean') is False else 'on'}")
+    warn = usage.warn_threshold()
+    print(f"context warning from: {usage.tokens(warn) + ' tokens' if warn else 'off'}"
+          + ("" if "context_warn" in cfg else " (default)"))
+    print(f"profiles `router usage` reads: {', '.join(_home_relative(p) for p in _usage_profiles(None))}")
     print(f"(in {config_path()})")
     return 0
+
+
+def _token_count(text: str) -> int:
+    """Return a token count written as 300000, 300k or 1.2M; 0 turns the context warning off.
+
+    Raises:
+        ValueError: not a count.
+    """
+    raw = text.strip().lower().replace("_", "").replace(",", "")
+    scale = {"k": 1_000, "m": 1_000_000}.get(raw[-1:], 1)
+    value = float(raw[:-1] if scale > 1 else raw)
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"not a token count: {text}")
+    return int(value * scale)
 
 
 def _model_names(models: str) -> list[str] | None:
@@ -721,7 +888,22 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--judge", help="cell that judges in full mode, e.g. opus/xhigh (effort capped at xhigh)")
     sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
                     "to the read-only agent, which carries a fraction of the general agent's context (default on)")
+    sg.add_argument("--context-warn", metavar="TOKENS", help="warn once a session's context passes this many tokens, "
+                    "e.g. 300k (default), then 200k further up; 0 turns the warning off")
+    sg.add_argument("--usage-profiles", metavar="DIR,DIR", help="other Claude profiles signed in to the same account, "
+                    "which `router usage` reads too (they share its windows); none clears them")
     sg.set_defaults(func=_cmd_config)
+
+    su = sub.add_parser("usage", help="the tokens the transcripts spent, main conversation and subagents, by context "
+                        "size, and which of them move the account's seven-day window")
+    su.add_argument("--days", type=int, default=7, help="how many days back (default 7)")
+    su.add_argument("--profile", type=Path, action="append", help="a Claude profile to read (repeatable; default: the "
+                    "one in use plus `router config --usage-profiles`)")
+    su.set_defaults(func=_cmd_usage)
+
+    sst = sub.add_parser("statusline", help="the status line command: context and the account's windows, read from "
+                         "the JSON Claude Code sends on stdin; keeps a sample of each change")
+    sst.set_defaults(func=_cmd_statusline)
 
     return p
 
