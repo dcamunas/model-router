@@ -24,7 +24,9 @@ The marketplace `dcamunas` lives at [dcamunas/claude-plugins](https://github.com
 this repository is the plugin. The first session takes a few seconds longer: the hook builds its Python
 environment with `uv` in the plugin's data directory (`plugins/data/model-router-dcamunas/` inside the
 profile), and builds it again with every new plugin version. `uv` has to be on the machine
-(`MODEL_ROUTER_UV=/path/to/uv` when it is not on the PATH).
+(`MODEL_ROUTER_UV=/path/to/uv` when it is not on the PATH). The environment uses the Python the plugin pins
+(3.12, its `.python-version`); `uv` downloads it when the machine has none. The project's Python and its
+virtualenvs are not touched, whichever version they run.
 
 In that first session the router also writes two keys into the profile's `settings.json`, each one only if
 the file does not have it yet, and says so in one line. Claude Code reads them when a session starts, so they

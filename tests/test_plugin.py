@@ -67,6 +67,9 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "Model router active" in json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
     assert (data / "installed-version").read_text() == VERSION
+    pinned = (ROOT / ".python-version").read_text().strip()
+    out = subprocess.run([str(data / "venv" / "bin" / "python"), "--version"], capture_output=True, text=True).stdout
+    assert out.startswith(f"Python {pinned}"), out  # the plugin's pin, whatever the session's directory says
     venv_mtime = (data / "venv" / "bin" / "router-hook").stat().st_mtime
     event = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s", "cwd": "/",
              "tool_input": {"subagent_type": "general-purpose",
@@ -92,3 +95,16 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     assert (data / "installed-version").read_text() == "999.0.0"  # and never puts its older version back
     assert (data / "venv" / "bin" / "router-hook").stat().st_mtime == venv_mtime
 
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
+def test_bootstrap_rebuilds_a_venv_built_on_another_python(tmp_path):
+    data = tmp_path / "data"
+    fake = data / "venv" / "bin" / "python"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!/bin/sh\nexit 1\n")  # an interpreter that fails the version check
+    fake.chmod(0o755)
+    proc = run_hook(data, {"hook_event_name": "SessionStart", "source": "startup"}, "--bootstrap")
+    assert proc.returncode == 0, proc.stderr
+    assert "Model router active" in json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert b"exit 1" not in fake.read_bytes() and (data / "venv" / "bin" / "router-hook").is_file()

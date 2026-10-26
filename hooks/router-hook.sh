@@ -58,7 +58,14 @@ if [ -z "$stale" ] && { [ ! -x "$hook" ] || [ "$installed" != "$version" ]; }; t
         exit 0
     fi
     mkdir -p "$data"
-    if [ ! -x "$venv/bin/python" ] && ! "$uv" venv -q "$venv" </dev/null >&2; then
+    # The plugin's .python-version names the interpreter, passed as --python so that it wins over the session's
+    # directory, an active virtualenv and UV_PYTHON; uv downloads it when the machine has none. An environment
+    # built on another version (by an older hook) is rebuilt.
+    python=$(cat "$root/.python-version" 2>/dev/null || true)
+    if [ -x "$venv/bin/python" ] && [ -n "$python" ] && ! "$venv/bin/python" -c "import sys; sys.exit(sys.version_info[:2] != tuple(map(int, '$python'.split('.')[:2])))" 2>/dev/null; then
+        rm -rf "$venv"
+    fi
+    if [ ! -x "$venv/bin/python" ] && ! "$uv" venv -q ${python:+--python "$python"} "$venv" </dev/null >&2; then
         echo "router-hook: could not create the environment in $venv; see the uv error above" >&2
         exit 0
     fi

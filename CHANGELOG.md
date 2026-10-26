@@ -2,6 +2,16 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.26.1] - 2026-10-26
+
+### Fixed
+
+- The hook built the plugin's environment with whatever Python `uv` resolved from the session's directory
+  (the project's `.python-version`, an active virtualenv, `UV_PYTHON`), so a project on 3.11 got an environment
+  the package could not install into. The environment is now built with the version in the plugin's own
+  `.python-version` (`uv venv --python`), downloaded by `uv` when the machine has none; one built on another
+  version is rebuilt on the next plugin version. The user's Python and virtualenvs are not touched.
+
 ## [0.26.0] - 2026-10-25
 
 ### Added
