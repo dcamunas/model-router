@@ -2,6 +2,15 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.27.0] - 2026-10-26
+
+### Added
+
+- `/model-router:doctor` inside Claude Code runs `router doctor` and reports its lines; `/model-router:doctor --live`
+  also asks Claude once per model. Only the user starts it.
+- `router doctor` names the Python of the plugin environment (from its `pyvenv.cfg`), so an environment built
+  on the wrong version shows.
+
 ## [0.26.1] - 2026-10-26
 
 ### Fixed

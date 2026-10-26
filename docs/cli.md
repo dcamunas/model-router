@@ -49,8 +49,8 @@ router config --min-effort medium
 # The other profiles signed in to the same account, which `router usage` reads too
 router config --usage-profiles ~/.claude-other
 
-# Is everything in place: claude, the plugin, the settings, limits, floors and state
-router doctor
+# Is everything in place: claude, the plugin and its Python, the settings, limits, floors and state
+router doctor                # inside Claude Code: /model-router:doctor
 ```
 
 Exit codes: 0 when the command did its job, 1 when a check of `router doctor` failed, 2 when the command could

@@ -249,7 +249,8 @@ router config --natives off  # stop writing the native settings below into setti
 `settings.json` the keys that are missing there: `autoCompactWindow: 400000` and the status line. It leaves the model
 of a subagent nobody gave one to Claude Code: such a subagent, like the subsession `/code-review` runs in, takes the
 chat's model. The record of what it set is `~/.claude/model-router/natives.json`. The skill `router` covers what a
-hook cannot do: check a subagent's result by risk and relaunch it higher when it fails. A launch takes the hook about 50 milliseconds, and the
+hook cannot do: check a subagent's result by risk and relaunch it higher when it fails. `/model-router:doctor`
+runs `router doctor` from the chat and reports its lines (`--live` also asks Claude once per model). A launch takes the hook about 50 milliseconds, and the
 hooks call no API, with one exception: after a usage-limit failure, the StopFailure hook asks the limited model for one
 word (a `claude -p` call of up to 30 seconds) to learn its reset. The status line, when you set it, asks Fable for one
 word at most every 30 minutes, in the background, to read Fable's weekly window. They block only a launch that names a

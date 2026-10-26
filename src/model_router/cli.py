@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -496,6 +497,16 @@ def _hook_decisions(path: Path) -> list[list[Any]]:
     return [[*k, n] for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
 
+def _venv_python(venv: Path) -> str:
+    """Read the Python version recorded in `venv/pyvenv.cfg`; an empty string when there is none."""
+    try:
+        text = (venv / "pyvenv.cfg").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r"^version(?:_info)? *= *(\S+)", text, re.M)
+    return match.group(1) if match else ""
+
+
 def _profile_checks(profile: Path, *, enabled_by: Path | None = None) -> list[tuple[bool, str]]:
     """Check that the plugin is on in the Claude profile at `profile` (or through the repository's settings at
     `enabled_by`) and that its environment is built, and report the main chat's model and effort.
@@ -512,10 +523,13 @@ def _profile_checks(profile: Path, *, enabled_by: Path | None = None) -> list[tu
     if not on_here and enabled_by is None:
         checks = [(False, f"plugin {PLUGIN_ID} is not enabled in {settings}: `claude plugin install {PLUGIN_ID}`")]
     else:
-        venv_hook = profile / "plugins" / "data" / PLUGIN_ID.replace("@", "-") / "venv" / "bin" / "router-hook"
+        venv = profile / "plugins" / "data" / PLUGIN_ID.replace("@", "-") / "venv"
+        venv_hook = venv / "bin" / "router-hook"
         ready = venv_hook.exists()
+        python = _venv_python(venv)
+        note = (f" (python {python})" if python else "") if ready else " (built when a session starts; needs uv)"
         checks = [(True, f"plugin {PLUGIN_ID} enabled in {settings if on_here else enabled_by}"),
-                  (ready, f"plugin environment: {venv_hook}" + ("" if ready else " (built when a session starts; needs uv)"))]
+                  (ready, f"plugin environment: {venv_hook}{note}")]
     model = str(data.get("model", "default"))
     model_settings = data.get("modelSettings")
     per_model = model_settings.get(SHORT_TO_ID.get(model, model)) if isinstance(model_settings, dict) else None

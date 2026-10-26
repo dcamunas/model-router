@@ -28,6 +28,8 @@ def test_the_manifest_names_the_plugin_and_the_version_of_pyproject():
     assert plugin["name"] == "model-router" and plugin["version"] == VERSION
     skills = ROOT / plugin["skills"]
     assert plugin["skills"].startswith("./") and (skills / "router" / "SKILL.md").is_file()
+    doctor = (skills / "doctor" / "SKILL.md").read_text()
+    assert "disable-model-invocation: true" in doctor and '"${CLAUDE_PLUGIN_ROOT}"/bin/router doctor' in doctor
     assert [(ROOT / agent).is_file() for agent in plugin["agents"]] == [True]
     hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
     commands = [h["command"] for entries in hooks.values() for e in entries for h in e["hooks"]]

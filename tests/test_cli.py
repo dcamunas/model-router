@@ -142,7 +142,13 @@ def test_doctor_recognises_the_plugin_install(tmp_path, monkeypatch, capsys):
     venv_hook.parent.mkdir(parents=True)
     venv_hook.write_text("")
     main(["doctor"])
-    assert "ok     plugin environment" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "ok     plugin environment" in out and "python" not in out.split("plugin environment")[1].splitlines()[0]
+    (venv_hook.parents[1] / "pyvenv.cfg").write_text("home = /usr/bin\nversion_info = 3.12.14\n")
+    main(["doctor"])
+    assert "ok     plugin environment" in capsys.readouterr().out.replace("(python 3.12.14)", "")
+    main(["doctor"])
+    assert "(python 3.12.14)" in capsys.readouterr().out
 
 
 def test_every_subcommand_prints_its_help(capsys):

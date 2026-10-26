@@ -13,7 +13,7 @@
 </picture>
 
 The plugin does the first two steps for every subagent. The `router` skill asks Claude for the check
-and the climb, and each repository learns from the relaunches.
+and the climb, and each repository learns from the relaunches. `/model-router:doctor` checks the install.
 
 A subagent's bill is mostly its context, read again on every turn. One review subagent measured in
 this repository ran on Opus for 36 turns and read 3.6M cached tokens: 1.43 USD of context alone, at
