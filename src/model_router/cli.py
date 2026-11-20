@@ -147,8 +147,10 @@ def _cmd_stats(_args: argparse.Namespace) -> int:
     measured = load_subagents(home() / SUBAGENT_LOG)
     if measured:
         rows = summary_rows(measured)
-        print(("\n" if hook_rows else "") + "Claude Code subagents, measured from their transcripts (list price, at "
-              "least: output tokens are a lower bound; cache reads are the context read again every turn)")
+        print(
+            ("\n" if hook_rows else "") + "Claude Code subagents, measured from their transcripts (list price, at "
+            "least: output tokens are a lower bound; cache reads are the context read again every turn)"
+        )
         print(table(["agent", "model/effort", "n", "turns", "peak ctx", "cache read", "cost ≥", "total ≥"], rows))
     if not hook_rows and not measured:
         print(f"no hook decisions and no measured subagents in {home()} yet")
@@ -159,8 +161,10 @@ def _cmd_project(args: argparse.Namespace) -> int:
     where = args.path or Path.cwd()
     project = projects.project_of(str(where.expanduser()))
     if project is None:
-        raise CommandError(f"not inside a git repository: {where}. The router learns per repository: run it inside "
-                           "one, or pass a path inside one")
+        raise CommandError(
+            f"not inside a git repository: {where}. The router learns per repository: run it inside "
+            "one, or pass a path inside one"
+        )
     if args.team:
         return _turn_on_for_team(project)
     if args.reset:
@@ -200,15 +204,25 @@ def _cmd_limits(args: argparse.Namespace) -> int:
             print(f"{spec.short}: " + (f"limited until {limit.when()} ({limit.window})" if limit else "available"))
     held = limits.active()
     if held:
-        print(table(["model", "limited until", "window"],
-                    [["every model" if n == limits.ALL_MODELS else n, lim.when(), lim.window]
-                     for n, lim in sorted(held.items())]))
+        print(
+            table(
+                ["model", "limited until", "window"],
+                [["every model" if n == limits.ALL_MODELS else n, lim.when(), lim.window] for n, lim in sorted(held.items())],
+            )
+        )
     else:
         print("no model is over its usage limit")
     seen = limits.windows()
     if seen:
-        rows = [[name, f"{float(w.get('utilization') or 0):.0%}", _local(w.get("resets_at")),
-                 _local(w.get("seen") or limits.checked())] for name, w in sorted(seen.items())]
+        rows = [
+            [
+                name,
+                f"{float(w.get('utilization') or 0):.0%}",
+                _local(w.get("resets_at")),
+                _local(w.get("seen") or limits.checked()),
+            ]
+            for name, w in sorted(seen.items())
+        ]
         print("\naccount windows (seven_day_overage_included is Fable's own week)")
         print(table(["window", "used", "resets", "seen"], rows))
     return 0
@@ -252,13 +266,21 @@ def _cmd_usage(args: argparse.Namespace) -> int:
         print(table(["day", "points of the week used"], daily))
     fits = usage.fit(spent.calls, spans)
     if not fits:
-        print(f"which tokens move the window: not enough samples yet ({len(spans)} intervals, "
-              f"{usage.MIN_INTERVALS} needed); `router statusline` keeps them while you work")
+        print(
+            f"which tokens move the window: not enough samples yet ({len(spans)} intervals, "
+            f"{usage.MIN_INTERVALS} needed); `router statusline` keeps them while you work"
+        )
         return 0
-    print("\nwhich tokens move the window: one point of the week priced in each weighting; the steadiest price "
-          "(lowest spread) is the weighting the window counts")
-    print(table(["weighting", "intervals", "spread", "one point of the week"],
-                [[f.name, f.intervals, f"{f.spread:.0%}", _per_point(f)] for f in fits]))
+    print(
+        "\nwhich tokens move the window: one point of the week priced in each weighting; the steadiest price "
+        "(lowest spread) is the weighting the window counts"
+    )
+    print(
+        table(
+            ["weighting", "intervals", "spread", "one point of the week"],
+            [[f.name, f.intervals, f"{f.spread:.0%}", _per_point(f)] for f in fits],
+        )
+    )
     return 0
 
 
@@ -311,7 +333,8 @@ def _cmd_agents(args: argparse.Namespace) -> int:
         finalize_subagents(home() / SUBAGENT_LOG)
     committed = agents.committed_agents(project) or {}
     pooled, teammates = shared.pooled_agents(
-        project, keep=lambda agent, label: agent in committed and agents.names_cell(committed[agent], parse_cell(label)))
+        project, keep=lambda agent, label: agent in committed and agents.names_cell(committed[agent], parse_cell(label))
+    )
     advice = agents.advise(load_subagents(home() / SUBAGENT_LOG), project, cells=lattice(), team=pooled)
     if args.json:
         print(json.dumps([a.to_dict() for a in advice], indent=2))
@@ -319,18 +342,35 @@ def _cmd_agents(args: argparse.Namespace) -> int:
     if not advice:
         print(f"no agent with a fixed model has been measured in {project} yet")
         return 0
-    rows = [[a.agent, a.cell.label, a.runs, a.team_runs, a.repeated, f"{a.mean_turns:.1f}" if a.runs > a.team_runs
-             else "-", money(a.total_cost), _advice_text(a)] for a in advice]
-    shared_from = (f"; runs include {teammates} teammate installation{'s' if teammates != 1 else ''} through the "
-                   "shared counts" if teammates else "")
-    print(f"agents with a fixed model in {project} (measured; turns and spend from this machine, list price at "
-          f"least{shared_from})")
+    rows = [
+        [
+            a.agent,
+            a.cell.label,
+            a.runs,
+            a.team_runs,
+            a.repeated,
+            f"{a.mean_turns:.1f}" if a.runs > a.team_runs else "-",
+            money(a.total_cost),
+            _advice_text(a),
+        ]
+        for a in advice
+    ]
+    shared_from = (
+        f"; runs include {teammates} teammate installation{'s' if teammates != 1 else ''} through the shared counts"
+        if teammates
+        else ""
+    )
+    print(
+        f"agents with a fixed model in {project} (measured; turns and spend from this machine, list price at least{shared_from})"
+    )
     print(table(["agent", "cell", "runs", "team", "repeated", "turns", "spent", "advice"], rows))
     for a in advice:
         if a.to is not None and (path := agents.agent_file(project, a.agent)):
             print(f"  {a.agent}: {path}")
-    print("Advice only: change `model:` and `effort:` in the agent yourself. A saving reprices the measured tokens at "
-          "the new model's prices; a change of effort also changes the tokens, which is not estimated.")
+    print(
+        "Advice only: change `model:` and `effort:` in the agent yourself. A saving reprices the measured tokens at "
+        "the new model's prices; a change of effort also changes the tokens, which is not estimated."
+    )
     return 0
 
 
@@ -371,18 +411,27 @@ def _turn_on_sharing(project: str, records: list[dict[str, Any]]) -> None:
     """Create the repository's shared-counts directory, prune it, and add this installation's settled weeks."""
     folder = shared.shared_dir(project)
     if folder.parent.is_symlink() or folder.is_symlink():
-        raise CommandError(f"{folder} is reached through a link: shared counts need a plain directory in the "
-                           "repository. Replace the link with a directory and run `router project --share` again")
+        raise CommandError(
+            f"{folder} is reached through a link: shared counts need a plain directory in the "
+            "repository. Replace the link with a directory and run `router project --share` again"
+        )
     folder.mkdir(parents=True, exist_ok=True)
     (folder / ".gitkeep").touch()  # git keeps no empty directory, and the directory is the opt-in
     if not shared.sharing(project):
-        raise CommandError(f"{folder} cannot be used for shared counts because {shared.SHARE_ENV}=0 keeps this "
-                           "installation out. Unset it and run `router project --share` again")
+        raise CommandError(
+            f"{folder} cannot be used for shared counts because {shared.SHARE_ENV}=0 keeps this "
+            "installation out. Unset it and run `router project --share` again"
+        )
     shared.prune(project)
     written = shared.write_own(project, records, decision_log=home() / DECISION_LOG)
-    print(f"{folder}: shared counts on; commit it, and every teammate's router takes part"
-          + (f" (added {len(written)} week file(s))" if written else
-             " (a week is added a day after it closes, if the router routed subagents in it)"))
+    print(
+        f"{folder}: shared counts on; commit it, and every teammate's router takes part"
+        + (
+            f" (added {len(written)} week file(s))"
+            if written
+            else " (a week is added a day after it closes, if the router routed subagents in it)"
+        )
+    )
 
 
 def _project_evidence(project: str, records: list[dict[str, Any]], *, since: str | None) -> _Evidence:
@@ -396,28 +445,34 @@ def _print_evidence(project: str, evidence: _Evidence, *, since: str | None) -> 
     """Print where a project's evidence comes from and its counts per kind, risk and start cell."""
     print(f"project {project}" + (f" (evidence since {since[:MINUTE_CHARS]})" if since else ""))
     if shared.sharing(project):
-        print(f"shared counts: on, {evidence.installs} other installation(s) with evidence in "
-              f"{shared.shared_dir(project)}")
+        print(f"shared counts: on, {evidence.installs} other installation(s) with evidence in {shared.shared_dir(project)}")
     if not evidence.both:
         print("no subagent routed here yet with model and effort both chosen by the router")
         return
-    rows = [[kind, risk, cell, tally["n"], tally["fails"], evidence.others.get((kind, risk, cell), {}).get("n", 0)]
-            for (kind, risk, cell), tally in sorted(evidence.both.items())]
+    rows = [
+        [kind, risk, cell, tally["n"], tally["fails"], evidence.others.get((kind, risk, cell), {}).get("n", 0)]
+        for (kind, risk, cell), tally in sorted(evidence.both.items())
+    ]
     print("\nsubagents the router routed here (relaunched = launched again higher, same kind and risk: a fail)")
     print(table(["kind", "risk", "start cell", "n", "relaunched", "n from others"], rows))
 
 
 def _print_tuning(project: str, tuning: dict[str, Any]) -> None:
     """Print a project's tuning in force and its last changes."""
-    tuned = [[kind, risk, entry["cell"], entry["base"]] for kind, row in sorted(tuning.get("start", {}).items())
-             for risk, entry in sorted(row.items())]
+    tuned = [
+        [kind, risk, entry["cell"], entry["base"]]
+        for kind, row in sorted(tuning.get("start", {}).items())
+        for risk, entry in sorted(row.items())
+    ]
     if not tuned:
         return
     print(f"\ntuning in force ({projects.tuning_path(project)})")
     print(table(["kind", "risk", "starts on", "instead of"], tuned))
     for change in [change for change in tuning.get("changes", []) if change.get("kind")][-CHANGES_SHOWN:]:
-        print(f"  {change['at'][:MINUTE_CHARS]} {change['what']} {change['kind']} ({change['risk']}) from {change['from']} "
-              f"to {change['to']}, {change['relaunched']} of {change['n']} relaunched")
+        print(
+            f"  {change['at'][:MINUTE_CHARS]} {change['what']} {change['kind']} ({change['risk']}) from {change['from']} "
+            f"to {change['to']}, {change['relaunched']} of {change['n']} relaunched"
+        )
 
 
 def _print_floors(project: str) -> None:
@@ -431,8 +486,12 @@ def _print_floors(project: str) -> None:
             hits[str(record["floor_match"])] = hits.get(str(record["floor_match"]), 0) + 1
     print(f"\nrisk floors ({found.path})")
     if found.rules:
-        print(table(["at least", "when the brief says", "raised"],
-                    [[rule.risk, rule.label, hits.get(rule.match, 0)] for rule in found.rules]))
+        print(
+            table(
+                ["at least", "when the brief says", "raised"],
+                [[rule.risk, rule.label, hits.get(rule.match, 0)] for rule in found.rules],
+            )
+        )
     for problem in found.problems:
         print(f"  not used: {problem}")
 
@@ -447,15 +506,23 @@ def _team_check(profile: Path) -> tuple[Path | None, tuple[bool, str] | None]:
     settings = team.settings_path(project)
     if team.installed_in(profile, project):
         return settings, (True, f"plugin turned on for the team in {settings} and installed in {profile}")
-    return None, (False, f"plugin turned on for the team in {settings} but not installed in {profile}: run "
-                         f"`{team.INSTALL_COMMAND}` here once, then start a new session")
+    return None, (
+        False,
+        f"plugin turned on for the team in {settings} but not installed in {profile}: run "
+        f"`{team.INSTALL_COMMAND}` here once, then start a new session",
+    )
 
 
 def _limits_checks() -> list[tuple[bool, str]]:
     """Report the models over their usage limit and until when; informative, so never a failure."""
-    return [(True, f"usage limit: {'every model' if name == limits.ALL_MODELS else name} until {limit.when()} "
-                   f"({limit.window}); `router limits` for the windows")
-            for name, limit in sorted(limits.active().items())]
+    return [
+        (
+            True,
+            f"usage limit: {'every model' if name == limits.ALL_MODELS else name} until {limit.when()} "
+            f"({limit.window}); `router limits` for the windows",
+        )
+        for name, limit in sorted(limits.active().items())
+    ]
 
 
 def _floors_check() -> tuple[bool, str] | None:
@@ -473,19 +540,24 @@ def _proposals(project: str, tuning: dict[str, Any], *, evidence: _Evidence) -> 
     and cheaper starts.
     """
     current = start_in_force(tuning)
-    return (projects.team_raises(evidence.both, current, local=evidence.mine)
-            + projects.propose_lower(project, evidence.both, floors=FLOOR, current=current))
+    return projects.team_raises(evidence.both, current, local=evidence.mine) + projects.propose_lower(
+        project, evidence.both, floors=FLOOR, current=current
+    )
 
 
 def _print_proposals(proposals: list[Change]) -> None:
     """Print the changes that wait for a hand, if there are any."""
     if not proposals:
         return
-    print("\nchanges the evidence supports, not applied (raises from other installations' counts alone, "
-          f"cheaper starts after {projects.DOWN_N}+ launches with none relaunched):")
+    print(
+        "\nchanges the evidence supports, not applied (raises from other installations' counts alone, "
+        f"cheaper starts after {projects.DOWN_N}+ launches with none relaunched):"
+    )
     for change in proposals:
-        print(f"  {change['what']} {change['kind']} ({change['risk']}) from {change['from']} to {change['to']}, "
-              f"{change['relaunched']} of {change['n']} relaunched")
+        print(
+            f"  {change['what']} {change['kind']} ({change['risk']}) from {change['from']} to {change['to']}, "
+            f"{change['relaunched']} of {change['n']} relaunched"
+        )
 
 
 def _hook_decisions(path: Path) -> list[list[Any]]:
@@ -528,8 +600,10 @@ def _profile_checks(profile: Path, *, enabled_by: Path | None = None) -> list[tu
         ready = venv_hook.exists()
         python = _venv_python(venv)
         note = (f" (python {python})" if python else "") if ready else " (built when a session starts; needs uv)"
-        checks = [(True, f"plugin {PLUGIN_ID} enabled in {settings if on_here else enabled_by}"),
-                  (ready, f"plugin environment: {venv_hook}{note}")]
+        checks = [
+            (True, f"plugin {PLUGIN_ID} enabled in {settings if on_here else enabled_by}"),
+            (ready, f"plugin environment: {venv_hook}{note}"),
+        ]
     model = str(data.get("model", "default"))
     model_settings = data.get("modelSettings")
     per_model = model_settings.get(SHORT_TO_ID.get(model, model)) if isinstance(model_settings, dict) else None
@@ -544,8 +618,9 @@ def _claude_check() -> tuple[bool, str]:
     if not claude:
         return False, "claude is not on the PATH: install Claude Code"
     try:
-        version = subprocess.run([claude, "--version"], capture_output=True, text=True, timeout=CLAUDE_VERSION_SECONDS,
-                                 check=False).stdout.strip()
+        version = subprocess.run(
+            [claude, "--version"], capture_output=True, text=True, timeout=CLAUDE_VERSION_SECONDS, check=False
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         version = f"? ({exc})"
     return True, f"claude on PATH: {claude} ({version})"
@@ -558,17 +633,28 @@ def _settings_checks() -> list[tuple[bool, str]]:
     checks = [(True, f"available models: {names} (via {'config.json' if cfg.get('models') else 'catalogue'})")]
     unknown = unknown_listed()
     if unknown:
-        checks.append((False, f"the models setting names models this router does not know, ignored: "
-                              f"{', '.join(unknown)} (`router config --models`)"))
+        checks.append(
+            (
+                False,
+                f"the models setting names models this router does not know, ignored: "
+                f"{', '.join(unknown)} (`router config --models`)",
+            )
+        )
     try:
-        checks.append((True, f"judge for critical reviews on the chat's model: {default_judge()} "
-                             f"(via {'config.json' if cfg.get('judge') else 'default'})"))
+        checks.append(
+            (
+                True,
+                f"judge for critical reviews on the chat's model: {default_judge()} "
+                f"(via {'config.json' if cfg.get('judge') else 'default'})",
+            )
+        )
     except ValueError as exc:  # UnknownModelError is one too
         checks.append((False, f"judge for critical reviews on the chat's model: {exc} (`router config --judge`)"))
     raw = cfg.get("min_effort")
     if raw and str(raw).lower() not in AUTO_EFFORTS:
-        checks.append((False, f"the min_effort setting {raw!r} is not an effort the router chooses, ignored "
-                              f"(`router config --min-effort`)"))
+        checks.append(
+            (False, f"the min_effort setting {raw!r} is not an effort the router chooses, ignored (`router config --min-effort`)")
+        )
     elif raw:
         checks.append((True, f"minimum effort of a start cell: {configured_min_effort()} (via config.json)"))
     return checks
@@ -595,8 +681,14 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     hook_n = sum(n for *_, n in _hook_decisions(home() / DECISION_LOG))
     checks.append((True, f"state in {home()}: {hook_n} hook decisions"))
     if args.live and claude[0]:
-        checks.append(_live_check("claude", lambda: CliClient().complete(
-            parse_cell("haiku/low"), prompt="Answer only OK.", system="Answer only what is asked.")))
+        checks.append(
+            _live_check(
+                "claude",
+                lambda: CliClient().complete(
+                    parse_cell("haiku/low"), prompt="Answer only OK.", system="Answer only what is asked."
+                ),
+            )
+        )
     for passed, text in checks:
         print(("ok     " if passed else "FAIL   ") + text)
     return 0 if all(passed for passed, _ in checks) else 1
@@ -615,8 +707,10 @@ def _live_check(name: str, call: Callable[[], Completion]) -> tuple[bool, str]:
 def _cmd_cells(_args: argparse.Namespace) -> int:
     rows = [[c.label, c.tier, f"{c.capability:.2f}", money(c.expected_cost()), c.spec.input, c.spec.output] for c in lattice()]
     print(table(["cell", "tier", "capability*", "ref. cost", "$/M in", "$/M out"], rows))
-    print(f"\n* assumed capability (catalog.py), not measured · ref. cost = {PLAN_INPUT_TOKENS:,} tokens in, "
-          f"{PLAN_OUTPUT_TOKENS_AT_HIGH:,} out at effort high · prices {PRICES_AS_OF}")
+    print(
+        f"\n* assumed capability (catalog.py), not measured · ref. cost = {PLAN_INPUT_TOKENS:,} tokens in, "
+        f"{PLAN_OUTPUT_TOKENS_AT_HIGH:,} out at effort high · prices {PRICES_AS_OF}"
+    )
     off = [spec.short for m, spec in MODELS.items() if m not in configured_models()]
     if off:
         print(f"not in this installation: {', '.join(off)} (`router config --models`)")
@@ -635,8 +729,11 @@ def _cmd_config(args: argparse.Namespace) -> int:
     if args.min_effort is not None:
         write_config(min_effort=None if args.min_effort == DEFAULT_MIN_EFFORT else args.min_effort)
     if args.usage_profiles is not None:
-        listed = [] if args.usage_profiles.strip().lower() == "none" else [
-            str(Path(p.strip()).expanduser().absolute()) for p in args.usage_profiles.split(",") if p.strip()]
+        listed = (
+            []
+            if args.usage_profiles.strip().lower() == "none"
+            else [str(Path(p.strip()).expanduser().absolute()) for p in args.usage_profiles.split(",") if p.strip()]
+        )
         write_config(usage_profiles=listed or None)
     cfg = read_config()
     print(f"Claude profile: {claude_profile()}")
@@ -673,70 +770,118 @@ def build_parser() -> argparse.ArgumentParser:
     _add_task_args(sp)
     shape = sp.add_mutually_exclusive_group()
     shape.add_argument("--claude-code", action="store_true", help="print only model/effort, for a Claude Code agent")
-    shape.add_argument("--workflow", action="store_true",
-                       help="print only the options of a workflow agent() call, e.g. {model: 'opus', effort: 'medium'}")
+    shape.add_argument(
+        "--workflow",
+        action="store_true",
+        help="print only the options of a workflow agent() call, e.g. {model: 'opus', effort: 'medium'}",
+    )
     sp.set_defaults(func=_cmd_plan)
 
     ss = sub.add_parser("stats", help="the hook's decisions and the measured subagents")
     ss.set_defaults(func=_cmd_stats)
 
-    sd = sub.add_parser("doctor", help="check claude, the profile, the plugin, settings, limits, floors and state; "
-                                       "--live makes one call")
-    sd.add_argument("--live", action="store_true",
-                    help="also make one real cheap call on Claude")
+    sd = sub.add_parser(
+        "doctor", help="check claude, the profile, the plugin, settings, limits, floors and state; --live makes one call"
+    )
+    sd.add_argument("--live", action="store_true", help="also make one real cheap call on Claude")
     sd.set_defaults(func=_cmd_doctor)
 
     sc = sub.add_parser("cells", help="the lattice of cells with their cost and assumed capability")
     sc.set_defaults(func=_cmd_cells)
 
-    spj = sub.add_parser("project", help="what the hook learned in this project: subagents routed, relaunched higher, the "
-                                        "start cells it raised, and cheaper ones it proposes")
+    spj = sub.add_parser(
+        "project",
+        help="what the hook learned in this project: subagents routed, relaunched higher, the "
+        "start cells it raised, and cheaper ones it proposes",
+    )
     spj.add_argument("path", nargs="?", type=Path, help="a directory in the project (default: the current one)")
-    spj.add_argument("--apply", action="store_true", help="apply the proposed changes (cheaper starts, raises on the "
-                     "team's counts alone)")
+    spj.add_argument(
+        "--apply", action="store_true", help="apply the proposed changes (cheaper starts, raises on the team's counts alone)"
+    )
     spj.add_argument("--reset", action="store_true", help="remove this project's tuning")
-    spj.add_argument("--team", action="store_true", help="turn the plugin on for everyone in this repository: writes "
-                     "the marketplace and the plugin into .claude/settings.json, to commit")
-    spj.add_argument("--share", action="store_true", help="share counts through the repository: creates "
-                     ".claude/model-router/, to commit; each installation adds one small file per week there")
+    spj.add_argument(
+        "--team",
+        action="store_true",
+        help="turn the plugin on for everyone in this repository: writes "
+        "the marketplace and the plugin into .claude/settings.json, to commit",
+    )
+    spj.add_argument(
+        "--share",
+        action="store_true",
+        help="share counts through the repository: creates "
+        ".claude/model-router/, to commit; each installation adds one small file per week there",
+    )
     spj.set_defaults(func=_cmd_project)
 
-    sl = sub.add_parser("limits", help="the models over their usage limit and the exact moment each resets, and the "
-                                       "account's windows")
-    sl.add_argument("--check", nargs="*", metavar="MODEL", help="ask now: the models named (default: haiku, for the "
-                    "windows, and every model held). A refused question costs nothing; an allowed one is one tiny call")
+    sl = sub.add_parser(
+        "limits", help="the models over their usage limit and the exact moment each resets, and the account's windows"
+    )
+    sl.add_argument(
+        "--check",
+        nargs="*",
+        metavar="MODEL",
+        help="ask now: the models named (default: haiku, for the "
+        "windows, and every model held). A refused question costs nothing; an allowed one is one tiny call",
+    )
     sl.set_defaults(func=_cmd_limits)
 
-    sa = sub.add_parser("agents", help="advice on the agents whose model and effort are fixed by hand, from what they "
-                                       "spent and how often they were repeated in this project")
+    sa = sub.add_parser(
+        "agents",
+        help="advice on the agents whose model and effort are fixed by hand, from what they "
+        "spent and how often they were repeated in this project",
+    )
     sa.add_argument("path", nargs="?", type=Path, help="a directory in the project (default: the current one)")
     sa.add_argument("--json", action="store_true", help="the advice as JSON")
     sa.set_defaults(func=_cmd_agents)
 
-    sg = sub.add_parser("config", help="show or set the available models, the judge, the read-only agent and the "
-                                       "profiles `router usage` reads")
+    sg = sub.add_parser(
+        "config", help="show or set the available models, the judge, the read-only agent and the profiles `router usage` reads"
+    )
     sg.add_argument("--models", help="Claude models that may do the work, e.g. haiku,sonnet,opus; all = every Claude model")
-    sg.add_argument("--judge", help="cell a critical review moves to when it would run on the chat's model, e.g. "
-                    "opus/xhigh (effort capped at xhigh)")
-    sg.add_argument("--min-effort", choices=AUTO_EFFORTS, help="effort no start cell goes below, on its own model "
-                    f"(default {DEFAULT_MIN_EFFORT}: the table's own choices)")
-    sg.add_argument("--lean", choices=("on", "off"), help="send safe reading tasks (search, review, analysis, summaries) "
-                    "to the read-only agent, which carries a fraction of the general agent's context (default on)")
-    sg.add_argument("--natives", choices=("on", "off"), help="let the router write autoCompactWindow and the status line "
-                    "into the profile's settings.json once, where they are missing (default on)")
-    sg.add_argument("--usage-profiles", metavar="DIR,DIR", help="other Claude profiles signed in to the same account, "
-                    "which `router usage` reads too (they share its windows); none clears them")
+    sg.add_argument(
+        "--judge",
+        help="cell a critical review moves to when it would run on the chat's model, e.g. opus/xhigh (effort capped at xhigh)",
+    )
+    sg.add_argument(
+        "--min-effort",
+        choices=AUTO_EFFORTS,
+        help=f"effort no start cell goes below, on its own model (default {DEFAULT_MIN_EFFORT}: the table's own choices)",
+    )
+    sg.add_argument(
+        "--lean",
+        choices=("on", "off"),
+        help="send safe reading tasks (search, review, analysis, summaries) "
+        "to the read-only agent, which carries a fraction of the general agent's context (default on)",
+    )
+    sg.add_argument(
+        "--natives",
+        choices=("on", "off"),
+        help="let the router write autoCompactWindow and the status line "
+        "into the profile's settings.json once, where they are missing (default on)",
+    )
+    sg.add_argument(
+        "--usage-profiles",
+        metavar="DIR,DIR",
+        help="other Claude profiles signed in to the same account, "
+        "which `router usage` reads too (they share its windows); none clears them",
+    )
     sg.set_defaults(func=_cmd_config)
 
-    su = sub.add_parser("usage", help="the account's seven-day window day by day, and which tokens of the transcripts "
-                        "move it")
+    su = sub.add_parser("usage", help="the account's seven-day window day by day, and which tokens of the transcripts move it")
     su.add_argument("--days", type=int, default=7, help="how many days back (default 7)")
-    su.add_argument("--profile", type=Path, action="append", help="a Claude profile to read (repeatable; default: the "
-                    "one in use plus `router config --usage-profiles`)")
+    su.add_argument(
+        "--profile",
+        type=Path,
+        action="append",
+        help="a Claude profile to read (repeatable; default: the one in use plus `router config --usage-profiles`)",
+    )
     su.set_defaults(func=_cmd_usage)
 
-    sst = sub.add_parser("statusline", help="the status line command: context and the account's windows, read from "
-                         "the JSON Claude Code sends on stdin; keeps a sample of each change")
+    sst = sub.add_parser(
+        "statusline",
+        help="the status line command: context and the account's windows, read from "
+        "the JSON Claude Code sends on stdin; keeps a sample of each change",
+    )
     sst.set_defaults(func=_cmd_statusline)
 
     return p

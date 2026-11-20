@@ -61,8 +61,9 @@ Bucket = tuple[str, str, str]  # (kind, risk, start cell)
 Counts = dict[Bucket, dict[str, int]]  # per bucket, {"n": launches, "fails": relaunched higher}
 # One move of a start cell, as `router project` shows it and the tuning file keeps it. The functional form because
 # `from` is a Python keyword.
-Change = TypedDict("Change", {"at": str, "what": str, "kind": str, "risk": str, "from": str, "to": str, "n": int,
-                              "relaunched": int})
+Change = TypedDict(
+    "Change", {"at": str, "what": str, "kind": str, "risk": str, "from": str, "to": str, "n": int, "relaunched": int}
+)
 
 
 # ---- projects and signatures -----------------------------------------------------------------------------------
@@ -142,11 +143,17 @@ def signature(prompt: str) -> list[int]:
     if lines and DECLARATION_LINE.match(lines[0]):
         lines = lines[1:]
     words = re.findall(r"\w+", " ".join(lines).lower())
-    shingles = {" ".join(words[i:i + SHINGLE_WORDS]) for i in range(max(1, len(words) - SHINGLE_WORDS + 1))}
+    shingles = {" ".join(words[i : i + SHINGLE_WORDS]) for i in range(max(1, len(words) - SHINGLE_WORDS + 1))}
     key = install_key()[0]
-    return [min(int.from_bytes(hashlib.blake2b(f"{seed}:{shingle}".encode(), digest_size=SIGNATURE_HASH_BYTES,
-                                               key=key).digest(), "big")
-                for shingle in shingles) for seed in range(SIG_SIZE)]
+    return [
+        min(
+            int.from_bytes(
+                hashlib.blake2b(f"{seed}:{shingle}".encode(), digest_size=SIGNATURE_HASH_BYTES, key=key).digest(), "big"
+            )
+            for shingle in shingles
+        )
+        for seed in range(SIG_SIZE)
+    ]
 
 
 def alike(a: list[int] | None, b: list[int] | None) -> float:
@@ -174,9 +181,16 @@ def higher(before: Cell, after: Cell) -> bool:
     return after.tier > before.tier or (after.model == before.model and after.effort_rank > before.effort_rank)
 
 
-def find_relaunch(records: list[dict[str, Any]], session: str | None, *, prompt_signature: list[int],
-                  cell: Cell | None, kind: str | None, risk: str | None,
-                  now: datetime | None = None) -> dict[str, Any] | None:
+def find_relaunch(
+    records: list[dict[str, Any]],
+    session: str | None,
+    *,
+    prompt_signature: list[int],
+    cell: Cell | None,
+    kind: str | None,
+    risk: str | None,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
     """Return the finished subagent of `session` that a new launch relaunches higher, or None: the same kind and
     risk, an alike prompt, finished within RELAUNCH_WINDOW, and the new cell above the one it ran on.
     """
@@ -215,8 +229,9 @@ def window_start(now: datetime | None = None) -> datetime:
 # ---- evidence ----------------------------------------------------------------------------------------------------
 
 
-def evidence(project: str, records: list[dict[str, Any]], *, relaunched: set[str], since: str | None = None,
-             now: datetime | None = None) -> Counts:
+def evidence(
+    project: str, records: list[dict[str, Any]], *, relaunched: set[str], since: str | None = None, now: datetime | None = None
+) -> Counts:
     """Count, per (kind, risk, start cell) in `project`, the subagents whose model and effort the router chose
     (`router_chose`) in the whole weeks of the last WINDOW and since `since` when given, and how many of them
     were relaunched higher.
@@ -275,8 +290,8 @@ def load_tuning(project: str | None) -> dict[str, Any]:
         return {}
     start: dict[str, dict[str, dict[str, str]]] = {}
     raw = data.get("start")
-    for kind, row in (raw.items() if isinstance(raw, dict) else []):
-        for risk, entry in (row.items() if isinstance(row, dict) else []):
+    for kind, row in raw.items() if isinstance(raw, dict) else []:
+        for risk, entry in row.items() if isinstance(row, dict) else []:
             cell = entry.get("cell") if isinstance(entry, dict) else None
             base = entry.get("base") if isinstance(entry, dict) else None
             if _valid(cell) and (not base or _valid(base)):
@@ -302,10 +317,12 @@ def update_tuning(project: str, change: Callable[[dict[str, Any]], None]) -> Pat
 
 def reset(project: str) -> Path:
     """Drop a project's tuned starts and count evidence only from now on, so nothing comes back on its own."""
+
     def change(tuning: dict[str, Any]) -> None:
         tuning["start"] = {}
         tuning["since"] = clock.stamp()
         tuning["changes"].append({"at": tuning["since"], "what": "reset"})
+
     return update_tuning(project, change)
 
 
@@ -347,8 +364,7 @@ def _local_fails(local: Counts, change: Change) -> bool:
     return local.get((change["kind"], change["risk"], change["from"]), {}).get("fails", 0) > 0
 
 
-def propose_lower(project: str, counts: Counts, *, floors: dict[str, str],
-                  current: Callable[[str, str], Cell]) -> list[Change]:
+def propose_lower(project: str, counts: Counts, *, floors: dict[str, str], current: Callable[[str, str], Cell]) -> list[Change]:
     """Return the cheaper starts the evidence supports, without applying them: for the cell in force of a (kind,
     risk) with DOWN_N launches or more and none relaunched, the cell it was raised from (when the last change
     there was a raise), else the next one down the ladder if it costs at least MIN_SAVING less; never below the
@@ -375,16 +391,23 @@ def propose_lower(project: str, counts: Counts, *, floors: dict[str, str],
 
 def apply(project: str, changes: list[Change]) -> Path:
     """Write proposed `changes` into the project's tuning, and count evidence from now on."""
+
     def change(tuning: dict[str, Any]) -> None:
         _write(tuning, changes)
         tuning["since"] = clock.stamp()
+
     return update_tuning(project, change)
 
 
 def cheaper_below(cell: Cell, cells: list[Cell]) -> Cell | None:
     """Return the most capable cell whose step up is `cell` and that costs at least MIN_SAVING less, or None."""
-    below = [candidate for candidate in cells if candidate != cell and step_up(candidate, cells) == cell
-             and candidate.expected_cost() <= cell.expected_cost() * (1 - MIN_SAVING)]
+    below = [
+        candidate
+        for candidate in cells
+        if candidate != cell
+        and step_up(candidate, cells) == cell
+        and candidate.expected_cost() <= cell.expected_cost() * (1 - MIN_SAVING)
+    ]
     return max(below, key=lambda candidate: (candidate.capability, -candidate.expected_cost())) if below else None
 
 
@@ -398,8 +421,10 @@ def _write(tuning: dict[str, Any], changes: list[Change]) -> None:
 
 def _raised_from(tuning: dict[str, Any], bucket: Bucket) -> str | None:
     kind, risk, label = bucket
-    last = next((change for change in reversed(tuning.get("changes") or [])
-                 if change.get("kind") == kind and change.get("risk") == risk), None)
+    last = next(
+        (change for change in reversed(tuning.get("changes") or []) if change.get("kind") == kind and change.get("risk") == risk),
+        None,
+    )
     if last and last.get("what") == "raised" and last.get("to") == label and _valid(last.get("from")):
         return str(last["from"])
     return None
@@ -407,8 +432,16 @@ def _raised_from(tuning: dict[str, Any], bucket: Bucket) -> str | None:
 
 def _change(what: str, bucket: Bucket, *, to: str, tally: dict[str, int]) -> Change:
     kind, risk, label = bucket
-    return {"at": clock.stamp(), "what": what, "kind": kind, "risk": risk, "from": label, "to": to, "n": tally["n"],
-            "relaunched": tally["fails"]}
+    return {
+        "at": clock.stamp(),
+        "what": what,
+        "kind": kind,
+        "risk": risk,
+        "from": label,
+        "to": to,
+        "n": tally["n"],
+        "relaunched": tally["fails"],
+    }
 
 
 def _valid(label: object) -> bool:

@@ -6,7 +6,7 @@ import pytest
 from model_router.catalog import parse_cell
 from model_router.cli_client import CliClient, ClientUnavailableError
 
-FAKE_CLAUDE = r'''#!/usr/bin/env python3
+FAKE_CLAUDE = r"""#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
 prompt = sys.stdin.read()
@@ -28,7 +28,7 @@ elif prompt.strip() == "LIST":
 elif prompt.strip() == "CRASH":
     json.dump(out, sys.stdout); sys.exit(2)
 json.dump(out, sys.stdout)
-'''
+"""
 
 
 @pytest.fixture

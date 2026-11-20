@@ -9,11 +9,20 @@ from model_router.subagents import load, prompt_hash, read_transcript, record, s
 def _turn(msg_id, *, model="claude-opus-5-5", cache_read=1000, cache_write=100, output=10, tools=0, at="10:00:00"):
     content = [{"type": "tool_use", "name": "Read", "id": f"t{i}", "input": {}} for i in range(tools)]
     content.append({"type": "text", "text": "..."})
-    usage = {"input_tokens": 2, "output_tokens": output, "cache_read_input_tokens": cache_read,
-             "cache_creation_input_tokens": cache_write}
+    usage = {
+        "input_tokens": 2,
+        "output_tokens": output,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_write,
+    }
     # a transcript writes one entry per content block, each repeating the message's usage
-    return [{"timestamp": f"2026-10-22T{at}Z", "message": {"role": "assistant", "id": msg_id, "model": model,
-                                                           "content": [block], "usage": usage}} for block in content]
+    return [
+        {
+            "timestamp": f"2026-10-22T{at}Z",
+            "message": {"role": "assistant", "id": msg_id, "model": model, "content": [block], "usage": usage},
+        }
+        for block in content
+    ]
 
 
 def _transcript(path, prompt, turns):
@@ -25,11 +34,15 @@ def _transcript(path, prompt, turns):
 
 
 def test_a_transcript_is_counted_once_per_message_with_its_peak_context_and_time(tmp_path):
-    path = _transcript(tmp_path / "agent.jsonl", "Review the parser", [
-        _turn("m1", cache_read=1000, cache_write=500, tools=2, at="10:00:05"),
-        _turn("m2", cache_read=3000, cache_write=100, tools=1, at="10:01:05"),
-        _turn("m3", cache_read=4000, cache_write=0, output=300, at="10:02:00"),
-    ])
+    path = _transcript(
+        tmp_path / "agent.jsonl",
+        "Review the parser",
+        [
+            _turn("m1", cache_read=1000, cache_write=500, tools=2, at="10:00:05"),
+            _turn("m2", cache_read=3000, cache_write=100, tools=1, at="10:01:05"),
+            _turn("m3", cache_read=4000, cache_write=0, output=300, at="10:02:00"),
+        ],
+    )
     u = read_transcript(path)
     assert (u.turns, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens) == (3, 8000, 600, 320)
     assert u.peak_context == 4002 and u.seconds == 120 and u.prompt == "Review the parser"
@@ -42,12 +55,25 @@ def test_a_finished_subagent_is_recorded_next_to_the_hook_s_decision(tmp_path, m
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     (tmp_path / "model-router").mkdir(exist_ok=True)
     prompt = "kind: review, risk: high\nReview the parser for off-by-one errors"
-    out = handle({"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s1", "cwd": "/tmp",
-                  "tool_input": {"subagent_type": "general-purpose", "description": "review", "prompt": prompt}})
+    out = handle(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Agent",
+            "session_id": "s1",
+            "cwd": "/tmp",
+            "tool_input": {"subagent_type": "general-purpose", "description": "review", "prompt": prompt},
+        }
+    )
     assert out is not None
     agent = _transcript(tmp_path / "agent.jsonl", prompt, [_turn("m1"), _turn("m2", cache_read=5000)])
-    event = {"hook_event_name": "SubagentStop", "session_id": "s1", "agent_id": "a1", "agent_type": "general-purpose",
-             "effort": {"level": "medium"}, "agent_transcript_path": str(agent)}
+    event = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "s1",
+        "agent_id": "a1",
+        "agent_type": "general-purpose",
+        "effort": {"level": "medium"},
+        "agent_transcript_path": str(agent),
+    }
     assert handle(event) is None
     rec = load(tmp_path / "model-router" / "subagents.jsonl")[0]
     assert rec["routed"] == "opus/medium" and (rec["kind"], rec["risk"]) == ("review", "high")
@@ -69,9 +95,11 @@ def test_stats_groups_subagents_by_agent_and_cell_most_spent_first(tmp_path, mon
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     (tmp_path / "model-router").mkdir(exist_ok=True)
     base = {"agent_type": "general-purpose", "turns": 10, "peak_context": 50_000, "cache_read_tokens": 400_000}
-    lines = [{**base, "model": "opus", "effort": "medium", "cost_usd": 1.0},
-             {**base, "model": "opus", "effort": "medium", "cost_usd": 3.0},
-             {**base, "model": "haiku", "effort": "low", "cost_usd": 0.01, "agent_type": "model-router:reader"}]
+    lines = [
+        {**base, "model": "opus", "effort": "medium", "cost_usd": 1.0},
+        {**base, "model": "opus", "effort": "medium", "cost_usd": 3.0},
+        {**base, "model": "haiku", "effort": "low", "cost_usd": 0.01, "agent_type": "model-router:reader"},
+    ]
     (tmp_path / "model-router" / "subagents.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
     rows = summary_rows(load(tmp_path / "model-router" / "subagents.jsonl"))
     assert rows[0][:5] == ["general-purpose", "opus/medium", 2, 10.0, "50.0K"] and rows[0][-1] == "$4.00"
@@ -95,8 +123,15 @@ def test_a_first_reading_is_completed_once_the_transcript_settles(tmp_path, monk
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     (tmp_path / "model-router").mkdir(exist_ok=True)
     agent = _transcript(tmp_path / "agent.jsonl", "Review the parser", [_turn("m1")])  # the last turn is not in yet
-    handle({"hook_event_name": "SubagentStop", "session_id": "s1", "agent_id": "a1", "agent_type": "general-purpose",
-            "agent_transcript_path": str(agent)})
+    handle(
+        {
+            "hook_event_name": "SubagentStop",
+            "session_id": "s1",
+            "agent_id": "a1",
+            "agent_type": "general-purpose",
+            "agent_transcript_path": str(agent),
+        }
+    )
     log = tmp_path / "model-router" / "subagents.jsonl"
     assert load(log)[0]["turns"] == 1 and load(log)[0]["final"] is False
     _transcript(agent, "Review the parser", [_turn("m1"), _turn("m2", output=500)])  # Claude Code writes the end

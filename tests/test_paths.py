@@ -66,8 +66,9 @@ def test_the_plugin_command_runs_the_cli_of_its_own_profile(tmp_path):
     ran = subprocess.run([str(router), "limits", "--check", "fable"], capture_output=True, text=True, env=env, check=False)
     assert ran.stdout.strip() == "work limits --check fable"
     _fake_cli(tmp_path / "hook-data" / "venv" / "bin", "hook")
-    ran = subprocess.run([str(router)], capture_output=True, text=True, check=False,
-                         env={**env, "CLAUDE_PLUGIN_DATA": str(tmp_path / "hook-data")})
+    ran = subprocess.run(
+        [str(router)], capture_output=True, text=True, check=False, env={**env, "CLAUDE_PLUGIN_DATA": str(tmp_path / "hook-data")}
+    )
     assert ran.stdout.strip() == "hook"
     link = tmp_path / "elsewhere" / "router"
     link.parent.mkdir()

@@ -64,11 +64,19 @@ class Status:
 
     def sample(self, at: float) -> dict[str, Any]:
         """Return the sample kept in the log: these numbers and the moment, never any text of the session."""
-        return {"at": datetime.fromtimestamp(at, clock.now().tzinfo).isoformat(timespec="seconds"),
-                "session": self.session, "model": self.model, "context": self.context,
-                "window_size": self.window_size, "five_hour": self.five_hour,
-                "five_hour_resets": self.five_hour_resets, "seven_day": self.seven_day,
-                "seven_day_resets": self.seven_day_resets, "fable": self.fable, "fable_resets": self.fable_resets}
+        return {
+            "at": datetime.fromtimestamp(at, clock.now().tzinfo).isoformat(timespec="seconds"),
+            "session": self.session,
+            "model": self.model,
+            "context": self.context,
+            "window_size": self.window_size,
+            "five_hour": self.five_hour,
+            "five_hour_resets": self.five_hour_resets,
+            "seven_day": self.seven_day,
+            "seven_day_resets": self.seven_day_resets,
+            "fable": self.fable,
+            "fable_resets": self.fable_resets,
+        }
 
 
 def read_status(data: dict[str, Any]) -> Status:
@@ -77,14 +85,21 @@ def read_status(data: dict[str, Any]) -> Status:
     current = _dict(window.get("current_usage"))  # null before the first call and right after /compact
     context = None
     if current:
-        context = sum(_int(current.get(k)) or 0 for k in ("input_tokens", "cache_read_input_tokens",
-                                                          "cache_creation_input_tokens"))
+        context = sum(
+            _int(current.get(k)) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+        )
     limits = _dict(data.get("rate_limits"))
     five, week = _dict(limits.get("five_hour")), _dict(limits.get("seven_day"))
-    return Status(session=str(data.get("session_id") or ""), model=str(_dict(data.get("model")).get("id") or ""),
-                  context=context, window_size=_int(window.get("context_window_size")),
-                  five_hour=_float(five.get("used_percentage")), five_hour_resets=_int(five.get("resets_at")),
-                  seven_day=_float(week.get("used_percentage")), seven_day_resets=_int(week.get("resets_at")))
+    return Status(
+        session=str(data.get("session_id") or ""),
+        model=str(_dict(data.get("model")).get("id") or ""),
+        context=context,
+        window_size=_int(window.get("context_window_size")),
+        five_hour=_float(five.get("used_percentage")),
+        five_hour_resets=_int(five.get("resets_at")),
+        seven_day=_float(week.get("used_percentage")),
+        seven_day_resets=_int(week.get("resets_at")),
+    )
 
 
 def statusline_text(status: Status) -> str:
@@ -194,8 +209,7 @@ def fable_window(now: datetime | None = None) -> tuple[float, int | None] | None
     return used * 100, int(reset.timestamp()) if reset else None
 
 
-def refresh_fable(*, now: float | None = None, state_dir: Path | None = None,
-                  start: Callable[[], None] | None = None) -> bool:
+def refresh_fable(*, now: float | None = None, state_dir: Path | None = None, start: Callable[[], None] | None = None) -> bool:
     """Start a background Fable probe (`router limits --check fable`: one-word answer, a sliver of Fable's window)
     when the profile has not started one in FABLE_REFRESH_SECONDS and Fable is available; return whether it did.
     The status line never waits for it: the next update shows what it found.
@@ -214,9 +228,13 @@ def refresh_fable(*, now: float | None = None, state_dir: Path | None = None,
 
 
 def _start_fable_probe() -> None:
-    subprocess.Popen([sys.executable, "-m", "model_router.cli", "limits", "--check", FABLE],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
+    subprocess.Popen(
+        [sys.executable, "-m", "model_router.cli", "limits", "--check", FABLE],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 # ---- what the transcripts spent -------------------------------------------------------------------------------
@@ -299,8 +317,12 @@ def samples(profiles: list[Path]) -> list[dict[str, Any]]:
     """Return the status line samples of every profile in `profiles`, in time order (the windows are the account's,
     so samples from two profiles on one account read the same windows).
     """
-    out = [r for p in profiles for r in read_jsonl(p / "model-router" / USAGE_LOG, tail_bytes=SAMPLES_TAIL_BYTES)
-           if clock.parse_moment(r.get("at")) is not None]
+    out = [
+        r
+        for p in profiles
+        for r in read_jsonl(p / "model-router" / USAGE_LOG, tail_bytes=SAMPLES_TAIL_BYTES)
+        if clock.parse_moment(r.get("at")) is not None
+    ]
     return sorted(out, key=lambda r: clock.parse_moment(r["at"]) or clock.now())
 
 
@@ -322,9 +344,13 @@ def intervals(rows: list[dict[str, Any]], *, since: float = 0.0) -> list[Interva
     after a busy one moved on: a sample under the highest percent seen in the week is stale and skipped. A chain
     breaks, and starts again at its next rise, where nobody sampled for MAX_GAP_SECONDS or the reset changes.
     """
-    points = sorted((m.timestamp(), float(r["seven_day"]), _int(r.get("seven_day_resets")) or 0)
-                    for r in rows if isinstance(r.get("seven_day"), int | float)
-                    and (m := clock.parse_moment(r.get("at"))) is not None and m.timestamp() >= since)
+    points = sorted(
+        (m.timestamp(), float(r["seven_day"]), _int(r.get("seven_day_resets")) or 0)
+        for r in rows
+        if isinstance(r.get("seven_day"), int | float)
+        and (m := clock.parse_moment(r.get("at"))) is not None
+        and m.timestamp() >= since
+    )
     out: list[Interval] = []
     anchor: float | None = None  # when the highest percent of the chain was first seen
     top, reset, last = -1.0, None, None
@@ -426,8 +452,12 @@ def _when(epoch: int) -> str:
 
 
 def _usage(raw: dict[str, Any]) -> Usage:
-    return Usage(_int(raw.get("input_tokens")) or 0, _int(raw.get("output_tokens")) or 0,
-                 _int(raw.get("cache_read_input_tokens")) or 0, _int(raw.get("cache_creation_input_tokens")) or 0)
+    return Usage(
+        _int(raw.get("input_tokens")) or 0,
+        _int(raw.get("output_tokens")) or 0,
+        _int(raw.get("cache_read_input_tokens")) or 0,
+        _int(raw.get("cache_creation_input_tokens")) or 0,
+    )
 
 
 def _dict(value: object) -> dict[str, Any]:

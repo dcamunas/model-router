@@ -40,10 +40,16 @@ def test_the_manifest_names_the_plugin_and_the_version_of_pyproject():
 
 
 def run_hook(data: Path, event: dict, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
-    base = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""),
-            "CLAUDE_PLUGIN_ROOT": str(ROOT), "CLAUDE_PLUGIN_DATA": str(data), "CLAUDE_CONFIG_DIR": str(data / "profile")}
-    return subprocess.run([str(SCRIPT), *args], input=json.dumps(event), text=True, capture_output=True,
-                          env={**base, **(env or {})}, timeout=300)
+    base = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "CLAUDE_PLUGIN_ROOT": str(ROOT),
+        "CLAUDE_PLUGIN_DATA": str(data),
+        "CLAUDE_CONFIG_DIR": str(data / "profile"),
+    }
+    return subprocess.run(
+        [str(SCRIPT), *args], input=json.dumps(event), text=True, capture_output=True, env={**base, **(env or {})}, timeout=300
+    )
 
 
 def test_outside_a_plugin_or_before_bootstrap_the_hook_is_silent(tmp_path):
@@ -57,8 +63,12 @@ def test_outside_a_plugin_or_before_bootstrap_the_hook_is_silent(tmp_path):
 def test_bootstrap_without_uv_explains_and_exits_0(tmp_path):
     empty = tmp_path / "nobin"
     empty.mkdir()
-    proc = run_hook(tmp_path / "data", {"hook_event_name": "SessionStart"}, "--bootstrap",
-                    env={"PATH": str(empty), "HOME": str(tmp_path), "MODEL_ROUTER_UV": str(tmp_path / "no-uv")})
+    proc = run_hook(
+        tmp_path / "data",
+        {"hook_event_name": "SessionStart"},
+        "--bootstrap",
+        env={"PATH": str(empty), "HOME": str(tmp_path), "MODEL_ROUTER_UV": str(tmp_path / "no-uv")},
+    )
     assert proc.returncode == 0 and proc.stdout == "" and "cannot find uv" in proc.stderr
 
 
@@ -73,9 +83,16 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     out = subprocess.run([str(data / "venv" / "bin" / "python"), "--version"], capture_output=True, text=True).stdout
     assert out.startswith(f"Python {pinned}"), out  # the plugin's pin, whatever the session's directory says
     venv_mtime = (data / "venv" / "bin" / "router-hook").stat().st_mtime
-    event = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s", "cwd": "/",
-             "tool_input": {"subagent_type": "general-purpose",
-                            "prompt": "risk: critical. Analyse the design of the payments migration"}}
+    event = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Agent",
+        "session_id": "s",
+        "cwd": "/",
+        "tool_input": {
+            "subagent_type": "general-purpose",
+            "prompt": "risk: critical. Analyse the design of the payments migration",
+        },
+    }
     proc = run_hook(data, event)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "fable"
@@ -96,7 +113,6 @@ def test_bootstrap_builds_the_venv_once_and_then_routes(tmp_path):
     assert proc.returncode == 0 and "Model router active" in proc.stdout  # the old session still gets its context
     assert (data / "installed-version").read_text() == "999.0.0"  # and never puts its older version back
     assert (data / "venv" / "bin" / "router-hook").stat().st_mtime == venv_mtime
-
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")

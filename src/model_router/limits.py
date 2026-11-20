@@ -204,17 +204,40 @@ def learn(text: str, *, models: dict[str, str], config_dir: Path | None = None, 
     return record_failure(name, probe(model_id, config_dir=config_dir, binary=binary))
 
 
-def probe(model_id: str, *, config_dir: Path | None = None, binary: str = "claude",
-          timeout: float = PROBE_SECONDS) -> Probe:
+def probe(model_id: str, *, config_dir: Path | None = None, binary: str = "claude", timeout: float = PROBE_SECONDS) -> Probe:
     """Ask `model_id` for one word through `claude -p` and return what its rate-limit event says. A refused probe
     costs nothing; an allowed one is one tiny call. Any failure to run or read it gives `unknown`.
     """
-    args = [binary, "-p", "--model", model_id, "--effort", "low", "--output-format", "stream-json", "--verbose",
-            "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
-            "--system-prompt", PROBE_SYSTEM]
+    args = [
+        binary,
+        "-p",
+        "--model",
+        model_id,
+        "--effort",
+        "low",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--tools",
+        "",
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--mcp-config",
+        NO_MCP,
+        "--system-prompt",
+        PROBE_SYSTEM,
+    ]
     try:  # a child session: its own StopFailure hook must not probe again (`hook._stop_failure`)
-        proc = subprocess.run(args, input="ok", capture_output=True, text=True, errors="replace",
-                              env=child_env(config_dir), timeout=timeout, check=False)
+        proc = subprocess.run(
+            args,
+            input="ok",
+            capture_output=True,
+            text=True,
+            errors="replace",
+            env=child_env(config_dir),
+            timeout=timeout,
+            check=False,
+        )
     except subprocess.TimeoutExpired as exc:  # retries can outlast the timeout; the event is printed before them
         partial = exc.stdout or b""
         return parse_events(partial.decode("utf-8", "replace") if isinstance(partial, bytes) else partial)
@@ -244,8 +267,7 @@ def _windows(raw: object) -> dict[str, dict[str, Any]]:
     for name, window in (raw if isinstance(raw, dict) else {}).items():
         if isinstance(window, dict):
             reset = _moment(window.get("resetsAt"))
-            out[str(name)] = {"utilization": window.get("utilization"),
-                              "resets_at": reset.isoformat() if reset else None}
+            out[str(name)] = {"utilization": window.get("utilization"), "resets_at": reset.isoformat() if reset else None}
     return out
 
 

@@ -102,15 +102,16 @@ def read_transcript(path: Path) -> SubagentUsage:
 
 
 def _add_turn(out: SubagentUsage, *, model: str, usage: dict[str, Any]) -> None:
-    u = {k: int(usage.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
-                                             "cache_creation_input_tokens")}
+    u = {
+        k: int(usage.get(k) or 0)
+        for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    }
     out.turns += 1
     out.input_tokens += u["input_tokens"]
     out.output_tokens += u["output_tokens"]
     out.cache_read_tokens += u["cache_read_input_tokens"]
     out.cache_write_tokens += u["cache_creation_input_tokens"]
-    out.peak_context = max(out.peak_context, u["input_tokens"] + u["cache_read_input_tokens"]
-                           + u["cache_creation_input_tokens"])
+    out.peak_context = max(out.peak_context, u["input_tokens"] + u["cache_read_input_tokens"] + u["cache_creation_input_tokens"])
     out.by_model[model] = out.by_model.get(model, 0) + u["output_tokens"] + 1  # + 1: a turn counts with no output
 
 
@@ -188,8 +189,14 @@ def find_decision(log: Path, prompt: str, *, session: str | None) -> dict[str, A
     if not prompt:
         return None
     wanted = prompt_hash(prompt)
-    return next((entry for entry in reversed(read_jsonl(log))
-                 if entry.get("prompt_hash") == wanted and entry.get("session_id") in (session, None)), None)
+    return next(
+        (
+            entry
+            for entry in reversed(read_jsonl(log))
+            if entry.get("prompt_hash") == wanted and entry.get("session_id") in (session, None)
+        ),
+        None,
+    )
 
 
 def load(path: Path) -> list[dict[str, Any]]:
@@ -226,10 +233,19 @@ def summary_rows(records: list[dict[str, Any]]) -> list[list[object]]:
         n = len(rs)
         costs = [float(r["cost_usd"]) for r in rs if r.get("cost_usd") is not None]
         total = sum(costs)
-        rows.append([agent, cell, n, round(sum(int(r.get("turns") or 0) for r in rs) / n, 1),
-                     _k(sum(int(r.get("peak_context") or 0) for r in rs) / n),
-                     _k(sum(int(r.get("cache_read_tokens") or 0) for r in rs) / n),
-                     money(total / len(costs)) if costs else "?", money(total), total])
+        rows.append(
+            [
+                agent,
+                cell,
+                n,
+                round(sum(int(r.get("turns") or 0) for r in rs) / n, 1),
+                _k(sum(int(r.get("peak_context") or 0) for r in rs) / n),
+                _k(sum(int(r.get("cache_read_tokens") or 0) for r in rs) / n),
+                money(total / len(costs)) if costs else "?",
+                money(total),
+                total,
+            ]
+        )
     rows.sort(key=lambda row: -float(str(row[-1])))
     return [row[:-1] for row in rows]
 

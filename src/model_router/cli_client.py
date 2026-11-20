@@ -86,14 +86,34 @@ class CliClient:
             ClientUnavailableError: the CLI could not serve the request.
         """
         args = [
-            self.binary, "-p", "--model", cell.model, "--effort", cell.effort, "--output-format", "json",
-            "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--mcp-config", NO_MCP,
-            "--system-prompt", system or DEFAULT_SYSTEM,
+            self.binary,
+            "-p",
+            "--model",
+            cell.model,
+            "--effort",
+            cell.effort,
+            "--output-format",
+            "json",
+            "--tools",
+            "",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--mcp-config",
+            NO_MCP,
+            "--system-prompt",
+            system or DEFAULT_SYSTEM,
         ]
         t0 = time.monotonic()
         try:
-            proc = subprocess.run(args, input=prompt, capture_output=True, text=True, env=child_env(self.config_dir),
-                                  timeout=self.timeout, check=False)
+            proc = subprocess.run(
+                args,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                env=child_env(self.config_dir),
+                timeout=self.timeout,
+                check=False,
+            )
         except subprocess.TimeoutExpired as exc:
             raise ClientUnavailableError(f"claude -p exceeded {self.timeout:.0f}s") from exc
         seconds = time.monotonic() - t0
@@ -131,7 +151,8 @@ class CliClient:
         if data.get("is_error"):
             if NOT_LOGGED_IN in text.lower():
                 raise ClientUnavailableError(
-                    f"profile {self.config_dir} is not logged in: open claude with that profile and run /login")
+                    f"profile {self.config_dir} is not logged in: open claude with that profile and run /login"
+                )
             if data.get("api_error_status") == RATE_LIMITED:
                 self._note_limit(cell, text)
             raise ClientUnavailableError(f"claude -p: {text[:ERROR_DETAIL_CHARS] or 'error without details'}")
@@ -142,5 +163,4 @@ class CliClient:
             cache_read_tokens=int(u.get("cache_read_input_tokens") or 0),
             cache_write_tokens=int(u.get("cache_creation_input_tokens") or 0),
         )
-        return Completion(text=text, usage=usage, model=_served_model(data.get("modelUsage"), cell.model),
-                          seconds=seconds)
+        return Completion(text=text, usage=usage, model=_served_model(data.get("modelUsage"), cell.model), seconds=seconds)

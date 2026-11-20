@@ -11,20 +11,43 @@ T0 = datetime(2026, 10, 24, 10, 0, tzinfo=UTC)
 
 
 def _status_json(*, context=410_000, five=22.4, week=61.2, week_resets=1_793_300_000, session="s1"):
-    return {"session_id": session, "model": {"id": "claude-opus-5-5"},
-            "context_window": {"context_window_size": 1_000_000,
-                               "current_usage": {"input_tokens": 5, "cache_read_input_tokens": context,
-                                                 "cache_creation_input_tokens": 2000, "output_tokens": 300}},
-            "rate_limits": {"five_hour": {"used_percentage": five, "resets_at": 1_793_000_000},
-                            "seven_day": {"used_percentage": week, "resets_at": week_resets}}}
+    return {
+        "session_id": session,
+        "model": {"id": "claude-opus-5-5"},
+        "context_window": {
+            "context_window_size": 1_000_000,
+            "current_usage": {
+                "input_tokens": 5,
+                "cache_read_input_tokens": context,
+                "cache_creation_input_tokens": 2000,
+                "output_tokens": 300,
+            },
+        },
+        "rate_limits": {
+            "five_hour": {"used_percentage": five, "resets_at": 1_793_000_000},
+            "seven_day": {"used_percentage": week, "resets_at": week_resets},
+        },
+    }
 
 
 def _assistant(msg_id, *, at, cache_read=1000, cache_write=100, output=10, model="claude-opus-5-5", side=False):
-    usage_ = {"input_tokens": 2, "output_tokens": output, "cache_read_input_tokens": cache_read,
-              "cache_creation_input_tokens": cache_write}
-    entry = {"timestamp": at.isoformat().replace("+00:00", "Z"), "isSidechain": side,
-             "message": {"role": "assistant", "id": msg_id, "model": model, "usage": usage_,
-                         "content": [{"type": "text", "text": "secret words"}]}}
+    usage_ = {
+        "input_tokens": 2,
+        "output_tokens": output,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_write,
+    }
+    entry = {
+        "timestamp": at.isoformat().replace("+00:00", "Z"),
+        "isSidechain": side,
+        "message": {
+            "role": "assistant",
+            "id": msg_id,
+            "model": model,
+            "usage": usage_,
+            "content": [{"type": "text", "text": "secret words"}],
+        },
+    }
     return [entry, entry]  # a transcript repeats a message's usage on every content block
 
 
@@ -109,14 +132,18 @@ def test_config_sets_the_profiles_usage_reads(state, tmp_path, capsys):
 def test_spent_reads_main_and_subagent_calls_each_message_once_in_the_period(tmp_path):
     profile = tmp_path / "profile"
     project = profile / "projects" / "-repo"
-    _write(project / "session.jsonl", [
-        *_assistant("m1", at=T0, cache_read=150_000),
-        *_assistant("m2", at=T0 + timedelta(minutes=1), cache_read=450_000, model="claude-fable-5-1[1m]"),
-        *_assistant("m3", at=T0 - timedelta(days=30), cache_read=999),  # before the period
-        *_assistant("x", at=T0, model="gpt-6-luna"),  # not a catalogued model
-    ])
-    _write(project / "session" / "subagents" / "agent-a1.jsonl", _assistant("s1", at=T0, cache_read=20_000,
-                                                                            model="claude-haiku-5-5"))
+    _write(
+        project / "session.jsonl",
+        [
+            *_assistant("m1", at=T0, cache_read=150_000),
+            *_assistant("m2", at=T0 + timedelta(minutes=1), cache_read=450_000, model="claude-fable-5-1[1m]"),
+            *_assistant("m3", at=T0 - timedelta(days=30), cache_read=999),  # before the period
+            *_assistant("x", at=T0, model="gpt-6-luna"),  # not a catalogued model
+        ],
+    )
+    _write(
+        project / "session" / "subagents" / "agent-a1.jsonl", _assistant("s1", at=T0, cache_read=20_000, model="claude-haiku-5-5")
+    )
     spent = usage.spent([profile], since=T0 - timedelta(days=1))
     assert sorted(usage.MODELS[c.model_id].short for c in spent.calls) == ["fable", "haiku", "opus"]
     assert spent.calls[-1].usage.cache_read_tokens == 450_000  # the latest last
@@ -153,17 +180,27 @@ def _sample(at, week, resets=1_793_300_000):
 
 def test_intervals_run_from_one_rise_to_the_next_skip_stale_samples_and_break_on_gaps_and_resets():
     m = lambda minutes: T0 + timedelta(minutes=minutes)  # noqa: E731
-    rows = [_sample(m(0), 10), _sample(m(5), 10), _sample(m(10), 11),  # first rise: only an anchor
-            _sample(m(15), 10),  # an idle session's older percent: skipped, the chain holds
-            _sample(m(20), 11), _sample(m(30), 12),  # 10 -> 30: one point
-            _sample(m(400), 13),  # a gap too long: the chain breaks
-            _sample(m(410), 14), _sample(m(420), 14), _sample(m(430), 16),  # 410 -> 430: two points
-            _sample(m(440), 1, resets=1_793_900_000), _sample(m(450), 2, resets=1_793_900_000),  # a new week
-            _sample(m(460), 3, resets=1_793_900_000)]
+    rows = [
+        _sample(m(0), 10),
+        _sample(m(5), 10),
+        _sample(m(10), 11),  # first rise: only an anchor
+        _sample(m(15), 10),  # an idle session's older percent: skipped, the chain holds
+        _sample(m(20), 11),
+        _sample(m(30), 12),  # 10 -> 30: one point
+        _sample(m(400), 13),  # a gap too long: the chain breaks
+        _sample(m(410), 14),
+        _sample(m(420), 14),
+        _sample(m(430), 16),  # 410 -> 430: two points
+        _sample(m(440), 1, resets=1_793_900_000),
+        _sample(m(450), 2, resets=1_793_900_000),  # a new week
+        _sample(m(460), 3, resets=1_793_900_000),
+    ]
     spans = usage.intervals(rows)
     assert [(s.start, s.end, s.used) for s in spans] == [
-        (m(10).timestamp(), m(30).timestamp(), 1), (m(410).timestamp(), m(430).timestamp(), 2),
-        (m(450).timestamp(), m(460).timestamp(), 1)]
+        (m(10).timestamp(), m(30).timestamp(), 1),
+        (m(410).timestamp(), m(430).timestamp(), 2),
+        (m(450).timestamp(), m(460).timestamp(), 1),
+    ]
     assert len(usage.intervals(rows, since=m(400).timestamp())) == 2  # only samples from `since` on
 
 
@@ -174,8 +211,11 @@ def test_the_fit_finds_the_weighting_the_window_follows():
         rows.append(_sample(start, round(week, 6)))
         # cache reads swing a lot from one interval to the next, output barely: a window that follows list price
         # tells the weightings apart
-        call = usage.Call((start + timedelta(minutes=5)).timestamp(), "claude-opus-5-5",
-                          Usage(0, 1000 * (1 + i % 3), 100_000 * (1 + (i * 7) % 5), 0))
+        call = usage.Call(
+            (start + timedelta(minutes=5)).timestamp(),
+            "claude-opus-5-5",
+            Usage(0, 1000 * (1 + i % 3), 100_000 * (1 + (i * 7) % 5), 0),
+        )
         calls.append(call)
         week += 0.5 * usage.cost_usd(call.model_id, call.usage)
     rows.append(_sample(T0 + timedelta(minutes=300), round(week, 6)))
@@ -204,9 +244,14 @@ def test_usage_counts_the_calls_and_asks_for_samples(tmp_path, capsys, freeze_cl
 def _fable_probe(used=0.01, resets="2026-10-31T13:00:00+00:00"):
     from model_router.limits import Probe
 
-    return Probe("allowed", windows={"five_hour": {"utilization": 0.0, "resets_at": "2026-10-24T19:30:00+00:00"},
-                                     "seven_day": {"utilization": 0.02, "resets_at": resets},
-                                     usage.FABLE_WINDOW: {"utilization": used, "resets_at": resets}})
+    return Probe(
+        "allowed",
+        windows={
+            "five_hour": {"utilization": 0.0, "resets_at": "2026-10-24T19:30:00+00:00"},
+            "seven_day": {"utilization": 0.02, "resets_at": resets},
+            usage.FABLE_WINDOW: {"utilization": used, "resets_at": resets},
+        },
+    )
 
 
 def test_fable_shows_apart_with_one_reset_when_both_weeks_share_it():
@@ -273,8 +318,7 @@ def test_an_account_wide_limit_hides_fables_reading(state, freeze_clock):
     assert usage.fable_window(T0) is None
 
 
-def test_the_statusline_command_shows_fable_and_starts_one_probe(state, freeze_clock, monkeypatch, capsys,
-                                                                  _no_fable_probe):
+def test_the_statusline_command_shows_fable_and_starts_one_probe(state, freeze_clock, monkeypatch, capsys, _no_fable_probe):
     from model_router import limits
 
     freeze_clock(datetime.now(UTC))

@@ -37,8 +37,17 @@ def _repo(tmp_path, monkeypatch, *, share=True):
 
 
 def _rec(project, cell, i, at, *, kind="analysis", risk="medium", chose=True):
-    return {"project": project, "routed": cell, "kind": kind, "risk": risk, "agent_id": f"a{i}",
-            "router_chose": chose, "at": at.isoformat(), "sig": [1, 2], "prompt_hash": "x"}
+    return {
+        "project": project,
+        "routed": cell,
+        "kind": kind,
+        "risk": risk,
+        "agent_id": f"a{i}",
+        "router_chose": chose,
+        "at": at.isoformat(),
+        "sig": [1, 2],
+        "prompt_hash": "x",
+    }
 
 
 def _mine(project):
@@ -112,9 +121,18 @@ def test_a_salt_that_cannot_be_kept_shares_nothing(tmp_path, monkeypatch):
 
 def test_pooled_counts_skip_this_install_old_weeks_bad_data_and_cap_each_installation(tmp_path, monkeypatch):
     project = _repo(tmp_path, monkeypatch)
-    _theirs(project, "aaaaaaaaaaaa", WEEK, {
-        "analysis|medium|sonnet/low": [4, 1], "analysis|medium|nope/low": [9, 9], "bad|medium|sonnet/low": [9, 9],
-        "analysis|medium|haiku/low": [1, 5], "review|high|opus/medium": [True, 0]})
+    _theirs(
+        project,
+        "aaaaaaaaaaaa",
+        WEEK,
+        {
+            "analysis|medium|sonnet/low": [4, 1],
+            "analysis|medium|nope/low": [9, 9],
+            "bad|medium|sonnet/low": [9, 9],
+            "analysis|medium|haiku/low": [1, 5],
+            "review|high|opus/medium": [True, 0],
+        },
+    )
     _theirs(project, "aaaaaaaaaaaa", clock.week_of(NOW - timedelta(weeks=20)), {"analysis|medium|sonnet/low": [50, 50]})
     _theirs(project, "bbbbbbbbbbbb", WEEK, {"analysis|medium|sonnet/low": [2, 1]})
     _theirs(project, _mine(project), WEEK, {"analysis|medium|sonnet/low": [100, 100]})  # mine: counted locally
@@ -177,9 +195,14 @@ def test_a_tuned_cell_never_runs_below_the_start_it_replaced():
 def test_a_cross_checked_review_is_no_evidence_about_its_start(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     (tmp_path / "model-router").mkdir(exist_ok=True)
-    _, record = decide({"subagent_type": "general-purpose", "description": "review",
-                        "prompt": "kind: review, risk: critical\nReview the payment code"},
-                       chat_model=parse_cell(start_in_force({})("review", "critical").label).claude_code()["model"])
+    _, record = decide(
+        {
+            "subagent_type": "general-purpose",
+            "description": "review",
+            "prompt": "kind: review, risk: critical\nReview the payment code",
+        },
+        chat_model=parse_cell(start_in_force({})("review", "critical").label).claude_code()["model"],
+    )
     assert record.get("cross") and record["router_chose"] is False
 
 
@@ -306,9 +329,20 @@ def test_share_says_what_to_do_when_this_installation_is_kept_out(tmp_path, monk
 
 
 def _agent_run(project, agent, i, at, *, cell=("opus", "xhigh"), session="s", sig=None, seconds=60):
-    return {"project": project, "agent_type": agent, "agent_id": f"{agent}-{i}", "session": f"{session}{i}",
-            "model": cell[0], "effort": cell[1], "routed": None, "at": at.isoformat(), "seconds": seconds,
-            "sig": sig or [i, i + 1, i + 2], "turns": 5, "cost_usd": 1.0}
+    return {
+        "project": project,
+        "agent_type": agent,
+        "agent_id": f"{agent}-{i}",
+        "session": f"{session}{i}",
+        "model": cell[0],
+        "effort": cell[1],
+        "routed": None,
+        "at": at.isoformat(),
+        "seconds": seconds,
+        "sig": sig or [i, i + 1, i + 2],
+        "turns": 5,
+        "cost_usd": 1.0,
+    }
 
 
 def _agent_file(project, name, model="opus", *, commit=True):
@@ -338,6 +372,7 @@ def test_the_week_file_carries_the_repository_s_own_agents_and_nothing_from_else
     profile_agent.write_text("---\nmodel: opus\neffort: xhigh\n---\n")
     (Path(project) / ".claude" / "agents" / "client-secret.md").symlink_to(profile_agent)
     import subprocess
+
     subprocess.run(["git", "-C", project, "add", ".claude/agents/client-secret.md"], check=True)  # a link, even committed
     records += [_agent_run(project, "client-secret", 11, SETTLED)]
     records += [_agent_run(project, "curator", 7, NOW)]  # this week is still open
@@ -363,11 +398,16 @@ def test_a_week_with_agent_runs_waits_while_git_cannot_say_which_agents_are_comm
 
 def test_teammates_agent_runs_are_pooled_capped_and_checked(tmp_path, monkeypatch):
     project = _repo(tmp_path, monkeypatch)
+
     def theirs(install, week, runs):
         path = shared.shared_dir(project) / f"{install}-{week.replace('-', '')}.json"
         path.write_text(json.dumps({"v": 1, "c": {}, "a": runs}))
-    theirs("aaaaaaaaaaaa", WEEK, {"curator|opus/xhigh": [4, 1], "bad name|opus/xhigh": [9, 9],
-                                  "curator|nope/low": [9, 9], "curator|opus/high": [1, 5]})
+
+    theirs(
+        "aaaaaaaaaaaa",
+        WEEK,
+        {"curator|opus/xhigh": [4, 1], "bad name|opus/xhigh": [9, 9], "curator|nope/low": [9, 9], "curator|opus/high": [1, 5]},
+    )
     theirs("bbbbbbbbbbbb", WEEK, {"curator|opus/xhigh": [100, 10]})
     theirs(_mine(project), WEEK, {"curator|opus/xhigh": [50, 50]})  # mine: counted from the local log
     runs, installs = shared.pooled_agents(project, keep=lambda agent, label: True)
@@ -386,9 +426,12 @@ def test_router_agents_advises_on_the_whole_team_s_runs(tmp_path, monkeypatch, c
     _agent_file(project, "curator")
     _agent_file(project, "documenter", model="sonnet")
     mine = [_agent_run(project, "curator", i, SETTLED) for i in range(4)]
-    team = {("curator", "opus/xhigh"): {"n": 6, "fails": 0}, ("documenter", "sonnet/xhigh"): {"n": 3, "fails": 0},
-            ("gone", "opus/high"): {"n": 20, "fails": 0},  # no longer in the repository: no advice
-            ("curator", "opus/high"): {"n": 20, "fails": 0}}  # a cell the file no longer names: no advice
+    team = {
+        ("curator", "opus/xhigh"): {"n": 6, "fails": 0},
+        ("documenter", "sonnet/xhigh"): {"n": 3, "fails": 0},
+        ("gone", "opus/high"): {"n": 20, "fails": 0},  # no longer in the repository: no advice
+        ("curator", "opus/high"): {"n": 20, "fails": 0},
+    }  # a cell the file no longer names: no advice
     advice = {a.agent: a for a in advise(mine, project, cells=lattice(), team=team)}
     assert set(advice) == {"curator", "documenter"}
     assert advice["curator"].runs == 10 and advice["curator"].team_runs == 6 and advice["curator"].action == "lower"

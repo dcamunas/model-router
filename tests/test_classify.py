@@ -77,12 +77,14 @@ def test_only_a_declaration_on_its_own_line_in_the_prompt_sends_work_to_the_read
     assert read_only("kind: review, risk: low, access: read\nReview the parser")[0]
     assert read_only("access: read\nWhat does this function return?")[0]
     assert read_only("acceso: lectura\nExplica la caché")[0]
-    for prompt in ("Review the parser for off-by-one errors",  # reading work, not declared: general agent
-                   "Find where the request timeout is set and set it to 30 seconds.",
-                   "Revisa el fichero de configuración y activa el modo debug.",
-                   "Update the S3 bucket policy in infra/s3.tf so the analytics role has access: read.",  # mid-sentence
-                   "Apply this snippet to config/roles.yaml under the bot user:\n  access: read\n  scope: repo",  # pasted
-                   "kind: review\nReview it.\naccess: read"):  # past the head
+    for prompt in (
+        "Review the parser for off-by-one errors",  # reading work, not declared: general agent
+        "Find where the request timeout is set and set it to 30 seconds.",
+        "Revisa el fichero de configuración y activa el modo debug.",
+        "Update the S3 bucket policy in infra/s3.tf so the analytics role has access: read.",  # mid-sentence
+        "Apply this snippet to config/roles.yaml under the bot user:\n  access: read\n  scope: repo",  # pasted
+        "kind: review\nReview it.\naccess: read",
+    ):  # past the head
         assert not read_only(prompt)[0], prompt
     assert not read_only("Edit src/hook.py and rename decide() to route().", "access: read")[0]  # never the description
     assert not read_only("access: read\nReview it", "access: write")[0]  # write wins wherever it is said

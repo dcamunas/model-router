@@ -72,8 +72,7 @@ def apply() -> tuple[list[str], list[str]]:
             return [], []
         seen = read_json(home() / RECORD)
         record = dict(seen)
-        done = [key for key, value in wanted().items() if key not in seen and _set(data, seen, key, value)] \
-            if enabled() else []
+        done = [key for key, value in wanted().items() if key not in seen and _set(data, seen, key, value)] if enabled() else []
         undone = _retire(data, seen)
         if done or undone:
             if _stamp(path) != before:  # Claude Code or the person wrote it meanwhile: theirs wins, try next session
@@ -132,12 +131,12 @@ def notice(done: list[str], undone: list[str]) -> str:
         said = [SAID[key] for key in done]
         parts.append("set " + (", ".join(said[:-1]) + " and " + said[-1] if len(said) > 1 else said[0]))
     if undone:
-        parts.append("took out " + ", ".join(f"{key.rpartition('.')[2]}={RETIRED[key]}" for key in undone)
-                     + " (written by router 0.23)")
+        parts.append(
+            "took out " + ", ".join(f"{key.rpartition('.')[2]}={RETIRED[key]}" for key in undone) + " (written by router 0.23)"
+        )
     if not parts:
         return ""
-    return (f"router: {'; '.join(parts)} in settings.json, from the next session on "
-            "(once; `router config --natives off` stops it)")
+    return f"router: {'; '.join(parts)} in settings.json, from the next session on (once; `router config --natives off` stops it)"
 
 
 def report() -> list[str]:
@@ -149,8 +148,9 @@ def report() -> list[str]:
     lines = []
     for key in KEYS:
         if key not in data:
-            lines.append(f"{key}: not set" + (" (removed after the router set it; it stays so)"
-                                               if seen.get(key) == "router" else ""))
+            lines.append(
+                f"{key}: not set" + (" (removed after the router set it; it stays so)" if seen.get(key) == "router" else "")
+            )
         else:
             lines.append(f"{key}: set by {'the router' if seen.get(key) == 'router' else 'the user'}")
     return lines

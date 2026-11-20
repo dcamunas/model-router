@@ -7,7 +7,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 KINDS: tuple[str, ...] = (
-    "classify", "extract", "summarize", "search", "chat", "write", "code", "review", "analysis", "agentic", "unknown",
+    "classify",
+    "extract",
+    "summarize",
+    "search",
+    "chat",
+    "write",
+    "code",
+    "review",
+    "analysis",
+    "agentic",
+    "unknown",
 )
 RISKS: tuple[str, ...] = ("low", "medium", "high", "critical")
 
@@ -30,5 +40,3 @@ class Task:
             raise ValueError(f"unknown risk {self.risk!r}; known: {', '.join(RISKS)}")
         if not self.prompt.strip():
             raise ValueError("empty prompt")
-
-

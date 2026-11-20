@@ -67,8 +67,10 @@ def enable(project: str) -> list[str]:
         marketplaces[MARKETPLACE] = wanted
         changed.append(f"marketplace {MARKETPLACE} ({MARKETPLACE_REPO})")
     elif marketplaces[MARKETPLACE] != wanted:
-        changed.append(f"marketplace {MARKETPLACE} left as it was, pointing at {json.dumps(marketplaces[MARKETPLACE])}; "
-                       f"the plugin comes from {MARKETPLACE_REPO}")
+        changed.append(
+            f"marketplace {MARKETPLACE} left as it was, pointing at {json.dumps(marketplaces[MARKETPLACE])}; "
+            f"the plugin comes from {MARKETPLACE_REPO}"
+        )
     if plugins.get(PLUGIN_ID) is not True:
         changed.append(f"plugin {PLUGIN_ID} enabled" + (" (it was turned off)" if PLUGIN_ID in plugins else ""))
         plugins[PLUGIN_ID] = True

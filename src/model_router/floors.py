@@ -108,8 +108,12 @@ def load(project: str | None) -> Floors:
         data = json.loads(raw.decode("utf-8"))
     except (ValueError, RecursionError) as exc:  # RecursionError: nesting deep enough to exhaust the parser
         return Floors(path, problems=(f"{path} is not valid JSON: {exc}",))
-    if (not isinstance(data, dict) or type(data.get("v")) is not int or data["v"] != FORMAT
-            or not isinstance(data.get("floors", []), list)):
+    if (
+        not isinstance(data, dict)
+        or type(data.get("v")) is not int
+        or data["v"] != FORMAT
+        or not isinstance(data.get("floors", []), list)
+    ):
         return Floors(path, problems=(f'{path}: expected {{"v": {FORMAT}, "floors": [...]}}',))
     return parse(path, data.get("floors", []))
 

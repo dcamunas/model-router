@@ -18,8 +18,11 @@ FABLE_MESSAGE = "You've reached your Fable limit. Switch to another model, or ma
 
 
 def _event(status: str, *, window: str = "seven_day_overage_included", reset: datetime | None = RESET) -> str:
-    info = {"status": status, "rateLimitType": window,
-            "unifiedWindows": {"five_hour": {"utilization": 0.2, "resetsAt": 1792714800}}}
+    info = {
+        "status": status,
+        "rateLimitType": window,
+        "unifiedWindows": {"five_hour": {"utilization": 0.2, "resetsAt": 1792714800}},
+    }
     if reset is not None:
         info["resetsAt"] = int(reset.timestamp())
     return json.dumps({"type": "rate_limit_event", "rate_limit_info": info})
@@ -122,8 +125,9 @@ def test_a_spent_account_window_is_shown_but_routing_goes_on(home):
 
 def test_the_failure_text_names_a_known_model_or_the_account():
     assert limits.model_in_failure(FABLE_MESSAGE, CLAUDE_MODELS) == "fable"
-    assert limits.model_in_failure("API Error: Request rejected (429) · You've reached your Fable limit.",
-                                   CLAUDE_MODELS) == "fable"
+    assert (
+        limits.model_in_failure("API Error: Request rejected (429) · You've reached your Fable limit.", CLAUDE_MODELS) == "fable"
+    )
     for account in ("You've reached your weekly limit", "Claude usage limit reached", "You've hit your limit"):
         assert limits.model_in_failure(account, CLAUDE_MODELS) == limits.ALL_MODELS
     assert limits.model_in_failure("Connection reset by peer", CLAUDE_MODELS) is None
@@ -132,8 +136,9 @@ def test_the_failure_text_names_a_known_model_or_the_account():
 def test_stop_failure_asks_the_named_model_and_keeps_its_reset(home, tmp_path, monkeypatch):
     _fake_claude(tmp_path, REJECTED)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
-    out = handle({"hook_event_name": "StopFailure", "error": "rate_limit", "agent_id": "a1",
-                  "last_assistant_message": FABLE_MESSAGE})
+    out = handle(
+        {"hook_event_name": "StopFailure", "error": "rate_limit", "agent_id": "a1", "last_assistant_message": FABLE_MESSAGE}
+    )
     assert out is not None and "fable limited until" in out["systemMessage"]
     assert "--model claude-fable-5-1" in (tmp_path / "claude.calls").read_text()
     assert limits.active()["fable"].until == RESET
@@ -152,13 +157,27 @@ def test_stop_failure_in_a_session_the_router_started_does_not_probe_again(home,
 def test_the_hook_routes_around_a_limited_model_and_refuses_it_when_named(home):
     limits.record_failure("fable", limits.parse_events(REJECTED))
     brief = "kind: analysis, risk: critical, access: write\nAnalyse the design"
-    out = handle({"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s", "cwd": "/",
-                  "tool_input": {"subagent_type": "general-purpose", "prompt": brief}})
+    out = handle(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Agent",
+            "session_id": "s",
+            "cwd": "/",
+            "tool_input": {"subagent_type": "general-purpose", "prompt": brief},
+        }
+    )
     assert out is not None and out["hookSpecificOutput"]["updatedInput"]["model"] == "opus"
     assert "fable limited until" in out["systemMessage"]
     for named in ("fable", "claude-fable-5-1", "Fable", "fable[1m]"):
-        out = handle({"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s", "cwd": "/",
-                      "tool_input": {"subagent_type": "general-purpose", "model": named, "prompt": "x"}})
+        out = handle(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Agent",
+                "session_id": "s",
+                "cwd": "/",
+                "tool_input": {"subagent_type": "general-purpose", "model": named, "prompt": "x"},
+            }
+        )
         assert out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny", named
     context = handle({"hook_event_name": "SessionStart", "source": "startup", "cwd": "/"})
     assert context is not None and "Usage limits: fable until" in context["hookSpecificOutput"]["additionalContext"]
@@ -171,8 +190,9 @@ def test_router_run_learns_the_limit_of_the_model_its_message_names(home, tmp_pa
     client = CliClient.__new__(CliClient)
     client.config_dir, client.binary = tmp_path, _fake_claude(tmp_path, REJECTED)
     with pytest.raises(ClientUnavailableError, match="Fable limit"):
-        client.to_completion({"is_error": True, "api_error_status": 429, "result": FABLE_MESSAGE},
-                             parse_cell("sonnet/low"), seconds=0.5)  # not the model named
+        client.to_completion(
+            {"is_error": True, "api_error_status": 429, "result": FABLE_MESSAGE}, parse_cell("sonnet/low"), seconds=0.5
+        )  # not the model named
     assert "--model claude-fable-5-1" in (tmp_path / "claude.calls").read_text()
     assert limits.active()["fable"].until == RESET
 

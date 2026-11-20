@@ -71,35 +71,50 @@ class Node:
 
 
 def _stroke(t: Theme, path: str, *, colour: str | None = None, width: int = 4) -> str:
-    return (f'<path d="{path}" fill="none" stroke="{colour or t.text}" stroke-width="{width}" '
-            'stroke-linecap="round" stroke-linejoin="round"/>')
+    return (
+        f'<path d="{path}" fill="none" stroke="{colour or t.text}" stroke-width="{width}" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+    )
 
 
 def _icon_task(t: Theme) -> str:
-    return (_stroke(t, "M22 10 h40 l18 18 v62 h-58 z") + _stroke(t, "M62 10 v18 h18")
-            + _stroke(t, "M32 44 h36", colour=t.secondary) + _stroke(t, "M32 58 h28", colour=t.secondary)
-            + f'<rect x="30" y="70" width="40" height="14" rx="7" fill="{t.accent2}"/>')
+    return (
+        _stroke(t, "M22 10 h40 l18 18 v62 h-58 z")
+        + _stroke(t, "M62 10 v18 h18")
+        + _stroke(t, "M32 44 h36", colour=t.secondary)
+        + _stroke(t, "M32 58 h28", colour=t.secondary)
+        + f'<rect x="30" y="70" width="40" height="14" rx="7" fill="{t.accent2}"/>'
+    )
 
 
 def _icon_stairs(t: Theme) -> str:
     bars = []
     for i, colour in enumerate((t.muted, t.accent, t.text, t.text)):
         height = 22 + i * 18
-        bars.append(f'<rect x="{8 + i * 21}" y="{92 - height}" width="17" height="{height}" rx="3" fill="{colour}"'
-                    + (' opacity="0.35"' if i > 1 else "") + "/>")
+        bars.append(
+            f'<rect x="{8 + i * 21}" y="{92 - height}" width="17" height="{height}" rx="3" fill="{colour}"'
+            + (' opacity="0.35"' if i > 1 else "")
+            + "/>"
+        )
     return "".join(bars) + _stroke(t, "M37 18 v14 m-6 -6 l6 6 l6 -6", colour=t.accent)
 
 
 def _icon_check(t: Theme) -> str:
-    return (f'<circle cx="42" cy="42" r="27" fill="none" stroke="{t.text}" stroke-width="5"/>'
-            + _stroke(t, "M62 62 L84 84", width=7) + _stroke(t, "M30 43 l9 9 l16 -18", colour=t.accent, width=5))
+    return (
+        f'<circle cx="42" cy="42" r="27" fill="none" stroke="{t.text}" stroke-width="5"/>'
+        + _stroke(t, "M62 62 L84 84", width=7)
+        + _stroke(t, "M30 43 l9 9 l16 -18", colour=t.accent, width=5)
+    )
 
 
 def _icon_log(t: Theme) -> str:
-    return (_stroke(t, "M20 10 h52 v76 l-9 -6 l-8 6 l-9 -6 l-8 6 l-9 -6 l-9 6 z")
-            + _stroke(t, "M30 30 h32", colour=t.secondary) + _stroke(t, "M30 44 h24", colour=t.secondary)
-            + f'<text x="46" y="72" text-anchor="middle" font-family="{BODY_FONT}" font-size="22" font-weight="700" '
-              f'fill="{t.accent}">$</text>')
+    return (
+        _stroke(t, "M20 10 h52 v76 l-9 -6 l-8 6 l-9 -6 l-8 6 l-9 -6 l-9 6 z")
+        + _stroke(t, "M30 30 h32", colour=t.secondary)
+        + _stroke(t, "M30 44 h24", colour=t.secondary)
+        + f'<text x="46" y="72" text-anchor="middle" font-family="{BODY_FONT}" font-size="22" font-weight="700" '
+        f'fill="{t.accent}">$</text>'
+    )
 
 
 # ---- drawing ----------------------------------------------------------------------------------------------------
@@ -114,15 +129,19 @@ def _arrow_head(x: float, y: float, colour: str, *, pointing: str) -> str:
 
 
 def _label(x: float, y: float, text: str, colour: str, *, anchor: str = "middle") -> str:
-    return (f'<text x="{x}" y="{y}" text-anchor="{anchor}" font-family="{BODY_FONT}" font-size="24" '
-            f'font-weight="700" fill="{colour}">{text}</text>')
+    return (
+        f'<text x="{x}" y="{y}" text-anchor="{anchor}" font-family="{BODY_FONT}" font-size="24" '
+        f'font-weight="700" fill="{colour}">{text}</text>'
+    )
 
 
 def _across(a: Node, b: Node, colour: str) -> str:
     """Return a straight arrow from square `a` to square `b`, both on the same row."""
     start, end = a.cx + a.size / 2 + GAP, b.cx - b.size / 2 - GAP
-    return (f'<line x1="{start}" y1="{a.cy}" x2="{end - ARROW_LENGTH + 2}" y2="{a.cy}" stroke="{colour}" '
-            'stroke-width="4"/>' + _arrow_head(end, a.cy, colour, pointing="right"))
+    return (
+        f'<line x1="{start}" y1="{a.cy}" x2="{end - ARROW_LENGTH + 2}" y2="{a.cy}" stroke="{colour}" '
+        'stroke-width="4"/>' + _arrow_head(end, a.cy, colour, pointing="right")
+    )
 
 
 def _bent(points: str, colour: str) -> str:
@@ -133,11 +152,15 @@ def _router_wires(t: Theme, nodes: list[Node]) -> str:
     """Return the router's arrows: through the four steps, and a fail back up to the start."""
     task, start, check, log = nodes
     top, loop_y = start.top - GAP, 52
-    return (_across(task, start, t.secondary) + _across(start, check, t.secondary) + _across(check, log, t.accent)
-            + _label((check.cx + log.cx) / 2, check.cy - 16, "pass", t.accent)
-            + _bent(f"M{check.cx} {top} V{loop_y} H{start.cx} V{top - ARROW_LENGTH + 2}", t.accent2)
-            + _arrow_head(start.cx, top, t.accent2, pointing="down")
-            + _label((start.cx + check.cx) / 2, loop_y - 14, "fail: one step up, with the reason", t.accent2))
+    return (
+        _across(task, start, t.secondary)
+        + _across(start, check, t.secondary)
+        + _across(check, log, t.accent)
+        + _label((check.cx + log.cx) / 2, check.cy - 16, "pass", t.accent)
+        + _bent(f"M{check.cx} {top} V{loop_y} H{start.cx} V{top - ARROW_LENGTH + 2}", t.accent2)
+        + _arrow_head(start.cx, top, t.accent2, pointing="down")
+        + _label((start.cx + check.cx) / 2, loop_y - 14, "fail: one step up, with the reason", t.accent2)
+    )
 
 
 @dataclass(frozen=True)
@@ -151,21 +174,34 @@ class Figure:
     wires: Callable[[Theme, list[Node]], str]
 
 
-ROUTER = Figure("flow", 1480, 480, [
-    Node(200, 120, "Task", "kind and risk, declared<br>or read from the text", _icon_task),
-    Node(560, 120, "Start cheap", "the cheapest model<br>and effort the risk allows", _icon_stairs),
-    Node(920, 120, "Check", "a test, if there is one;<br>for critical work, a second<br>subagent on another model", _icon_check),
-    Node(1280, 120, "Learn", "what each subagent cost;<br>relaunches move a<br>repository's starts up", _icon_log),
-], _router_wires)
+ROUTER = Figure(
+    "flow",
+    1480,
+    480,
+    [
+        Node(200, 120, "Task", "kind and risk, declared<br>or read from the text", _icon_task),
+        Node(560, 120, "Start cheap", "the cheapest model<br>and effort the risk allows", _icon_stairs),
+        Node(
+            920, 120, "Check", "a test, if there is one;<br>for critical work, a second<br>subagent on another model", _icon_check
+        ),
+        Node(1280, 120, "Learn", "what each subagent cost;<br>relaunches move a<br>repository's starts up", _icon_log),
+    ],
+    _router_wires,
+)
+
 
 def _node_html(node: Node, t: Theme) -> str:
     """Return the HTML of one symbol: its square with the icon, its title and its line."""
-    square = (f'<div class="node" style="left:{node.cx - node.size / 2}px;top:{node.top}px;width:{node.size}px;'
-              f'height:{node.size}px"><svg width="{ICON}" height="{ICON}" viewBox="0 0 {ICON} {ICON}">'
-              f"{node.icon(t)}</svg></div>")
+    square = (
+        f'<div class="node" style="left:{node.cx - node.size / 2}px;top:{node.top}px;width:{node.size}px;'
+        f'height:{node.size}px"><svg width="{ICON}" height="{ICON}" viewBox="0 0 {ICON} {ICON}">'
+        f"{node.icon(t)}</svg></div>"
+    )
     left = node.cx - CAPTION_W / 2
-    return (square + f'<div class="title" style="left:{left}px;top:{node.top + node.size + 16}px">{node.title}</div>'
-            f'<div class="line" style="left:{left}px;top:{node.top + node.size + 64}px">{node.line}</div>')
+    return (
+        square + f'<div class="title" style="left:{left}px;top:{node.top + node.size + 16}px">{node.title}</div>'
+        f'<div class="line" style="left:{left}px;top:{node.top + node.size + 64}px">{node.line}</div>'
+    )
 
 
 def page(figure: Figure, t: Theme) -> str:
@@ -190,9 +226,20 @@ def capture(figure: Figure, t: Theme, out: Path) -> None:
     """Write `figure` in theme `t` to `out` as a PNG, through headless Chrome."""
     with tempfile.NamedTemporaryFile("w", suffix=".html", encoding="utf-8", delete=False) as handle:
         handle.write(page(figure, t))
-    subprocess.run([CHROME, "--headless=new", f"--screenshot={out}", f"--window-size={figure.width},{figure.height}",
-                    f"--force-device-scale-factor={SCALE}", "--hide-scrollbars", "--virtual-time-budget=1000",
-                    f"file://{handle.name}"], check=True, capture_output=True)
+    subprocess.run(
+        [
+            CHROME,
+            "--headless=new",
+            f"--screenshot={out}",
+            f"--window-size={figure.width},{figure.height}",
+            f"--force-device-scale-factor={SCALE}",
+            "--hide-scrollbars",
+            "--virtual-time-budget=1000",
+            f"file://{handle.name}",
+        ],
+        check=True,
+        capture_output=True,
+    )
     Path(handle.name).unlink()
 
 

@@ -72,8 +72,16 @@ class ModelSpec:
 
 MODELS: dict[str, ModelSpec] = {
     "claude-haiku-5-5": ModelSpec(
-        "claude-haiku-5-5", "haiku", 0, 0.10, 0.50, 0.01, 0.125, "medium",
-        long_prompt_from=100_000, long_prompt_mult=5.0,
+        "claude-haiku-5-5",
+        "haiku",
+        0,
+        0.10,
+        0.50,
+        0.01,
+        0.125,
+        "medium",
+        long_prompt_from=100_000,
+        long_prompt_mult=5.0,
     ),
     "claude-sonnet-5-5": ModelSpec("claude-sonnet-5-5", "sonnet", 1, 2.00, 10.00, 0.20, 2.50, "high"),
     "claude-opus-5-5": ModelSpec("claude-opus-5-5", "opus", 2, 4.00, 20.00, 0.20, 5.00, "medium"),
@@ -260,8 +268,11 @@ def lattice(models: Iterable[str] | None = None, efforts: Iterable[str] | None =
     """Return every (model, effort) cell of the available models (or of `models`), cheapest first on the
     reference request: the efforts each model accepts up to `xhigh` (AUTO_EFFORTS), or exactly `efforts`.
     """
-    cells = [Cell(m, e) for m in (models or available_models())
-             for e in (efforts or [x for x in MODELS[resolve_model(m)].efforts if x in AUTO_EFFORTS])]
+    cells = [
+        Cell(m, e)
+        for m in (models or available_models())
+        for e in (efforts or [x for x in MODELS[resolve_model(m)].efforts if x in AUTO_EFFORTS])
+    ]
     return sorted(cells, key=lambda c: (c.expected_cost(), c.capability))
 
 

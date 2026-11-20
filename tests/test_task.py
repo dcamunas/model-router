@@ -1,4 +1,3 @@
-
 import pytest
 
 from model_router.task import Task

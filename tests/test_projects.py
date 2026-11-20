@@ -27,14 +27,29 @@ def test_a_signature_ignores_the_declaration_line_tells_tasks_apart_and_is_salte
 
 def _old(**kw):
     now = NOW
-    base = {"session": "s1", "agent_id": "a1", "model": "haiku", "effort": "medium", "kind": "search", "risk": "low",
-            "sig": projects.signature("Find where the config is loaded"), "at": (now - timedelta(minutes=5)).isoformat()}
+    base = {
+        "session": "s1",
+        "agent_id": "a1",
+        "model": "haiku",
+        "effort": "medium",
+        "kind": "search",
+        "risk": "low",
+        "sig": projects.signature("Find where the config is loaded"),
+        "at": (now - timedelta(minutes=5)).isoformat(),
+    }
     return {**base, **kw}
 
 
 def _relaunch(old, cell, *, session="s1", kind="search", risk="low", now=NOW):
-    return projects.find_relaunch([old], session, prompt_signature=projects.signature("Find where the config is loaded"),
-                                  cell=parse_cell(cell), kind=kind, risk=risk, now=now)
+    return projects.find_relaunch(
+        [old],
+        session,
+        prompt_signature=projects.signature("Find where the config is loaded"),
+        cell=parse_cell(cell),
+        kind=kind,
+        risk=risk,
+        now=now,
+    )
 
 
 def test_a_relaunch_is_the_same_task_higher_soon_after():
@@ -52,8 +67,18 @@ def test_a_relaunch_is_the_same_task_higher_soon_after():
 
 def _records(project, kind, risk, cell, n, prefix, *, chose=True, at=None):
     at = at or (NOW - timedelta(minutes=1)).isoformat()
-    return [{"project": project, "routed": cell, "kind": kind, "risk": risk, "agent_id": f"{prefix}{i}",
-             "router_chose": chose, "at": at} for i in range(n)]
+    return [
+        {
+            "project": project,
+            "routed": cell,
+            "kind": kind,
+            "risk": risk,
+            "agent_id": f"{prefix}{i}",
+            "router_chose": chose,
+            "at": at,
+        }
+        for i in range(n)
+    ]
 
 
 def test_raises_only_the_cell_in_force_and_lowers_only_by_hand_back_to_where_it_came_from(tmp_path, monkeypatch):
@@ -96,8 +121,12 @@ def test_a_cheaper_start_must_really_be_cheaper_and_respect_the_floor(tmp_path, 
         for c in projects.propose_lower(project, counts, floors={}, current=lambda kind, risk, label=label: parse_cell(label)):
             assert parse_cell(c["to"]).expected_cost() <= parse_cell(label).expected_cost() * 0.8, (label, c)
     counts = projects.evidence(project, _records(project, "search", "high", "sonnet/low", 12, "f"), relaunched=set())
-    assert projects.propose_lower(project, counts, floors={"high": "sonnet/low"},
-                                  current=lambda kind, risk: parse_cell("sonnet/low")) == []
+    assert (
+        projects.propose_lower(
+            project, counts, floors={"high": "sonnet/low"}, current=lambda kind, risk: parse_cell("sonnet/low")
+        )
+        == []
+    )
 
 
 def test_reset_keeps_raises_from_coming_back_and_bad_tunings_are_ignored(tmp_path, monkeypatch):
@@ -112,8 +141,17 @@ def test_reset_keeps_raises_from_coming_back_and_bad_tunings_are_ignored(tmp_pat
     assert tuning["start"] == {}
     again = projects.evidence(project, records, relaunched={"a0", "a1", "a2"}, since=tuning["since"])
     assert projects.raise_failing(project, again, current=lambda kind, risk: parse_cell("haiku/medium"), local=again) == []
-    projects.tuning_path(project).write_text(json.dumps({"start": {
-        "review": {"medium": {"cell": "vendor-9/low"}, "high": "opus"}, "code": "x", "write": {"low": {"cell": 5}}}}))
+    projects.tuning_path(project).write_text(
+        json.dumps(
+            {
+                "start": {
+                    "review": {"medium": {"cell": "vendor-9/low"}, "high": "opus"},
+                    "code": "x",
+                    "write": {"low": {"cell": 5}},
+                }
+            }
+        )
+    )
     assert projects.load_tuning(project)["start"] == {}  # nothing usable: nothing applied, nothing crashes
     junk = projects.evidence(project, _records(project, "review", "medium", "gone-model/low", 6, "z"), relaunched={"z0", "z1"})
     assert projects.raise_failing(project, junk, current=lambda kind, risk: parse_cell("haiku/medium"), local=junk) == []
@@ -125,11 +163,11 @@ def test_a_tuning_is_ignored_once_the_table_no_longer_gives_the_cell_it_replaced
 
     task = Task(prompt="x", kind="review", risk="medium")
     base = Policy().plan(task).start
-    tuned = Policy(tuning={"name": "repo", "start": {"review": {"medium": {
-        "cell": "fable/low", "base": base.label}}}}).plan(task)
+    tuned = Policy(tuning={"name": "repo", "start": {"review": {"medium": {"cell": "fable/low", "base": base.label}}}}).plan(task)
     assert tuned.start.label == "fable/low" and any("tuned for repo" in r for r in tuned.rationale)
-    stale = Policy(tuning={"name": "repo", "start": {"review": {"medium": {
-        "cell": "haiku/low", "base": "sonnet/xhigh"}}}}).plan(task)
+    stale = Policy(tuning={"name": "repo", "start": {"review": {"medium": {"cell": "haiku/low", "base": "sonnet/xhigh"}}}}).plan(
+        task
+    )
     assert stale.start == base and any("ignored" in r for r in stale.rationale)
 
 
@@ -144,11 +182,30 @@ def test_projects_are_git_repositories_resolved_and_nothing_else(tmp_path):
 
 
 def _transcript(prompt, model):
-    return "\n".join(json.dumps(line) for line in [
-        {"timestamp": "2026-10-22T10:00:00Z", "message": {"role": "user", "content": prompt}},
-        {"timestamp": "2026-10-22T10:00:09Z", "message": {"role": "assistant", "id": "m1", "model": model,
-         "content": [{"type": "text", "text": "done"}], "usage": {"input_tokens": 3, "output_tokens": 5,
-         "cache_read_input_tokens": 100, "cache_creation_input_tokens": 50}}}]) + "\n"
+    return (
+        "\n".join(
+            json.dumps(line)
+            for line in [
+                {"timestamp": "2026-10-22T10:00:00Z", "message": {"role": "user", "content": prompt}},
+                {
+                    "timestamp": "2026-10-22T10:00:09Z",
+                    "message": {
+                        "role": "assistant",
+                        "id": "m1",
+                        "model": model,
+                        "content": [{"type": "text", "text": "done"}],
+                        "usage": {
+                            "input_tokens": 3,
+                            "output_tokens": 5,
+                            "cache_read_input_tokens": 100,
+                            "cache_creation_input_tokens": 50,
+                        },
+                    },
+                },
+            ]
+        )
+        + "\n"
+    )
 
 
 def test_the_hook_learns_from_model_relaunches_not_from_access_or_other_tasks(tmp_path, monkeypatch):
@@ -162,26 +219,52 @@ def test_the_hook_learns_from_model_relaunches_not_from_access_or_other_tasks(tm
     cwd = str(repo)
 
     def launch(prompt, **tool_input) -> dict:
-        return handle({"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s1", "cwd": cwd,
-                       "tool_input": {"subagent_type": "general-purpose", "prompt": prompt, **tool_input}}) or {}
+        return (
+            handle(
+                {
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Agent",
+                    "session_id": "s1",
+                    "cwd": cwd,
+                    "tool_input": {"subagent_type": "general-purpose", "prompt": prompt, **tool_input},
+                }
+            )
+            or {}
+        )
 
     def finish(prompt, agent_id, out):
         model = out["hookSpecificOutput"]["updatedInput"]["model"] if out else "opus"
         effort = out["hookSpecificOutput"]["updatedInput"].get("effort", "medium") if out else "medium"
-        full = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5",
-                "fable": "claude-fable-5-1"}[model]
+        full = {
+            "haiku": "claude-haiku-5-5",
+            "sonnet": "claude-sonnet-5-5",
+            "opus": "claude-opus-5-5",
+            "fable": "claude-fable-5-1",
+        }[model]
         path = tmp_path / f"{agent_id}.jsonl"
         path.write_text(_transcript(prompt, full))
-        handle({"hook_event_name": "SubagentStop", "session_id": "s1", "cwd": cwd, "agent_id": agent_id,
-                "agent_type": "general-purpose", "effort": {"level": effort}, "agent_transcript_path": str(path)})
+        handle(
+            {
+                "hook_event_name": "SubagentStop",
+                "session_id": "s1",
+                "cwd": cwd,
+                "agent_id": agent_id,
+                "agent_type": "general-purpose",
+                "effort": {"level": effort},
+                "agent_transcript_path": str(path),
+            }
+        )
 
     for i in range(6):  # the reader could not edit: relaunched with access: write on the same cell, not a model fail
         prompt = f"kind: review, risk: medium, access: read\nReview module_{i}.py and the parser loop number {i}."
         finish(prompt, f"r{i}", launch(prompt))
         launch(prompt.replace("access: read", "access: write"))
     for i in range(6):  # a template for another file at another risk: another task
-        finish(f"kind: review, risk: medium\nReview utils_{i}.py for off-by-one errors in the loop.", f"u{i}",
-               launch(f"kind: review, risk: medium\nReview utils_{i}.py for off-by-one errors in the loop."))
+        finish(
+            f"kind: review, risk: medium\nReview utils_{i}.py for off-by-one errors in the loop.",
+            f"u{i}",
+            launch(f"kind: review, risk: medium\nReview utils_{i}.py for off-by-one errors in the loop."),
+        )
         launch(f"kind: review, risk: high\nReview utils_{i}.py for off-by-one errors in the loop.")
     log = [json.loads(line) for line in (tmp_path / "home" / "model-router" / "hook.jsonl").read_text().splitlines()]
     assert not any(e.get("relaunch_of") for e in log)
@@ -237,11 +320,11 @@ def test_a_cheaper_start_needs_ten_clean_launches_not_nine(tmp_path, monkeypatch
     def in_force(kind, risk):
         return start
 
-    nine = projects.evidence(project, _records(project, "agentic", "medium", start.label, projects.DOWN_N - 1, "x"),
-                             relaunched=set())
+    nine = projects.evidence(
+        project, _records(project, "agentic", "medium", start.label, projects.DOWN_N - 1, "x"), relaunched=set()
+    )
     assert projects.propose_lower(project, nine, floors={}, current=in_force) == []
-    ten = projects.evidence(project, _records(project, "agentic", "medium", start.label, projects.DOWN_N, "x"),
-                            relaunched=set())
+    ten = projects.evidence(project, _records(project, "agentic", "medium", start.label, projects.DOWN_N, "x"), relaunched=set())
     assert len(projects.propose_lower(project, ten, floors={}, current=in_force)) == 1
 
 
@@ -262,8 +345,21 @@ def test_router_plan_starts_where_the_hook_would_in_this_repository(tmp_path, mo
     table = start_in_force({})("search", "low")
     tuned = projects.step_up(table, projects.lattice())
     assert tuned is not None
-    projects.apply(str(repo.resolve()), [{"kind": "search", "risk": "low", "from": table.label, "to": tuned.label,
-                                          "what": "raised", "n": 6, "relaunched": 2, "at": NOW.isoformat()}])
+    projects.apply(
+        str(repo.resolve()),
+        [
+            {
+                "kind": "search",
+                "risk": "low",
+                "from": table.label,
+                "to": tuned.label,
+                "what": "raised",
+                "n": 6,
+                "relaunched": 2,
+                "at": NOW.isoformat(),
+            }
+        ],
+    )
     monkeypatch.chdir(repo)
     assert main(["plan", "find where the config is loaded", "--kind", "search", "--risk", "low"]) == 0
     out = capsys.readouterr().out

@@ -118,8 +118,9 @@ def main_model(transcript_path: str | None) -> str | None:
     return None
 
 
-def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
-           cwd: str | None = None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+def decide(
+    tool_input: dict[str, Any], chat_model: str | None = None, *, cwd: str | None = None
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Compute what the hook would change for one Agent call: (updated input or None, decision record).
     `chat_model` is the short name of the model serving the main chat, for the cross-check rule.
     """
@@ -141,8 +142,9 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
     risk = raised.risk
     policy = Policy(cells=claude, tuning=load_tuning(project))
     plan = policy.plan(Task(prompt=prompt, kind=cls.kind, risk=risk))
-    cell, cross = _cross_review(worker_cell(plan.start, [c.model for c in claude]), kind=cls.kind, risk=risk,
-                                chat_model=chat_model, policy=policy)
+    cell, cross = _cross_review(
+        worker_cell(plan.start, [c.model for c in claude]), kind=cls.kind, risk=risk, chat_model=chat_model, policy=policy
+    )
     cc = cell.claude_code()
     updated = dict(tool_input)
     updated["model"] = cc["model"]
@@ -151,8 +153,13 @@ def decide(tool_input: dict[str, Any], chat_model: str | None = None, *,
         updated["effort"] = cc["effort"]
         fields.append("effort")
     record = {
-        "kind": cls.kind, "risk": risk, "cell": cell.label, "set": fields, "why": cls.reason,
-        "prompt_hash": prompt_hash(prompt), "project": project,
+        "kind": cls.kind,
+        "risk": risk,
+        "cell": cell.label,
+        "set": fields,
+        "why": cls.reason,
+        "prompt_hash": prompt_hash(prompt),
+        "project": project,
         # model and effort both the router's, on the table's cell: evidence about its tables (a cross-checked review
         # runs another cell than the start, so its outcome says nothing about the start)
         # a custom agent brings its own prompt and tools, so its outcome says nothing about the tables either
@@ -218,8 +225,15 @@ def _cwd(event: dict[str, Any]) -> str | None:
 def _log(event: dict[str, Any], record: dict[str, Any]) -> None:
     if not logging_on():
         return
-    append_jsonl(home() / DECISION_LOG, {"at": clock.now().isoformat(timespec="seconds"),
-                                         "session_id": event.get("session_id"), "cwd": event.get("cwd"), **record})
+    append_jsonl(
+        home() / DECISION_LOG,
+        {
+            "at": clock.now().isoformat(timespec="seconds"),
+            "session_id": event.get("session_id"),
+            "cwd": event.get("cwd"),
+            **record,
+        },
+    )
 
 
 def _measure(event: dict[str, Any]) -> None:
@@ -236,8 +250,9 @@ def _measure(event: dict[str, Any]) -> None:
         sys.stderr.write(f"router-hook: subagent not measured: {exc}\n")
 
 
-def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], *, updated: dict[str, Any] | None,
-                 record: dict[str, Any]) -> str | None:
+def _relaunch_of(
+    event: dict[str, Any], tool_input: dict[str, Any], *, updated: dict[str, Any] | None, record: dict[str, Any]
+) -> str | None:
     """Return the agent id of the finished subagent this launch repeats higher (see `projects.find_relaunch`), or
     None. The new launch's cell is the model and effort it will really run on: the hook's, or Claude's own.
     """
@@ -256,8 +271,14 @@ def _relaunch_of(event: dict[str, Any], tool_input: dict[str, Any], *, updated: 
     if not kind or not risk:  # a launch the hook left alone: its kind and risk as the hook would read them
         cls = classify_rules(prompt, description=str(tool_input.get("description") or ""))
         kind, risk = cls.kind, cls.risk
-    found = find_relaunch(load_recent(home() / SUBAGENT_LOG), event.get("session_id"),
-                          prompt_signature=signature(prompt), cell=cell, kind=kind, risk=risk)
+    found = find_relaunch(
+        load_recent(home() / SUBAGENT_LOG),
+        event.get("session_id"),
+        prompt_signature=signature(prompt),
+        cell=cell,
+        kind=kind,
+        risk=risk,
+    )
     return str(found["agent_id"]) if found and found.get("agent_id") else None
 
 
@@ -272,15 +293,20 @@ def _tune(event: dict[str, Any]) -> list[str]:
     try:
         tuning = load_tuning(project)
         since = tuning.get("since")
-        mine = evidence(project, load_subagents(home() / SUBAGENT_LOG),
-                        relaunched=relaunched_ids(home() / DECISION_LOG), since=since)
-        changes = raise_failing(project, combine(mine, pooled(project, since=since)[0]),
-                                current=start_in_force(tuning), local=mine)
+        mine = evidence(
+            project, load_subagents(home() / SUBAGENT_LOG), relaunched=relaunched_ids(home() / DECISION_LOG), since=since
+        )
+        changes = raise_failing(
+            project, combine(mine, pooled(project, since=since)[0]), current=start_in_force(tuning), local=mine
+        )
     except Exception as exc:  # noqa: BLE001 - tuning is a side task: it must never cost the session its context
         sys.stderr.write(f"router-hook: tuning skipped: {type(exc).__name__}: {exc}\n")
         return []
-    return [f"{c['kind']} ({c['risk']}) in {Path(project).name} now starts on {c['to']}, not {c['from']}: "
-            f"{c['relaunched']} of {c['n']} relaunched higher" for c in changes]
+    return [
+        f"{c['kind']} ({c['risk']}) in {Path(project).name} now starts on {c['to']}, not {c['from']}: "
+        f"{c['relaunched']} of {c['n']} relaunched higher"
+        for c in changes
+    ]
 
 
 def _share(event: dict[str, Any]) -> None:
@@ -355,8 +381,9 @@ def _limits_context() -> str:
     if limits.ALL_MODELS in held:
         return f" The account's usage limit is spent until {held[limits.ALL_MODELS].when()}: every model is refused."
     names = "; ".join(f"{name} until {limit.when()}" for name, limit in sorted(held.items()))
-    return (f" Usage limits: {names}. The router routes around them; do not set `model` to one of them, the launch "
-            "would be refused.")
+    return (
+        f" Usage limits: {names}. The router routes around them; do not set `model` to one of them, the launch would be refused."
+    )
 
 
 def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -370,8 +397,9 @@ def _stop_failure(event: dict[str, Any]) -> dict[str, Any] | None:
     if limit is None or quiet():
         return None
     who = "every model" if limit.model == limits.ALL_MODELS else limit.model
-    return {"systemMessage": f"router: {who} limited until {limit.when()} ({limit.window}); subagents go to the next "
-                             "model until then"}
+    return {
+        "systemMessage": f"router: {who} limited until {limit.when()} ({limit.window}); subagents go to the next model until then"
+    }
 
 
 def _limited_explicit(tool_input: dict[str, Any]) -> dict[str, Any] | None:
@@ -382,10 +410,13 @@ def _limited_explicit(tool_input: dict[str, Any]) -> dict[str, Any] | None:
     limit = limits.active().get(wanted) if wanted else None
     if limit is None:
         return None
-    reason = (f"{wanted} is over its usage limit until {limit.when()}. Launch again without `model` (the router "
-              "picks an available one) or with another model.")
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                   "permissionDecisionReason": reason}}
+    reason = (
+        f"{wanted} is over its usage limit until {limit.when()}. Launch again without `model` (the router "
+        "picks an available one) or with another model."
+    )
+    return {
+        "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}
+    }
 
 
 def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -412,9 +443,11 @@ def _pre_agent(event: dict[str, Any]) -> dict[str, Any] | None:
         sys.stderr.write(f"router-hook: decision not logged: {exc}\n")
     out: dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": updated}}
     if not quiet():
-        out["systemMessage"] = f"router: {record['cell']} ({record['kind']}/{record['risk']})" + (
-            " · cross-checked against the chat" if record.get("cross") else "") + (
-            f" · {record['limited']}" if record.get("limited") else "")
+        out["systemMessage"] = (
+            f"router: {record['cell']} ({record['kind']}/{record['risk']})"
+            + (" · cross-checked against the chat" if record.get("cross") else "")
+            + (f" · {record['limited']}" if record.get("limited") else "")
+        )
     return out
 
 

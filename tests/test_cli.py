@@ -80,9 +80,14 @@ def test_doctor_reports_the_plugin_off_and_the_claude_version(tmp_path, monkeypa
 
 def test_doctor_shows_the_effort_of_the_chat_model_whatever_its_version(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("PATH", str(tmp_path))  # no claude binary: doctor still reads the settings
-    (claude_profile() / "settings.json").write_text(json.dumps({
-        "model": "fable", "modelSettings": {"claude-fable-5-1": {"effortLevel": "low"}},
-    }))
+    (claude_profile() / "settings.json").write_text(
+        json.dumps(
+            {
+                "model": "fable",
+                "modelSettings": {"claude-fable-5-1": {"effortLevel": "low"}},
+            }
+        )
+    )
     main(["doctor"])
     assert "main chat: model fable, effort low" in capsys.readouterr().out
 
@@ -100,7 +105,7 @@ def test_an_unknown_model_is_said_in_the_plan_and_the_doctor_and_refused_by_conf
 
 def test_stats_skips_corrupt_lines_in_the_hook_log(home, capsys):
     good = json.dumps({"cell": "opus/low", "kind": "code", "risk": "medium"})
-    (home / "hook.jsonl").write_text(good + "\n{\"cell\": \"opus/l\n" + good + "\n")
+    (home / "hook.jsonl").write_text(good + '\n{"cell": "opus/l\n' + good + "\n")
     assert main(["stats"]) == 0
     out = capsys.readouterr().out
     assert "opus/low" in out and "opus/l " not in out

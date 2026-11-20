@@ -52,8 +52,9 @@ from .projects import (
 )
 
 # Not fixed by hand: the router's own choices, Claude Code's built-in agents, the read-only agent, workflow agents.
-NOT_FIXED_BY_HAND = frozenset({"", "general-purpose", "claude", "workflow-subagent", "Explore", "Plan",
-                               "claude-code-guide", "statusline-setup"})
+NOT_FIXED_BY_HAND = frozenset(
+    {"", "general-purpose", "claude", "workflow-subagent", "Explore", "Plan", "claude-code-guide", "statusline-setup"}
+)
 TeamRuns = dict[tuple[str, str], dict[str, int]]  # (agent, cell label) -> {"n": runs, "fails": repeated}, from teammates
 AGENTS_DIR = (".claude", "agents")
 REGULAR_MODES = frozenset({"100644", "100755"})  # git's modes for a plain file; 120000 is a link
@@ -82,11 +83,18 @@ class Advice:
 
     def to_dict(self) -> dict[str, Any]:
         local = self.runs > self.team_runs
-        return {"agent": self.agent, "cell": self.cell.label, "runs": self.runs, "team_runs": self.team_runs,
-                "repeated": self.repeated,
-                "mean_turns": round(self.mean_turns, 1) if local else None, "total_cost_usd": round(self.total_cost, 4),
-                "action": self.action, "to": self.to.label if self.to else None,
-                "saving_usd": round(self.saving, 4) if self.saving is not None else None}
+        return {
+            "agent": self.agent,
+            "cell": self.cell.label,
+            "runs": self.runs,
+            "team_runs": self.team_runs,
+            "repeated": self.repeated,
+            "mean_turns": round(self.mean_turns, 1) if local else None,
+            "total_cost_usd": round(self.total_cost, 4),
+            "action": self.action,
+            "to": self.to.label if self.to else None,
+            "saving_usd": round(self.saving, 4) if self.saving is not None else None,
+        }
 
 
 def fixed_by_hand(record: dict[str, Any], project: str) -> bool:
@@ -140,8 +148,13 @@ def committed_agents(project: str) -> dict[str, Fixed] | None:
     """
     folder = "/".join(AGENTS_DIR)
     try:
-        listed = subprocess.run(["git", "-C", project, "ls-files", "-s", "-z", "--", folder], capture_output=True,
-                                text=True, timeout=GIT_SECONDS, check=True).stdout
+        listed = subprocess.run(
+            ["git", "-C", project, "ls-files", "-s", "-z", "--", folder],
+            capture_output=True,
+            text=True,
+            timeout=GIT_SECONDS,
+            check=True,
+        ).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     out = {}
@@ -188,9 +201,12 @@ def repeated_ids(records: list[dict[str, Any]]) -> set[str]:
         if end is None or cell is None or not r.get("sig") or not r.get("agent_id") or not r.get("session"):
             continue
         for start, later_cell, later in starts.get(str(r["session"]), []):
-            if (later.get("agent_id") != r["agent_id"]
-                    and timedelta(0) <= start - end <= RELAUNCH_WINDOW and higher(cell, later_cell)
-                    and alike(r["sig"], later["sig"]) >= ALIKE):
+            if (
+                later.get("agent_id") != r["agent_id"]
+                and timedelta(0) <= start - end <= RELAUNCH_WINDOW
+                and higher(cell, later_cell)
+                and alike(r["sig"], later["sig"]) >= ALIKE
+            ):
                 out.add(str(r["agent_id"]))
                 break
     return out
@@ -216,8 +232,11 @@ def advise(records: list[dict[str, Any]], project: str, *, cells: list[Cell], te
         if agent in committed and tally.get("n", 0) > 0:
             theirs[(agent, cell)] = tally
             groups.setdefault((agent, cell), [])
-    out = [_advice(agent, cell, records=rs, cells=cells, repeated=repeated, team=theirs.get((agent, cell)))
-           for (agent, cell), rs in groups.items() if agent not in committed or names_cell(committed[agent], cell)]
+    out = [
+        _advice(agent, cell, records=rs, cells=cells, repeated=repeated, team=theirs.get((agent, cell)))
+        for (agent, cell), rs in groups.items()
+        if agent not in committed or names_cell(committed[agent], cell)
+    ]
     return sorted(out, key=lambda a: (-a.runs, -a.total_cost))
 
 
@@ -229,8 +248,9 @@ def latest(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(last.values())
 
 
-def _advice(agent: str, cell: Cell, *, records: list[dict[str, Any]], cells: list[Cell], repeated: set[str],
-            team: dict[str, int] | None) -> Advice:
+def _advice(
+    agent: str, cell: Cell, *, records: list[dict[str, Any]], cells: list[Cell], repeated: set[str], team: dict[str, int] | None
+) -> Advice:
     team_runs, team_fails = (team or {}).get("n", 0), (team or {}).get("fails", 0)
     runs = len(records) + team_runs
     fails = sum(1 for r in records if str(r.get("agent_id")) in repeated) + team_fails
@@ -254,13 +274,27 @@ def _with(base: Advice, action: str, *, to: Cell | None = None, records: list[di
     if to is not None and records and to.model != base.cell.model:
         usages = [_usage(r) for r in records]
         saving = sum(cost_usd(base.cell.model, u) - cost_usd(to.model, u) for u in usages)
-    return Advice(base.agent, base.cell, base.runs, base.repeated, base.mean_turns, base.total_cost, action, to, saving,
-                  team_runs=base.team_runs)
+    return Advice(
+        base.agent,
+        base.cell,
+        base.runs,
+        base.repeated,
+        base.mean_turns,
+        base.total_cost,
+        action,
+        to,
+        saving,
+        team_runs=base.team_runs,
+    )
 
 
 def _usage(record: dict[str, Any]) -> Usage:
-    return Usage(int(record.get("input_tokens") or 0), int(record.get("output_tokens") or 0),
-                 int(record.get("cache_read_tokens") or 0), int(record.get("cache_write_tokens") or 0))
+    return Usage(
+        int(record.get("input_tokens") or 0),
+        int(record.get("output_tokens") or 0),
+        int(record.get("cache_read_tokens") or 0),
+        int(record.get("cache_write_tokens") or 0),
+    )
 
 
 def agent_file(project: str, agent: str) -> Path | None:

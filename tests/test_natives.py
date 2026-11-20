@@ -31,8 +31,7 @@ def test_applies_the_missing_keys_once_and_keeps_the_rest(settings, tmp_path):
     data = json.loads(settings.read_text())
     assert data["model"] == "opus" and data["autoCompactWindow"] == natives.AUTO_COMPACT_WINDOW
     assert data["env"] == {"FOO": "1"}
-    assert data["statusLine"] == {"type": "command",
-                                  "command": f"'{tmp_path}/plugin data/venv/bin/router' statusline"}
+    assert data["statusLine"] == {"type": "command", "command": f"'{tmp_path}/plugin data/venv/bin/router' statusline"}
     assert natives.apply() == ([], [])
 
 
@@ -89,8 +88,10 @@ def test_session_start_says_it_once_and_never_in_the_router_s_own_sessions(setti
     assert not settings.exists()
     monkeypatch.delenv("MODEL_ROUTER_CHILD")
     out = handle({"hook_event_name": "SessionStart"}) or {}
-    assert out["systemMessage"] == ("router: set autoCompactWindow 400000 and the status line in settings.json, "
-                                    "from the next session on (once; `router config --natives off` stops it)")
+    assert out["systemMessage"] == (
+        "router: set autoCompactWindow 400000 and the status line in settings.json, "
+        "from the next session on (once; `router config --natives off` stops it)"
+    )
     assert "Model router active" in out["hookSpecificOutput"]["additionalContext"]
     assert "systemMessage" not in (handle({"hook_event_name": "SessionStart"}) or {})
 
@@ -126,12 +127,16 @@ def test_the_subagent_model_an_earlier_version_wrote_is_taken_out_once(settings,
     _record({"autoCompactWindow": "router", "statusLine": "router", "env.CLAUDE_CODE_SUBAGENT_MODEL": "router"})
     monkeypatch.setattr("model_router.hook._natives", natives_hook)
     out = handle({"hook_event_name": "SessionStart"}) or {}
-    assert out["systemMessage"] == ("router: took out CLAUDE_CODE_SUBAGENT_MODEL=sonnet (written by router 0.23) "
-                                    "in settings.json, from the next session on (once; `router config --natives off` "
-                                    "stops it)")
+    assert out["systemMessage"] == (
+        "router: took out CLAUDE_CODE_SUBAGENT_MODEL=sonnet (written by router 0.23) "
+        "in settings.json, from the next session on (once; `router config --natives off` "
+        "stops it)"
+    )
     assert json.loads(settings.read_text()) == {"autoCompactWindow": 400_000}  # `env` went with its last entry
-    assert json.loads((claude_profile() / "model-router" / natives.RECORD).read_text())[
-        "env.CLAUDE_CODE_SUBAGENT_MODEL"] == "retired"
+    assert (
+        json.loads((claude_profile() / "model-router" / natives.RECORD).read_text())["env.CLAUDE_CODE_SUBAGENT_MODEL"]
+        == "retired"
+    )
     _write(settings, {"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}})
     assert natives.apply() == ([], [])  # put back by the person after that: theirs
 
@@ -147,7 +152,8 @@ def test_the_off_switch_still_takes_out_the_router_s_own_subagent_model(settings
 def test_the_notice_names_both_when_it_sets_and_takes_out():
     assert natives.notice(["statusLine"], ["env.CLAUDE_CODE_SUBAGENT_MODEL"]) == (
         "router: set the status line; took out CLAUDE_CODE_SUBAGENT_MODEL=sonnet (written by router 0.23) in "
-        "settings.json, from the next session on (once; `router config --natives off` stops it)")
+        "settings.json, from the next session on (once; `router config --natives off` stops it)"
+    )
     assert natives.notice([], []) == ""
 
 

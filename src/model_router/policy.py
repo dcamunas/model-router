@@ -85,8 +85,10 @@ def models_note() -> str | None:
     if not unknown:
         return None
     if len(unknown) == len(listed_models()):
-        return (f"the models setting lists no model this router knows ({', '.join(unknown)}): every Claude model "
-                "is used; `router config --models` fixes it")
+        return (
+            f"the models setting lists no model this router knows ({', '.join(unknown)}): every Claude model "
+            "is used; `router config --models` fixes it"
+        )
     return f"the models setting names models this router does not know, ignored: {', '.join(unknown)}"
 
 
@@ -170,8 +172,10 @@ class Policy:
             self.judge = _cap_effort(worker_cell(judge, self.models)) if judge else default_judge(self.models)
         except ValueError as exc:  # a typo, or a model this version does not know
             self.judge = default_judge_cell(self.models)
-            self.notes.append(f"judge setting cannot be used ({exc}): {self.judge} instead; `router config --judge` "
-                              f"sets another, `router doctor` shows it")
+            self.notes.append(
+                f"judge setting cannot be used ({exc}): {self.judge} instead; `router config --judge` "
+                f"sets another, `router doctor` shows it"
+            )
 
     def _available(self, cell: Cell, rationale: list[str]) -> Cell:
         """Replace a cell whose model this installation lacks with the one `worker_cell` picks, and a cell at an

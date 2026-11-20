@@ -18,8 +18,15 @@ def test_enable_writes_both_keys_and_keeps_everything_else(tmp_path):
     repo = _repo(tmp_path)
     (repo / ".claude").mkdir()
     settings = repo / ".claude" / "settings.json"
-    settings.write_text(json.dumps({"hooks": {"Stop": []}, "enabledPlugins": {"other@x": True},
-                                    "extraKnownMarketplaces": {"x": {"source": {"source": "github", "repo": "x/y"}}}}))
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {"Stop": []},
+                "enabledPlugins": {"other@x": True},
+                "extraKnownMarketplaces": {"x": {"source": {"source": "github", "repo": "x/y"}}},
+            }
+        )
+    )
     assert team.enable(str(repo)) == ["marketplace dcamunas (dcamunas/claude-plugins)", "plugin model-router@dcamunas enabled"]
     data = json.loads(settings.read_text())
     assert data["hooks"] == {"Stop": []} and data["enabledPlugins"] == {"other@x": True, "model-router@dcamunas": True}
@@ -32,8 +39,14 @@ def test_enable_keeps_the_file_mode_says_what_it_left_and_what_it_turned_back_on
     repo = _repo(tmp_path)
     (repo / ".claude").mkdir()
     settings = repo / ".claude" / "settings.json"
-    settings.write_text(json.dumps({"enabledPlugins": {team.PLUGIN_ID: False},
-                                    "extraKnownMarketplaces": {"dcamunas": {"source": {"source": "git", "url": "x"}}}}))
+    settings.write_text(
+        json.dumps(
+            {
+                "enabledPlugins": {team.PLUGIN_ID: False},
+                "extraKnownMarketplaces": {"dcamunas": {"source": {"source": "git", "url": "x"}}},
+            }
+        )
+    )
     settings.chmod(0o644)
     changed = team.enable(str(repo))
     assert "left as it was" in changed[0] and changed[1].endswith("(it was turned off)")
@@ -73,12 +86,16 @@ def test_router_project_team_and_doctor_say_what_each_person_does(tmp_path, monk
     out = capsys.readouterr().out
     assert "FAIL   plugin turned on for the team" in out and team.INSTALL_COMMAND in out
     installed = profile / "plugins" / "installed_plugins.json"
-    installed.write_text(json.dumps({"version": 2, "plugins": {team.PLUGIN_ID: [
-        {"scope": "project", "projectPath": str(tmp_path / "another-repo")}]}}))
+    installed.write_text(
+        json.dumps(
+            {"version": 2, "plugins": {team.PLUGIN_ID: [{"scope": "project", "projectPath": str(tmp_path / "another-repo")}]}}
+        )
+    )
     main(["doctor"])
     assert "FAIL   plugin turned on for the team" in capsys.readouterr().out  # installed for another repository
-    installed.write_text(json.dumps({"version": 2, "plugins": {team.PLUGIN_ID: [
-        {"scope": "project", "projectPath": str(repo)}]}}))
+    installed.write_text(
+        json.dumps({"version": 2, "plugins": {team.PLUGIN_ID: [{"scope": "project", "projectPath": str(repo)}]}})
+    )
     main(["doctor"])
     out = capsys.readouterr().out
     assert "ok     plugin turned on for the team" in out and f"ok     plugin {team.PLUGIN_ID} enabled in" in out

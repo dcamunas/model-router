@@ -18,9 +18,15 @@ def _repo(tmp_path, monkeypatch, rules) -> str:
 
 
 def test_a_floor_raises_the_risk_and_never_lowers_it(tmp_path, monkeypatch):
-    repo = _repo(tmp_path, monkeypatch, [{"match": "producci[oó]n", "risk": "critical", "why": "reaches production"},
-                                         {"match": "migration", "risk": "high"},
-                                         {"match": "typo", "risk": "low"}])
+    repo = _repo(
+        tmp_path,
+        monkeypatch,
+        [
+            {"match": "producci[oó]n", "risk": "critical", "why": "reaches production"},
+            {"match": "migration", "risk": "high"},
+            {"match": "typo", "risk": "low"},
+        ],
+    )
     rules = floors.load(repo)
     assert len(rules.rules) == 3 and not rules.problems
     assert floors.apply("low", "fix the migration", floors=rules) == floors.Raised("high", rules.rules[1])
@@ -37,9 +43,19 @@ def test_only_the_description_and_the_head_of_the_brief_are_searched():
 
 
 def test_rules_that_cannot_be_used_are_skipped_and_said(tmp_path, monkeypatch):
-    repo = _repo(tmp_path, monkeypatch, [{"match": "(", "risk": "high"}, {"match": "x", "risk": "huge"},
-                                         {"match": "", "risk": "high"}, "text", {"match": "ok", "risk": "high"},
-                                         {"match": "y" * 300, "risk": "high"}, {"match": "a{99999999999}", "risk": "high"}])
+    repo = _repo(
+        tmp_path,
+        monkeypatch,
+        [
+            {"match": "(", "risk": "high"},
+            {"match": "x", "risk": "huge"},
+            {"match": "", "risk": "high"},
+            "text",
+            {"match": "ok", "risk": "high"},
+            {"match": "y" * 300, "risk": "high"},
+            {"match": "a{99999999999}", "risk": "high"},
+        ],
+    )
     rules = floors.load(repo)
     assert [r.match for r in rules.rules] == ["ok"] and len(rules.problems) == 6
     assert any("floor 1" in p and "valid pattern" in p for p in rules.problems)
@@ -74,21 +90,25 @@ def test_the_hook_starts_a_subagent_on_the_floor_of_its_repository(tmp_path, mon
     updated, record = decide({"subagent_type": "general-purpose", "prompt": brief}, cwd=repo)
     assert updated is not None and record["risk"] == "critical" and record["floor"] == "low -> critical: customer data"
     assert updated["model"] in ("opus", "fable")  # the critical floor, opus/medium or above
-    updated, record = decide({"subagent_type": "general-purpose", "prompt": "kind: code, risk: low\nRename a variable"},
-                             cwd=repo)
+    updated, record = decide({"subagent_type": "general-purpose", "prompt": "kind: code, risk: low\nRename a variable"}, cwd=repo)
     assert record["risk"] == "low" and "floor" not in record
 
 
 def test_router_project_and_doctor_show_the_floors_and_how_often_each_fired(tmp_path, monkeypatch, capsys):
     from model_router.cli import main
 
-    repo = _repo(tmp_path, monkeypatch, [{"match": "migration", "risk": "critical", "why": "customer data"},
-                                         {"match": "(", "risk": "high"}])
+    repo = _repo(
+        tmp_path,
+        monkeypatch,
+        [{"match": "migration", "risk": "critical", "why": "customer data"}, {"match": "(", "risk": "high"}],
+    )
     home = tmp_path / "profile" / "model-router"
     home.mkdir(parents=True)
-    (home / "hook.jsonl").write_text(json.dumps({"project": repo, "floor": "low -> critical: customer data",
-                                                 "floor_match": "migration"}) + "\n"
-                                     + "{cut short\n")
+    (home / "hook.jsonl").write_text(
+        json.dumps({"project": repo, "floor": "low -> critical: customer data", "floor_match": "migration"})
+        + "\n"
+        + "{cut short\n"
+    )
     monkeypatch.chdir(repo)
     assert main(["project", repo]) == 0
     out = capsys.readouterr().out
@@ -111,14 +131,14 @@ def test_router_plan_in_a_repository_follows_its_floors(tmp_path, monkeypatch, c
 def test_a_pattern_that_takes_too_long_counts_as_not_matching_and_is_named(tmp_path, monkeypatch):
     import time
 
-    repo = _repo(tmp_path, monkeypatch, [{"match": "(a+)+$", "risk": "critical", "why": "slow"},
-                                         {"match": "migration", "risk": "high"}])
+    repo = _repo(
+        tmp_path, monkeypatch, [{"match": "(a+)+$", "risk": "critical", "why": "slow"}, {"match": "migration", "risk": "high"}]
+    )
     started = time.monotonic()
     raised = floors.apply("low", "a" * 60 + "b migration", floors=floors.load(repo))
     assert time.monotonic() - started < 1
     assert raised.risk == "high" and raised.unsearched == ("slow",)
-    updated, record = decide({"subagent_type": "general-purpose", "prompt": "kind: code, risk: low\n" + "a" * 60 + "b"},
-                             cwd=repo)
+    updated, record = decide({"subagent_type": "general-purpose", "prompt": "kind: code, risk: low\n" + "a" * 60 + "b"}, cwd=repo)
     assert updated is not None and record["floor_unsearched"] == ["slow"]
 
 
@@ -140,4 +160,3 @@ def test_a_plan_given_no_text_is_not_raised_by_a_floor(tmp_path, monkeypatch, ca
     monkeypatch.chdir(repo)
     assert main(["plan", "--kind", "summarize", "--risk", "low", "--claude-code"]) == 0
     assert capsys.readouterr().out == "model: haiku\neffort: medium\n"
-

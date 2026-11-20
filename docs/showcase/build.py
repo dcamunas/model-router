@@ -40,9 +40,11 @@ MONO_FONT = "Menlo, 'SF Mono', Consolas, monospace"
 
 
 def _page(body: str) -> str:
-    return (f'<!doctype html><html><head><meta charset="utf-8"></head>'
-            f'<body style="margin:0;width:{CANVAS[0]}px;height:{CANVAS[1]}px;background:{LIGHT};'
-            f'position:relative;overflow:hidden">{body}</body></html>')
+    return (
+        f'<!doctype html><html><head><meta charset="utf-8"></head>'
+        f'<body style="margin:0;width:{CANVAS[0]}px;height:{CANVAS[1]}px;background:{LIGHT};'
+        f'position:relative;overflow:hidden">{body}</body></html>'
+    )
 
 
 # ---- the sprint: the rules as an illustration -------------------------------------------------------------------
@@ -74,35 +76,76 @@ class SprintFrame:
 
 
 SPRINT = [
-    SprintFrame("A ticket comes in: sort 40 bug reports by area. Low risk.",
-                "the hook reads the task's kind and its risk",
-                "Sort 40 bug reports", "classify · low risk", "haiku/low"),
-    SprintFrame("A junior takes it, with a short timebox. No review.",
-                "low risk: the cheapest model that does the job, at low effort, with no check",
-                "Sort 40 bug reports", "classify · low risk", "haiku/low", active=0, note="short timebox · low effort"),
-    SprintFrame("Payments migration. However full the sprint, seniors only.",
-                "a critical task never starts below opus/medium: the risk floor",
-                "Migrate payments", "code · critical risk", "opus/high", active=2, muted=(0, 1),
-                note="senior · high effort"),
-    SprintFrame("It does not merge until someone else reviews it.",
-                "critical work is checked by a second subagent on another model: opus/high checked by fable/low",
-                "Migrate payments", "code · critical risk", "opus/high", active=2, muted=(0, 1), judge=3),
-    SprintFrame("CI goes red on the CSV export. A senior takes it, with the log.",
-                "a failed check is relaunched one step up (sonnet/medium, then opus/low), with the reason",
-                "CSV export", "code · low risk", "sonnet/medium", active=1, muted=(0,), escalate=(1, 2),
-                note="takes it with the failing log", fail="✗ CI fails"),
-    SprintFrame("Every ticket is logged. The retro moves CSV work up a level.",
-                "every subagent is measured with its cost; each repository learns from its own relaunches",
-                "Next CSV ticket", "code · low risk", "opus/low", active=2, note="this repo starts here", report=True),
+    SprintFrame(
+        "A ticket comes in: sort 40 bug reports by area. Low risk.",
+        "the hook reads the task's kind and its risk",
+        "Sort 40 bug reports",
+        "classify · low risk",
+        "haiku/low",
+    ),
+    SprintFrame(
+        "A junior takes it, with a short timebox. No review.",
+        "low risk: the cheapest model that does the job, at low effort, with no check",
+        "Sort 40 bug reports",
+        "classify · low risk",
+        "haiku/low",
+        active=0,
+        note="short timebox · low effort",
+    ),
+    SprintFrame(
+        "Payments migration. However full the sprint, seniors only.",
+        "a critical task never starts below opus/medium: the risk floor",
+        "Migrate payments",
+        "code · critical risk",
+        "opus/high",
+        active=2,
+        muted=(0, 1),
+        note="senior · high effort",
+    ),
+    SprintFrame(
+        "It does not merge until someone else reviews it.",
+        "critical work is checked by a second subagent on another model: opus/high checked by fable/low",
+        "Migrate payments",
+        "code · critical risk",
+        "opus/high",
+        active=2,
+        muted=(0, 1),
+        judge=3,
+    ),
+    SprintFrame(
+        "CI goes red on the CSV export. A senior takes it, with the log.",
+        "a failed check is relaunched one step up (sonnet/medium, then opus/low), with the reason",
+        "CSV export",
+        "code · low risk",
+        "sonnet/medium",
+        active=1,
+        muted=(0,),
+        escalate=(1, 2),
+        note="takes it with the failing log",
+        fail="✗ CI fails",
+    ),
+    SprintFrame(
+        "Every ticket is logged. The retro moves CSV work up a level.",
+        "every subagent is measured with its cost; each repository learns from its own relaunches",
+        "Next CSV ticket",
+        "code · low risk",
+        "opus/low",
+        active=2,
+        note="this repo starts here",
+        report=True,
+    ),
 ]
 
 
-def _box(x: int, y: int, size: tuple[int, int], inner: str, *, border: str, bg: str = "#ffffff", width: int = 3,
-         dashed: bool = False) -> str:
+def _box(
+    x: int, y: int, size: tuple[int, int], inner: str, *, border: str, bg: str = "#ffffff", width: int = 3, dashed: bool = False
+) -> str:
     style = "dashed" if dashed else "solid"
-    return (f'<div style="position:absolute;left:{x}px;top:{y}px;width:{size[0]}px;height:{size[1]}px;'
-            f'box-sizing:border-box;border:{width}px {style} {border};border-radius:18px;background:{bg};padding:22px">'
-            f"{inner}</div>")
+    return (
+        f'<div style="position:absolute;left:{x}px;top:{y}px;width:{size[0]}px;height:{size[1]}px;'
+        f'box-sizing:border-box;border:{width}px {style} {border};border-radius:18px;background:{bg};padding:22px">'
+        f"{inner}</div>"
+    )
 
 
 def _line(content: str, *, size: int, colour: str = TEXT, font: str = BODY_FONT, weight: int = 400, top: int = 0) -> str:
@@ -116,12 +159,20 @@ def _at(x: int, y: int, width: int, content: str) -> str:
 def _svg(path: str, colour: str, *, dashed: bool = False, head: bool = True) -> str:
     """Return a full-canvas SVG layer with one stroked path, an arrowhead at its end unless `head` is False."""
     marker_id = f"m{colour[1:]}"  # one marker per colour; a repeated definition is the same arrowhead
-    marker = (f'<defs><marker id="{marker_id}" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">'
-              f'<path d="M0,0 L10,5 L0,10 z" fill="{colour}"/></marker></defs>') if head else ""
+    marker = (
+        (
+            f'<defs><marker id="{marker_id}" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">'
+            f'<path d="M0,0 L10,5 L0,10 z" fill="{colour}"/></marker></defs>'
+        )
+        if head
+        else ""
+    )
     dash = ' stroke-dasharray="14 10"' if dashed else ""
     end = f' marker-end="url(#{marker_id})"' if head else ""
-    return (f'<svg style="position:absolute;left:0;top:0" width="{CANVAS[0]}" height="{CANVAS[1]}">{marker}'
-            f'<path d="{path}" fill="none" stroke="{colour}" stroke-width="5" stroke-linejoin="round"{dash}{end}/></svg>')
+    return (
+        f'<svg style="position:absolute;left:0;top:0" width="{CANVAS[0]}" height="{CANVAS[1]}">{marker}'
+        f'<path d="{path}" fill="none" stroke="{colour}" stroke-width="5" stroke-linejoin="round"{dash}{end}/></svg>'
+    )
 
 
 def _sprint_paths(frame: SprintFrame) -> list[str]:
@@ -131,23 +182,33 @@ def _sprint_paths(frame: SprintFrame) -> list[str]:
     x1, y1 = dx + dw + 8, dy + dh // 2
     out = []
     if frame.active == 0:
-        out.append(_svg(f"M{x1},{y1} C{x1 + 60},{y1} {STAFF_X[0] - 70},{STAFF_Y + STAFF_H // 2} "
-                        f"{STAFF_X[0] - 8},{STAFF_Y + STAFF_H // 2}", ACCENT))
+        out.append(
+            _svg(
+                f"M{x1},{y1} C{x1 + 60},{y1} {STAFF_X[0] - 70},{STAFF_Y + STAFF_H // 2} "
+                f"{STAFF_X[0] - 8},{STAFF_Y + STAFF_H // 2}",
+                ACCENT,
+            )
+        )
     elif frame.active is not None:  # under the row, then up into the box: never across the people it skips
-        out.append(_svg(f"M{x1},{y1} H{x1 + 50} V{STAFF_Y + STAFF_H + 44} H{centre[frame.active]} "
-                        f"V{STAFF_Y + STAFF_H + 12}", ACCENT))
+        out.append(
+            _svg(f"M{x1},{y1} H{x1 + 50} V{STAFF_Y + STAFF_H + 44} H{centre[frame.active]} V{STAFF_Y + STAFF_H + 12}", ACCENT)
+        )
     arcs = [(frame.active, frame.judge, ACCENT)] if frame.judge is not None else []
     arcs += [(frame.escalate[0], frame.escalate[1], ACCENT2)] if frame.escalate else []
     for start, end, colour in arcs:
         if start is not None and end is not None:
             y = STAFF_Y - 10
-            out.append(_svg(f"M{centre[start]},{y} C{centre[start]},{y - 80} {centre[end]},{y - 80} {centre[end]},{y}",
-                            colour, dashed=True))
+            out.append(
+                _svg(
+                    f"M{centre[start]},{y} C{centre[start]},{y - 80} {centre[end]},{y - 80} {centre[end]},{y}",
+                    colour,
+                    dashed=True,
+                )
+            )
     if frame.report and frame.active is not None:
         rx, ry, _, rh = REPORT
         sx = STAFF_X[frame.active] + STAFF_W
-        out.append(_svg(f"M{sx},{STAFF_Y + STAFF_H - 30} H{sx + 20} V{ry + rh // 2} H{rx - 12}", ACCENT, dashed=True,
-                        head=False))
+        out.append(_svg(f"M{sx},{STAFF_Y + STAFF_H - 30} H{sx + 20} V{ry + rh // 2} H{rx - 12}", ACCENT, dashed=True, head=False))
     return out
 
 
@@ -155,16 +216,26 @@ def _person(i: int, frame: SprintFrame) -> str:
     role, model = STAFF[i]
     lit = i in (frame.active, frame.judge) or bool(frame.escalate and i == frame.escalate[1])
     off = i in frame.muted
-    chip = (f'<div style="display:inline-block;padding:4px 14px;border-radius:999px;'
-            f'background:{MUTED if off else MODEL_COLOUR[model]};color:#fff;font:600 24px {BODY_FONT}">{model}</div>')
+    chip = (
+        f'<div style="display:inline-block;padding:4px 14px;border-radius:999px;'
+        f'background:{MUTED if off else MODEL_COLOUR[model]};color:#fff;font:600 24px {BODY_FONT}">{model}</div>'
+    )
     inner = chip + _line(role, size=30, weight=600, colour=SECONDARY if off else TEXT, top=22)
     if off:
         inner += _line("not for this ticket", size=24, colour=ACCENT2, top=18)
     if i == frame.judge:
         inner += _line("reviews it", size=24, colour=ACCENT, weight=600, top=18)
     border = MUTED if off else (MODEL_COLOUR[model] if lit else LINE)
-    return _box(STAFF_X[i], STAFF_Y, (STAFF_W, STAFF_H), inner, border=border, bg=LIGHT2 if off else "#ffffff",
-                width=6 if lit else 3, dashed=off)
+    return _box(
+        STAFF_X[i],
+        STAFF_Y,
+        (STAFF_W, STAFF_H),
+        inner,
+        border=border,
+        bg=LIGHT2 if off else "#ffffff",
+        width=6 if lit else 3,
+        dashed=off,
+    )
 
 
 def _notes(frame: SprintFrame) -> list[str]:
@@ -180,27 +251,61 @@ def _notes(frame: SprintFrame) -> list[str]:
 
 def sprint_html(frame: SprintFrame, index: int) -> str:
     """Return frame `index` of the sprint as an HTML page: arrows first, so the boxes sit on top of them."""
-    header = (_at(90, 50, 1500, _line("Illustration · the router as sprint planning", size=28, colour=SECONDARY))
-              + _at(1650, 50, 180, f'<div style="text-align:right;font:26px {BODY_FONT};color:{SECONDARY}">'
-                                   f"{index + 1} / {len(SPRINT)}</div>")
-              + _at(90, 96, 1740, _line(html.escape(frame.head), size=50, font=TITLE_FONT)))
-    ticket = _box(90, 214, (380, 158), _line(html.escape(frame.ticket), size=30, weight=600)
-                  + _line(html.escape(frame.tag), size=24, colour=SECONDARY, font=MONO_FONT, top=6)
-                  + _line(f"plan: {html.escape(frame.plan)}", size=24, colour=ACCENT2, font=MONO_FONT, top=2),
-                  border=ACCENT2)
+    header = (
+        _at(90, 50, 1500, _line("Illustration · the router as sprint planning", size=28, colour=SECONDARY))
+        + _at(
+            1650,
+            50,
+            180,
+            f'<div style="text-align:right;font:26px {BODY_FONT};color:{SECONDARY}">{index + 1} / {len(SPRINT)}</div>',
+        )
+        + _at(90, 96, 1740, _line(html.escape(frame.head), size=50, font=TITLE_FONT))
+    )
+    ticket = _box(
+        90,
+        214,
+        (380, 158),
+        _line(html.escape(frame.ticket), size=30, weight=600)
+        + _line(html.escape(frame.tag), size=24, colour=SECONDARY, font=MONO_FONT, top=6)
+        + _line(f"plan: {html.escape(frame.plan)}", size=24, colour=ACCENT2, font=MONO_FONT, top=2),
+        border=ACCENT2,
+    )
     dx, dy, dw, dh = DESK
-    desk = _box(dx, dy, (dw, dh), _line("Sprint planning", size=32, weight=600)
-                + _line("what the ticket is, what a bug would cost", size=24, colour=SECONDARY, top=10), border=TEXT)
+    desk = _box(
+        dx,
+        dy,
+        (dw, dh),
+        _line("Sprint planning", size=32, weight=600)
+        + _line("what the ticket is, what a bug would cost", size=24, colour=SECONDARY, top=10),
+        border=TEXT,
+    )
     rx, ry, rw, rh = REPORT
-    report = _box(rx, ry, (rw, rh), _line("Sprint report", size=30, weight=600,
-                                          colour=TEXT if frame.report else SECONDARY)
-                  + _line("every ticket, with what it cost", size=24, colour=SECONDARY, top=8),
-                  border=ACCENT if frame.report else MUTED, width=6 if frame.report else 3)
-    rule = (f'<div style="position:absolute;left:0;top:960px;width:{CANVAS[0]}px;height:120px;background:{DARK}"></div>'
-            + _at(90, 994, 1740, f'<div style="font:32px {BODY_FONT};color:{LIGHT}"><span style="color:#9fc0e8">'
-                                 f"router:</span> {html.escape(frame.rule)}</div>"))
-    body = (header + "".join(_sprint_paths(frame)) + ticket + desk + "".join(_person(i, frame) for i in range(len(STAFF)))
-            + "".join(_notes(frame)) + report + rule)
+    report = _box(
+        rx,
+        ry,
+        (rw, rh),
+        _line("Sprint report", size=30, weight=600, colour=TEXT if frame.report else SECONDARY)
+        + _line("every ticket, with what it cost", size=24, colour=SECONDARY, top=8),
+        border=ACCENT if frame.report else MUTED,
+        width=6 if frame.report else 3,
+    )
+    rule = f'<div style="position:absolute;left:0;top:960px;width:{CANVAS[0]}px;height:120px;background:{DARK}"></div>' + _at(
+        90,
+        994,
+        1740,
+        f'<div style="font:32px {BODY_FONT};color:{LIGHT}"><span style="color:#9fc0e8">'
+        f"router:</span> {html.escape(frame.rule)}</div>",
+    )
+    body = (
+        header
+        + "".join(_sprint_paths(frame))
+        + ticket
+        + desk
+        + "".join(_person(i, frame) for i in range(len(STAFF)))
+        + "".join(_notes(frame))
+        + report
+        + rule
+    )
     return _page(body)
 
 
@@ -212,9 +317,17 @@ def capture(pages: list[str], workdir: Path, name: str) -> list[Path]:
         png = workdir / f"{name}-{i}.png"
         page_path.write_text(page, encoding="utf-8")
         subprocess.run(
-            [CHROME, "--headless=new", f"--screenshot={png}", f"--window-size={CANVAS[0]},{CANVAS[1]}",
-             "--virtual-time-budget=1500", "--hide-scrollbars", page_path.as_uri()],
-            check=True, capture_output=True,
+            [
+                CHROME,
+                "--headless=new",
+                f"--screenshot={png}",
+                f"--window-size={CANVAS[0]},{CANVAS[1]}",
+                "--virtual-time-budget=1500",
+                "--hide-scrollbars",
+                page_path.as_uri(),
+            ],
+            check=True,
+            capture_output=True,
         )
         out.append(png)
     return out

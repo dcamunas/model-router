@@ -7,8 +7,13 @@ from model_router.paths import write_config
 
 
 def agent_event(**tool_input):
-    return {"hook_event_name": "PreToolUse", "tool_name": "Agent", "session_id": "s1", "cwd": "/tmp",
-            "tool_input": {"description": "task", "prompt": "Review this SQL script before production", **tool_input}}
+    return {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Agent",
+        "session_id": "s1",
+        "cwd": "/tmp",
+        "tool_input": {"description": "task", "prompt": "Review this SQL script before production", **tool_input},
+    }
 
 
 def routed(event) -> dict:
@@ -58,8 +63,7 @@ def test_session_start_adds_context_and_other_events_are_silent():
 def test_entry_point_never_fails_on_garbage(tmp_path, monkeypatch):
     env = {"CLAUDE_CONFIG_DIR": str(tmp_path), "PATH": "/usr/bin:/bin"}
     for payload in ("not json", "{}", json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_input": None})):
-        proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=payload, text=True,
-                              capture_output=True, env=env)
+        proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=payload, text=True, capture_output=True, env=env)
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout == ""
 
@@ -74,8 +78,9 @@ def test_entry_point_routes_a_real_payload(tmp_path):
 
 def test_hook_env_switch_disables_it_without_uninstalling(tmp_path):
     env = {"CLAUDE_CONFIG_DIR": str(tmp_path), "MODEL_ROUTER_HOOK": "0", "PATH": "/usr/bin:/bin"}
-    proc = subprocess.run([sys.executable, "-m", "model_router.hook"], input=json.dumps(agent_event()), text=True,
-                          capture_output=True, env=env)
+    proc = subprocess.run(
+        [sys.executable, "-m", "model_router.hook"], input=json.dumps(agent_event()), text=True, capture_output=True, env=env
+    )
     assert proc.returncode == 0 and proc.stdout == ""
 
 
@@ -114,8 +119,12 @@ def test_critical_review_crosses_to_another_model_than_the_chat(tmp_path, state)
 def test_a_strange_transcript_line_does_not_stop_the_routing(tmp_path):
     from model_router.hook import main_model
 
-    path = _transcript(tmp_path, {"type": "assistant", "message": {"model": "claude-opus-5-5"}},
-                       {"type": "assistant", "message": "assistant"}, ["assistant"])
+    path = _transcript(
+        tmp_path,
+        {"type": "assistant", "message": {"model": "claude-opus-5-5"}},
+        {"type": "assistant", "message": "assistant"},
+        ["assistant"],
+    )
     assert main_model(path) == "opus"  # the odd lines are skipped, the last good one counts
     event = agent_event()
     event["transcript_path"] = path
@@ -141,8 +150,14 @@ def test_review_stays_put_when_chat_is_another_model_or_risk_is_not_critical(tmp
 
 
 def test_a_judge_setting_the_router_cannot_resolve_never_stops_the_routing(state):
-    (state / "config.json").write_text(json.dumps({  # an older version's config: a judge and a model it does not know
-        "judge": "vendor/high", "models": ["haiku", "sonnet", "opus", "fable", "vendor"]}))
+    (state / "config.json").write_text(
+        json.dumps(
+            {  # an older version's config: a judge and a model it does not know
+                "judge": "vendor/high",
+                "models": ["haiku", "sonnet", "opus", "fable", "vendor"],
+            }
+        )
+    )
     updated, record = decided({"prompt": "risk: critical. Review this design of the payments migration"}, chat_model="opus")
     assert updated["model"] in ("opus", "fable") and record["cell"].split("/")[0] in ("opus", "fable")
 
@@ -177,8 +192,13 @@ def test_reading_work_goes_to_the_plugin_s_read_only_agent_only_when_declared(tm
     assert updated["subagent_type"] == "general-purpose" and "not declared" in record["lean"]  # no guessing
     updated, _ = decided({"subagent_type": "general-purpose", "prompt": "Implement the parser"})
     assert updated["subagent_type"] == "general-purpose"
-    updated, record = decided({"subagent_type": "general-purpose", "description": "Typos in docs",
-                               "prompt": "kind: review, risk: medium\naccess: write\nReview the docs and their typos."})
+    updated, record = decided(
+        {
+            "subagent_type": "general-purpose",
+            "description": "Typos in docs",
+            "prompt": "kind: review, risk: medium\naccess: write\nReview the docs and their typos.",
+        }
+    )
     assert updated["subagent_type"] == "general-purpose" and record["lean"] == "declared access: write"
     write_config(lean=False)
     updated, _ = decided(review)

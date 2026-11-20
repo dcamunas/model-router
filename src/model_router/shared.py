@@ -84,8 +84,9 @@ def own_id(project: str, key: bytes) -> str:
     return hashlib.blake2b(project.encode(), digest_size=ID_BYTES, key=key).hexdigest()
 
 
-def own_counts(project: str, records: list[dict[str, Any]], *, relaunched: set[str],
-               now: datetime | None = None) -> dict[str, dict[str, list[int]]]:
+def own_counts(
+    project: str, records: list[dict[str, Any]], *, relaunched: set[str], now: datetime | None = None
+) -> dict[str, dict[str, list[int]]]:
     """Return this installation's counts per week ready to share (closed for SETTLE, inside the evidence window):
     per `kind|risk|cell`, [launches, relaunched], for the subagents whose model and effort the router chose.
     """
@@ -106,8 +107,9 @@ def own_counts(project: str, records: list[dict[str, Any]], *, relaunched: set[s
     return weeks
 
 
-def own_agent_counts(project: str, records: list[dict[str, Any]], *,
-                     now: datetime | None = None) -> tuple[dict[str, dict[str, list[int]]], set[str]]:
+def own_agent_counts(
+    project: str, records: list[dict[str, Any]], *, now: datetime | None = None
+) -> tuple[dict[str, dict[str, list[int]]], set[str]]:
     """Return this installation's runs of the repository's agents fixed by hand, per settled week: per
     `agent|cell`, [runs, repeated]; and the weeks that must wait, those with runs to count while git cannot say
     which agents the repository commits. An agent defined outside the repository (a plugin's, a profile's, Claude
@@ -115,14 +117,22 @@ def own_agent_counts(project: str, records: list[dict[str, Any]], *,
     """
     moment = now or clock.now()
     first = window_start(moment)
-    recent = [r for r in records if r.get("project") == project and (at := clock.parse_moment(r.get("at")))
-              and at >= first - RELAUNCH_WINDOW]  # a repeat starts within RELAUNCH_WINDOW of the run it repeats
+    recent = [
+        r
+        for r in records
+        if r.get("project") == project and (at := clock.parse_moment(r.get("at"))) and at >= first - RELAUNCH_WINDOW
+    ]  # a repeat starts within RELAUNCH_WINDOW of the run it repeats
     candidates = []
     for record in latest(recent):
         agent, cell = str(record.get("agent_type") or ""), served_cell(record)
         week = _settled_week(record, first=first, now=moment)
-        if (cell is not None and week is not None and not record.get("routed") and agent not in NOT_FIXED_BY_HAND
-                and AGENT_KEY.match(f"{agent}|{cell.label}")):
+        if (
+            cell is not None
+            and week is not None
+            and not record.get("routed")
+            and agent not in NOT_FIXED_BY_HAND
+            and AGENT_KEY.match(f"{agent}|{cell.label}")
+        ):
             candidates.append((week, agent, cell.label, str(record.get("agent_id"))))
     committed = committed_agents(project) if candidates else {}
     if committed is None:
@@ -177,8 +187,7 @@ def prune(project: str, now: datetime | None = None) -> list[Path]:
     return deleted
 
 
-def write_own(project: str, records: list[dict[str, Any]], *, decision_log: Path,
-              now: datetime | None = None) -> list[Path]:
+def write_own(project: str, records: list[dict[str, Any]], *, decision_log: Path, now: datetime | None = None) -> list[Path]:
     """In a repository that shares counts, add a file for each settled week this installation has counts for and
     has not written yet, and return the files added. A file once written is never changed, so a week with agent
     runs waits while git cannot say which agents the repository commits, and the next session tries again.
