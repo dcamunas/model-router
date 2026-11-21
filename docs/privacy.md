@@ -18,7 +18,8 @@ profiles on one machine share no decisions, measurements, limits or settings.
 - The status line (`router statusline`) appends to `~/.claude/model-router/usage.jsonl` the numbers Claude Code
   gives it: the session id, the model, the context size and both usage windows with their resets. It keeps, per
   session, the last sample in `usage-state.json`. `router usage` reads
-  the transcripts of the profiles it is given to count tokens and keeps nothing. When Fable is among the models,
+  the transcripts of the profiles it is given to count tokens and keeps nothing; the status line reads the time and
+  cache write of the session's last calls from its transcript, for `cache until`, and keeps nothing of it. When Fable is among the models,
   the status line also sends the word "ok" to Fable through `claude -p`, on your account, at most every 30 minutes,
   to read Fable's weekly window into `limits.json`.
 - In a repository that shares counts, the hook adds weekly files to `.claude/model-router/` with counts

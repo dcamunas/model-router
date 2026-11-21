@@ -98,7 +98,7 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
 
 - **Status line.** Claude Code gives the status line command the share of both windows already used and the size
   of the last turn's context, on every update and at no cost. `router statusline` shows them:
-  `ctx 412k/1M · 5h 22% · week 61% · fable 1% (resets Sat 15:00)`. The router sets it in the profile's
+  `ctx 412k/1M · cache until 15:31 · 5h 22% · week 61% · fable 1% (resets Sat 15:00)`. The router sets it in the profile's
   `settings.json` in the first session, when there is no `statusLine` yet, with the full path of `router` in the
   plugin's environment:
 
@@ -107,6 +107,13 @@ to turns above 400k of context. Subagents, the only part the router picks a mode
   ```
 
   A status line you already had stays.
+- **Cache until.** Every turn after the prompt cache has expired writes the whole context again, at twice the
+  price of input, where a warm cache reads it at a tenth. Over four days of one person's sessions, turns after more
+  than an hour away rewrote a third of all the cache written; every turn up to 55 minutes away still found it warm.
+  The status line reads the end of the session transcript for the last call of the main chat and shows the time
+  the cache lasts until: one hour later, or five minutes when the last cache write was a five-minute one. Since it
+  is a fixed time, it still holds when you come back to a status line that has not refreshed; `cache cold` once it
+  has passed. Back after it, on a new subject, a new chat costs less than rewriting the old context.
 - **Fable's own week.** Fable has a weekly window of its own, the "Current week (Fable)" row of `/usage`, which
   Claude Code does not hand the status line. Only a call to Fable reports it (as `seven_day_overage_included`), so
   while a status line runs, the router asks Fable for one word at most every 30 minutes, in the background, and

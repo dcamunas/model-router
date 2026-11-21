@@ -42,6 +42,9 @@ FABLE = "fable"
 FABLE_WINDOW = "seven_day_overage_included"  # the weekly window of the models outside the all-models one: Fable
 FABLE_REFRESH_SECONDS = 1800  # a background Fable probe at most this often per profile, while a status line runs
 FABLE_STALE_SECONDS = 6 * 3600  # an older reading of Fable's window is not shown
+CACHE_TAIL_BYTES = 262_144  # the end of the session transcript read for the last call: its last few calls
+CACHE_TTL_SECONDS = 3600  # the prompt cache's lifetime when no write in that tail says: one hour on a subscription
+SHORT_TTL_SECONDS = 300  # the five-minute cache, what a write marked `ephemeral_5m` gets
 
 
 # ---- the status line ------------------------------------------------------------------------------------------
@@ -61,6 +64,7 @@ class Status:
     seven_day_resets: int | None = None
     fable: float | None = None  # Fable's own weekly window, from the last Fable probe (not in Claude Code's JSON)
     fable_resets: int | None = None
+    cache_until: float | None = None  # epoch seconds: when the main chat's prompt cache expires (not in the samples)
 
     def sample(self, at: float) -> dict[str, Any]:
         """Return the sample kept in the log: these numbers and the moment, never any text of the session."""
@@ -99,17 +103,45 @@ def read_status(data: dict[str, Any]) -> Status:
         five_hour_resets=_int(five.get("resets_at")),
         seven_day=_float(week.get("used_percentage")),
         seven_day_resets=_int(week.get("resets_at")),
+        cache_until=cache_until(data.get("transcript_path")),
     )
 
 
+def cache_until(transcript_path: object) -> float | None:
+    """Return when the main chat's prompt cache expires, in epoch seconds: the last main-chat call plus the cache's
+    lifetime, five minutes or one hour as the latest cache write in the transcript's tail says (one hour when none
+    does). Every call that reads the cache renews it. None without a transcript or a call in it.
+    """
+    if not transcript_path:
+        return None
+    last, ttl = None, CACHE_TTL_SECONDS
+    for entry in reversed(read_jsonl(Path(str(transcript_path)), tail_bytes=CACHE_TAIL_BYTES)):
+        message = entry.get("message")
+        if entry.get("type") != "assistant" or entry.get("isSidechain") or not isinstance(message, dict):
+            continue
+        written = _dict(_dict(message.get("usage")).get("cache_creation"))
+        if last is None:
+            moment = clock.parse_moment(entry.get("timestamp"))
+            last = moment.timestamp() if moment else None
+        if _int(written.get("ephemeral_5m_input_tokens")):
+            ttl = SHORT_TTL_SECONDS
+            break
+        if _int(written.get("ephemeral_1h_input_tokens")):
+            break
+    return None if last is None else last + ttl
+
+
 def statusline_text(status: Status) -> str:
-    """Return the status line: the context, then the five-hour and seven-day windows when Claude Code sends them,
-    and Fable's own week when the last Fable probe saw it.
+    """Return the status line: the context and until when its prompt cache lasts, then the five-hour and seven-day
+    windows when Claude Code sends them, and Fable's own week when the last Fable probe saw it.
     """
     parts = []
     if status.context is not None:
         size = f"/{tokens(status.window_size)}" if status.window_size else ""
         parts.append(f"ctx {tokens(status.context)}{size}")
+    if status.cache_until is not None:
+        cold = status.cache_until <= clock.now().timestamp()
+        parts.append("cache cold" if cold else f"cache until {_clock_time(status.cache_until)}")
     if status.five_hour is not None:
         parts.append(f"5h {status.five_hour:.0f}%")
     week_reset = status.seven_day_resets
@@ -449,6 +481,10 @@ def _when(epoch: int) -> str:
         return datetime.fromtimestamp(seconds).astimezone().strftime("%a %H:%M")
     except (ValueError, OverflowError, OSError):
         return "?"
+
+
+def _clock_time(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch).astimezone().strftime("%H:%M")
 
 
 def _usage(raw: dict[str, Any]) -> Usage:

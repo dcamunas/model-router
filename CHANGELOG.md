@@ -2,6 +2,14 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.28.0] - 2026-11-21
+
+### Added
+
+- The status line shows until when the main chat's prompt cache lasts (`cache until 15:31`, then `cache cold`): the
+  last call in the session transcript plus the cache's lifetime, one hour or five minutes as its last write says.
+  Coming back after it, a new chat on a new subject saves rewriting the whole context.
+
 ## [0.27.0] - 2026-10-26
 
 ### Added

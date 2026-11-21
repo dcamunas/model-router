@@ -85,6 +85,37 @@ def test_odd_numbers_never_break_the_status_line(state, monkeypatch, capsys):
     assert "week" not in out and "5h 22%" in out
 
 
+def _call(at, *, five_min=0, one_hour=0, side=False):
+    written = {"ephemeral_5m_input_tokens": five_min, "ephemeral_1h_input_tokens": one_hour}
+    return {
+        "type": "assistant",
+        "timestamp": at.isoformat().replace("+00:00", "Z"),
+        "isSidechain": side,
+        "message": {"role": "assistant", "usage": {"cache_creation": written}},
+    }
+
+
+def test_the_cache_lasts_an_hour_from_the_last_main_chat_call(tmp_path, freeze_clock):
+    path = _write(
+        tmp_path / "t.jsonl",
+        [_call(T0, one_hour=30_000), _call(T0 + timedelta(minutes=10)), _call(T0 + timedelta(minutes=50), side=True)],
+    )
+    until = usage.cache_until(str(path))
+    assert until == (T0 + timedelta(minutes=70)).timestamp()  # a subagent's call keeps its own cache, not the chat's
+    freeze_clock(T0 + timedelta(minutes=20))
+    assert "· cache until " in usage.statusline_text(usage.read_status(_status_json() | {"transcript_path": str(path)}))
+    freeze_clock(T0 + timedelta(minutes=71))
+    assert usage.statusline_text(usage.Status(cache_until=until)) == "cache cold"
+
+
+def test_a_five_minute_write_shortens_the_cache_and_no_transcript_shows_nothing(tmp_path):
+    path = _write(tmp_path / "t.jsonl", [_call(T0, five_min=2000), _call(T0 + timedelta(minutes=2))])
+    assert usage.cache_until(str(path)) == (T0 + timedelta(minutes=7)).timestamp()
+    assert usage.cache_until(None) is None
+    assert usage.cache_until(str(tmp_path / "missing.jsonl")) is None
+    assert "cache" not in usage.statusline_text(usage.read_status(_status_json()))
+
+
 def test_a_sample_is_kept_when_something_moved_and_never_twice_for_the_same_numbers(state):
     status = usage.read_status(_status_json())
     assert usage.keep_sample(status, now=1000.0)
